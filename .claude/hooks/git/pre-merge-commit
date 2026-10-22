@@ -1,0 +1,4 @@
+#!/bin/sh
+# Hook pre-merge-commit do git: o merge feito na main é commit na main; o confere-ramo o recusa.
+# Ligado por: git config core.hooksPath .claude/hooks/git
+exec node "$(dirname "$0")/../confere-ramo.mjs"

@@ -1,0 +1,13 @@
+node_modules/
+.env*
+!.env.example
+dist/
+coverage/
+*.log
+.DS_Store
+
+# estado local dos hooks do pipeline e preferências pessoais do Claude Code
+.claude/estado/
+.claude/settings.local.json
+# worktrees dos agentes de uma fase (orquestrador)
+.claude/worktrees/

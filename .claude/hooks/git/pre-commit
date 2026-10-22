@@ -1,0 +1,5 @@
+#!/bin/sh
+# Hook pre-commit do git: todo commit, do agente ou da pessoa, passa pelo confere-ramo (nada na main) e pelo confere-lgpd.
+# Ligado por: git config core.hooksPath .claude/hooks/git
+node "$(dirname "$0")/../confere-ramo.mjs" || exit 1
+exec node "$(dirname "$0")/../confere-lgpd.mjs" --indice

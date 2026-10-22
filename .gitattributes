@@ -1,0 +1,5 @@
+# Tudo em LF no checkout, inclusive nos worktrees: o git no Windows converte para CRLF por padrão,
+# e um hook ou script .sh com CRLF não roda.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

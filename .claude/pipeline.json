@@ -1,0 +1,5 @@
+{
+  "repositorio": "<dono>/<repo>",
+  "portaoRapido": "checar:rapido",
+  "pastasDeTrabalho": ["^(apps|packages|src)/[^/]+(?=/)", "^\\.claude/hooks(?=/)"]
+}
