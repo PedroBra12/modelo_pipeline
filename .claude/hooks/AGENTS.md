@@ -27,7 +27,18 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   `todo_arquivo` (vale até nos arquivos de `ignorar_conteudo`) e `ignorar` (arquivos que só este gatilho
                   ignora; o código recusa um `ignorar` que case com um caminho mínimo de gatilho de conteúdo, que não seja um prefixo de caminho
                   literal (`^pasta/`) ou, como o `ignorar_conteudo`, que use `(?` (um lookahead cala quase tudo)). Hoje: `permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`, `lgpd_ignora` (a supressão do `confere-lgpd`, com a mesma regex, em
-                  qualquer forma de comentário) e `lgpd_regras` (por caminho: a regra do `confere-lgpd`, o `config.mjs`, onde mora a `SUPRESSAO`, e o agente `revisor-lgpd`) e `tela` (D3, por caminho: todo arquivo de tela (`.jsx`, `.tsx`, `.vue`, `.svelte`, `.css`, `.scss` ou `.html`) de `apps/`, `packages/` ou `src/`, mexido, criado ou apagado, chama o `revisor-tela`; o `.js` ou `.ts` de ação ou de rota, não). O `dado_pessoal` e a `permissao` ignoram o `.claude/` pelo conteúdo (o `config_pipeline` já chama a segurança por lá): o pipeline fala de permissão e de dado pessoal sem ser um nem outro. O `dado_pessoal`, o `banco`, a `permissao` e a `rede_rota` contam a linha removida também (tirar o filtro do dono, o campo, a anonimização ou a purga muda o tratamento). O conteúdo do `dado_pessoal` não leva o limite de palavra da frente, para casar o nome composto (`data_nascimento`, `cliente_cpf`, `email_hmac`). O `banco` pega também o filtro de consulta no código (`.where(`, `where:`, `.eq(`, `.from(`, `.rpc(`) e o schema do Prisma. A `rede_rota` pega `api/`, `server/`, `servidor/`, `routes/`, `controllers/`, `handlers/` e `route.*`, e `fetch(`, `axios`, `process.env`, `import.meta.env`, `"use server"` e `Cache-Control`. Os caminhos e conteúdos que o modelo traz são genéricos (`src/`, `apps/`, `packages/`, `.sql`, `api/`): o projeto que adotar o modelo soma os dele, no `pipeline.json` e, para travá-los, no `PISO_GATILHOS` do `config.mjs`.
+                  qualquer forma de comentário) e `lgpd_regras` (por caminho: a regra do `confere-lgpd`, o `config.mjs`, onde mora a `SUPRESSAO`, e o agente `revisor-lgpd`) e `tela` (D3, por caminho: todo arquivo de tela (`.jsx`, `.tsx`, `.vue`, `.svelte`, `.css`, `.scss` ou `.html`) de `apps/`, `packages/` ou `src/`, mexido, criado ou apagado, chama o `revisor-tela`; o `.js` ou `.ts` de ação ou de rota, não). O `dado_pessoal` e a `permissao` ignoram o `.claude/` pelo conteúdo (o `config_pipeline` já chama a segurança por lá): o pipeline fala de permissão e de dado pessoal sem ser um nem outro.
+                  O `dado_pessoal`, o `banco`, a `permissao` e a `rede_rota` contam a linha removida também (tirar o filtro do dono, o campo, a anonimização ou a purga muda o tratamento).
+                  **Os gatilhos de caminho não valem para documentação** (`.md` e `docs/`: `docs/login.md` não é o código de login), menos o `config_pipeline` e o
+                  `lgpd_regras`, que cobrem os `.md` de `.claude/` de propósito. O conteúdo do `dado_pessoal` não leva o limite de palavra da frente, para casar o nome
+                  composto (`data_nascimento`, `cliente_cpf`, `email_hmac`, `cliente_rg`); `address` só casa composto (`shipping_address`, `address_line`: "ip address" não).
+                  A `permissao` pega o caminho `auth` e `auth-*`, papéis, cargos, rbac, acl, guards, sessão, middleware, proxy, login e jwt, e no conteúdo policy, grant,
+                  revoke, security definer, autoriz, forbidden, permiss, papel/papéis, roles, `.role` e `is_admin` (não o `role="button"` do JSX nem um `403` solto). O `banco` pega o
+                  `.sql`, `migrations/` e o schema do Prisma, e o filtro de consulta preso a quem chama (`supabase|client|db|sb|knex|trx|tx|admin.from(`, o `.where(` depois de
+                  um receptor de consulta, `where: {` do Prisma, `.eq(`, `.rpc(`): `Array.from(` e `const where: Foo` não. A `rede_rota` pega `api/`, `server/`, `servidor/`, `routes/`,
+                  `controllers/`, `handlers/`, `route.*` e `actions/` (server action), e `fetch(`, `axios`, `process.env`, `import.meta.env`, `"use server"`, `Cache-Control`,
+                  `service_role`, `Deno.env` e `auth.admin`. O `lgpd_regras` também pega o conteúdo `legadoAte` (mexer na âncora chama o `revisor-lgpd`). A `tela` não pega arquivo de
+                  teste, spec nem story (`.test.`, `.spec.`, `.stories.`). Os caminhos e conteúdos que o modelo traz são genéricos (`src/`, `apps/`, `packages/`, `.sql`, `api/`): o projeto que adotar o modelo soma os dele, no `pipeline.json` e, para travá-los, no `PISO_GATILHOS` do `config.mjs`.
                 - `ajuste`: `janela` (sessões, 3) e `rodadas_altas`. A escada, os pisos e o
                   teto não estão aqui de propósito (ver `config.mjs` e `guarda-agentes.mjs`).
               - `lgpd` (opcional): `{ "legadoAte": "<sha>" }`, o commit a partir do qual o achado antigo do `confere-lgpd` não bloqueia. Sem a chave, que é o caso do modelo, não há legado nenhum.
@@ -42,7 +53,7 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 revisores, caminhos e conteúdo mínimos de cada gatilho, `tela` inclusive, o `remocoes` e o `todo_arquivo` obrigatórios e os
                 `exemplos` de caminho contra os quais um `ignorar` é conferido) e `PISO_REVISAO` (o mínimo de `sempre`, `comportamento` e `comportamento_caminhos`); um valor
                 abaixo do piso, um gatilho a menos ou `sempre` vazio é erro de `lerAgentes`, `lerNiveis` ou
-                `lerRevisao`, e `conferirPisos` acusa piso fora da escada. Quem bloqueia trata o erro como recusa; o `portao.mjs` só avisa. Mora aqui também a **lista única do que é código** (`EXTENSOES_DE_CODIGO` e `ehArquivoDeCodigo`: `ts tsx mts cts js jsx mjs cjs sql json py go rs rb java kt cs php vue svelte css scss html sh yml yaml toml prisma`), usada pelo `marca-alterado`, pelo `confere-docs` e pelo `escolhe-revisores`, e o `legadoAteDoTexto` / `lerLegadoAte` (o `lgpd.legadoAte` do `pipeline.json`: sha de 7 a 40 hexadecimais ou ausente).
+                `lerRevisao`, e `conferirPisos` acusa piso fora da escada. Quem bloqueia trata o erro como recusa; o `portao.mjs` só avisa. Mora aqui também a **lista única do que é código** (`EXTENSOES_DE_CODIGO` e `ehArquivoDeCodigo`: `ts tsx mts cts js jsx mjs cjs sql json py go rs rb java kt cs php vue svelte css scss html sh yml yaml toml prisma`, menos o lockfile: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`), usada pelo `marca-alterado`, pelo `confere-docs`, pelo `confere-lgpd` (onde as regras de código valem) e pelo `escolhe-revisores`, e o `legadoAteDoTexto` / `lerLegadoAte` (o `lgpd.legadoAte` do `pipeline.json`: sha de 7 a 40 hexadecimais ou ausente).
               - `guarda-git.mjs`: PreToolUse em Bash e PowerShell. A função `decisao(comando, cwd)` devolve `deny` (há
                 motivo para negar), `ask` (sem motivo, mas o comando sobe algo: push, `remote add` ou `set-url`, escrita
                 em PR; o motivo é "confirme o comando: push ou PR", sem o texto de "peça para ele rodar com !", que é só
@@ -67,7 +78,7 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   `gh auth status -t`, `git credential`); o resto do `gh` e do `glab` que escreve (`pr merge`, `repo`,
                   `release`, `alias`, `api` de escrita, com o `-X` colado ou não…); `npm publish`; `commit --no-verify`;
                   mudar o `core.hooksPath` para outro valor (também `--unset-all`, `--replace-all` e `--add`, e
-                  `--remove-section` ou `--rename-section` na seção `core`). Nega em qualquer comando, não só no que sobe, `GIT_CONFIG*=` e `NODE_OPTIONS=` (desviam os hooks do git e o que o node carrega dentro deles), e as chaves `include.*` e `includeIf.*` em `-c` e em `git config` (trazem uma configuração que desvia os hooks).
+                  `--remove-section` ou `--rename-section` na seção `core`). Nega em qualquer comando, não só no que sobe, o nome `GIT_CONFIG*` ou `NODE_OPTIONS`, sem exigir o `=` (pega também o `Set-Item env:`, o `New-Item` e o `[Environment]::SetEnvironmentVariable` do PowerShell e o `setx`; desviam os hooks do git e o que o node carrega dentro deles), e as chaves `include.*` e `includeIf.*` em `-c` e em `git config` (trazem uma configuração que desvia os hooks).
                 - Lê a linha continuada (`\` e a crase) separada e junta, tira as aspas dos argumentos sem espaço (a
                   aspa vazia fica), acha o programa depois de `xargs`, `timeout`, `cmd /c`, lê também o comando entre
                   aspas passado a outro shell (`bash -c`, `cmd /c`, `pwsh -Command`) e nega o `-EncodedCommand`.
@@ -128,7 +139,7 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 comando: nega o push, nesta ordem, quando o `repositorio` não está configurado (mesma mensagem da
                 guarda), quando a URL não é a dele, quando apagaria uma ref, quando a ref remota é `refs/heads/main`
                 ("a main só anda pelo merge do PR no GitHub") e quando o remoto tem commit que o push descartaria
-                (forçar). Só o usuário passa por cima, com `--no-verify` pelo `!`.
+                (forçar). **Roda também o `confere-lgpd` sobre os arquivos de cada ref que sobe** (o diff `<remoto>...<local>`, ou `origin/main...<local>` quando a ref é nova, ou a árvore vazia, isto é, o repositório todo, se não há `origin/main`): é a trava de quem commitou sem o hook (clone à parte e `pull --ff-only`, `PATH` com outro `node`). Achado que bloqueia nega o push, sem repetir o trecho; o legado vale pelo `pipeline.json` da base, não da ref, e só se a âncora for ancestral da ref; regra que não carrega, ou erro ao conferir, nega (falha fechado). Só o usuário passa por cima, com `--no-verify` pelo `!`.
               - `confere-ramo.mjs`: nada se commita na `main`. Lê o branch (`git symbolic-ref`); na `main`, escreve no
                 stderr (manda criar `pr/<assunto-em-kebab>`) e sai com 1; com o HEAD solto deixa passar. Ligado em
                 `git/pre-commit` (antes do confere-lgpd; se falha, o commit para) e em `git/pre-merge-commit` (pega o
@@ -170,8 +181,7 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   vezes aparecia na âncora, e a cópia bloqueia. As regras fortes (`cpf_literal`, `cartao_literal`, `chave_conhecida`,
                   `chave_privada`, as sem supressão) nunca viram legado. Regra de caminho e de binário só é legado com o arquivo igual.
                   No Edit, o orçamento do legado é o da âncora menos o que fica no arquivo fora do `old_string`: a cópia de uma linha
-                  que já estava no arquivo bloqueia. Chave inválida ou de um commit que não existe: sem legado e um aviso, nunca mais
-                  permissivo.
+                  que já estava no arquivo bloqueia. Chave inválida, de um commit que não existe ou **que não é ancestral do HEAD** (do que sobe, no push): sem legado e um aviso, nunca mais permissivo. O pre-commit (e o pre-merge-commit) **recusa o `legadoAte` novo que não é ancestral do valor de antes**: a chave só pode recuar ou sair (pôr pela primeira vez, sem valor de antes, é livre), porque avançar perdoaria mais dívida.
                 Falso positivo se suprime na linha, ou num
                 comentário na linha de cima, com "lgpd-ignora: <regra> -- <motivo>"; CPF, cartão e chave não se
                 suprimem, e o revisor-lgpd confere cada supressão. Regra que não carrega (ou `config.mjs` quebrado, de onde vem a regex da supressão) nega toda edição e recusa
@@ -183,7 +193,7 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
               - `git/pre-commit`: roda o `confere-ramo`, o `confere-lgpd --indice` e, quando o commit toca `.claude/`, os testes do pipeline: sempre o
                 `node --test` sobre a lista expandida `.claude/hooks/*.test.mjs` (sem as variáveis `GIT_*` do commit nem o
                 `NODE_TEST_CONTEXT`, que os testes não podem herdar). Nunca o script `test:pipeline` de um `package.json`: um commit
-                podia trocá-lo por `exit 0`. Falhou, ou não há teste nenhum (o `node --test` sem arquivo sairia verde), o commit é
+                podia trocá-lo por `exit 0` (o atalho `test:pipeline` vale só para quem roda os testes à mão). Falhou, ou não há teste nenhum (o `node --test` sem arquivo sairia verde), o commit é
                 recusado (falha fechado). O `git/pre-merge-commit` roda o `confere-ramo` e o `confere-lgpd --indice` (o git não roda o
                 pre-commit num merge quando este hook existe). Os cinco hooks de `git/` começam com `unset NODE_OPTIONS`, logo depois
                 do shebang: o ambiente do comando não escolhe o que o node carrega. Quem muda a regra do pipeline passa nos testes dela.
@@ -206,7 +216,7 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 texto, de cópia ou de renome de uma tela (o motivo é obrigatório e sai em "Dispensado"; o `qa` e os outros
                 ficam). A opção que não tirou nada (sem tela no diff; no `--sem-comportamento`, sem código) imprime
                 "revisor-tela não era obrigatório: --sem-tela sem efeito" (ou "qa não era obrigatório: --sem-comportamento sem
-                efeito"), e o JSON traz `semEfeito`. O `confere-lgpd` também roda (`varrer`) nas linhas novas de cada arquivo de texto: todo achado ativo, o aviso médio inclusive (campo sensível, telemetria de fora), chama o `revisor-lgpd` com o motivo `confere-lgpd: <regra>` (o suprimido não; imagem e binário ficam com o pre-commit; sem as regras carregadas, falha fechado). Com `--trabalho` o item novo que não é arquivo (repositório aninhado, link) é pulado. Referência que não existe vira "a referência <x> não existe" (a `main` que ainda não existe diz como criá-la). O nome de revisor errado em `sempre`, `comportamento` ou em qualquer gatilho é recusado ao carregar, mesmo que o gatilho não dispare. Revisor que não existe em `agentes` nem em `niveis`, `pipeline.json` do head abaixo dos pisos e
+                efeito"), e o JSON traz `semEfeito`. O `confere-lgpd` também roda (`varrer`) nas linhas novas de cada arquivo de texto: todo achado ativo, o aviso médio inclusive (campo sensível, telemetria de fora), chama o `revisor-lgpd` com o motivo `confere-lgpd: <regra>` (o suprimido não; sem as regras carregadas, falha fechado). O binário roda o `varrer` com `"\0"`: só as regras de caminho e de binário, então a imagem nova chama o `revisor-lgpd` pela regra de print (`imagem_no_repositorio`) sem disparar gatilho de conteúdo. Com `--trabalho` o item novo que não é arquivo (repositório aninhado, link) é pulado. Referência que não existe vira "a referência <x> não existe" (a `main` que ainda não existe diz como criá-la). O nome de revisor errado em `sempre`, `comportamento` ou em qualquer gatilho é recusado ao carregar, mesmo que o gatilho não dispare. Revisor que não existe em `agentes` nem em `niveis`, `pipeline.json` do head abaixo dos pisos e
                 diff que não casa com a lista de nomes saem com 2, não com omissão; quando o head não tem um gatilho do
                 `PISO_GATILHOS` (branch que saiu antes da regra), a mensagem acrescenta "branch anterior à regra: traga a
                 main (git merge main)".
@@ -252,7 +262,7 @@ Regras daqui: hook de guarda erra para o lado de bloquear; hook de anotação nu
               O confere-lgpd nunca repete o trecho achado (pode ser dado pessoal), o arquivo de regras fica fora da
               varredura, e toda regra nova traz exemplo do que pega e do que deixa passar.
               Tudo em LF (`.gitattributes`): o git do Windows converte para CRLF, e o hook do git com CRLF não roda.
-Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com `package.json`, o script `test:pipeline` pode ser esse comando).
+Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com `package.json`, o script `test:pipeline` pode ser esse comando, mas só para quem roda à mão: o pre-commit roda sempre o `node --test`).
               - O `config.test.mjs` escreve `pipeline.json` temporários; o `confere-docs.test.mjs` não usa git.
               - O `confere-docs.git.test.mjs`, o `confere-lgpd.test.mjs`, o `confere-ramo.test.mjs`, o
                 `confere-main.test.mjs` (com um remoto bare e o `origin/main`) e o `confere-push.test.mjs` usam um git de
@@ -278,8 +288,15 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 (diretório com " b/", linha `++`, binário e imagem, merge-base, `--trabalho` com repositório aninhado, a regra do head e
                 da base, a linha de comando e as mensagens de erro, a `main` que não existe). Confere que cada regex de caminho do
                 `pipeline.json` casa com um arquivo de `git ls-files --cached --others` ou com um exemplo genérico do modelo (que ainda não
-                tem `src/`). O `escolhe-revisores.gatilhos.test.mjs` é o dos gatilhos genéricos um a um (permissao, rede_rota, banco,
+                tem `src/`). O `escolhe-revisores.gatilhos.test.mjs` é o dos gatilhos genéricos um a um (permissao, rede_rota, banco, tela, documentação, lockfile,
                 dado_pessoal, ignorar_conteudo), do aviso do `confere-lgpd`, da mídia binária e do nome de revisor errado, tudo dentro do processo.
+              - O `confere-lgpd.legado.test.mjs` (em arquivo à parte, para o `node --test` rodá-lo em paralelo) testa o legado ancorado: sem a chave não há
+                legado, com ela vale o texto do commit (renome, cópia, trecho mexido, Edit, Write, à mão, `--todos`), a chave é a do HEAD, o
+                `legadoAte` que não é ancestral não vale e só pode recuar ou sair, e o merge passa pelo `pre-merge-commit`. Os casos que só medem o
+                portão do pre-commit chamam o `confere-lgpd.mjs --indice` direto, sem pagar os outros hooks de cada commit.
+              - O `confere-push.test.mjs` chama o hook pre-push como o git o chama (remoto e URL nos argumentos, as refs na entrada) num repositório com um
+                remoto `bare`: o diff `origin/main...ref` ou `remoto...ref`, a árvore vazia sem `origin/main`, o legado da base, a âncora que não é ancestral,
+                as regras quebradas.
               - O `ajusta-pipeline.test.mjs` usa sessões de exemplo (desce um alvo por vez, piso, teto, janela
                 incompleta, linha de base, histerese, sessão vazia, escape logo depois da descida, mesmo dia, `visto_por`, gatilho falso, `adiar`, código sem `opus`), aplica o
                 ajuste num projeto temporário (e confere que nenhum par antigo sobra nos documentos) e confere em

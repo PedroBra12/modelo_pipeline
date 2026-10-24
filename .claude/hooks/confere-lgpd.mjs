@@ -18,9 +18,9 @@ import { fileURLToPath } from 'node:url';
 
 const NIVEIS = { critico: 'crítico', alto: 'alto', medio: 'médio' };
 const ORDEM = { critico: 0, alto: 1, medio: 2 };
-const bloqueia = (a) => !a.suprimido && a.legado !== true && a.regra.nivel !== 'medio';
+export const bloqueia = (a) => !a.suprimido && a.legado !== true && a.regra.nivel !== 'medio';
 const IGNORADO = /(^|\/)(\.git|node_modules|dist|coverage|\.next)(\/|$)|^\.claude\/estado(\/|$)|^\.claude\/hooks\/lgpd-regras\.mjs$/;
-const CODIGO = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|sql|json|ya?ml)$/i;
+// o que é código vem da lista única do config.mjs (importada no mesmo try do SUPRESSAO: sem ela as regras não carregam)
 const CONFIG = /(^|\/)\.env(\.[\w.-]+)?$|(^|\/)dockerfile$|\.(ya?ml|toml|sh|ps1|http|ini|conf|properties)$/i;
 const TESTE = /(^|\/)(testes?|tests|__tests__|fixtures)\/|\.(test|spec)\.\w+$/i;
 const SO_COMENTARIO = /^\s*(\/\/|--|#|\/?\*|<!--)/; // a supressão na linha de cima só vale se a linha é só comentário
@@ -73,9 +73,10 @@ const compilar = (r) => ({
 export let regras = [];
 let SUPRESSAO = /(?!)/; // a regex da supressão vem do config.mjs; sem ela nada se suprime
 let legadoAteDoTexto = () => ({ valor: null, erro: null });
+let ehArquivoDeCodigo = () => false;
 let falhaDasRegras = null;
 try {
-  ({ SUPRESSAO, legadoAteDoTexto } = await import('./config.mjs'));
+  ({ SUPRESSAO, legadoAteDoTexto, ehArquivoDeCodigo } = await import('./config.mjs'));
   regras = (await import('./lgpd-regras.mjs')).REGRAS.map(compilar);
 } catch (erro) {
   falhaDasRegras = erro;
@@ -89,7 +90,7 @@ function vale(regra, rel) {
   if (regra.arquivos === 'todos') return true;
   if (regra.arquivos === 'config') return CONFIG.test(rel);
   if (TESTE.test(rel)) return false;
-  return regra.arquivos === 'sql' ? /\.sql$/i.test(rel) : CODIGO.test(rel);
+  return regra.arquivos === 'sql' ? /\.sql$/i.test(rel) : ehArquivoDeCodigo(rel);
 }
 
 function suprimida(linhas, n, regra) {
@@ -257,28 +258,40 @@ function terminar(achados, saida, opcoes) {
 
 const calado = { maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] };
 
-/** O sha completo de `lgpd.legadoAte`, lido do pipeline.json do HEAD (um commit que muda a chave não perdoa a si mesmo); null = sem legado. */
-function legadoDoRepositorio(raiz) {
+/**
+ * O sha completo de `lgpd.legadoAte`, lido do pipeline.json em `config` (o HEAD no commit; no push, a base, que é a regra de quem já
+ * está no repositório: um commit que põe ou muda a chave não perdoa a si mesmo); null = sem legado. Só vale se for ancestral de
+ * `destino` (o HEAD, ou o que sobe no push): o commit de outro histórico não ancora nada.
+ */
+function legadoDoRepositorio(raiz, { config = 'HEAD', destino = 'HEAD' } = {}) {
   let texto;
   try {
-    texto = execFileSync('git', ['-C', raiz, 'show', 'HEAD:.claude/pipeline.json'], { ...calado, encoding: 'utf8' });
+    texto = execFileSync('git', ['-C', raiz, 'show', `${config}:.claude/pipeline.json`], { ...calado, encoding: 'utf8' });
   } catch {
-    return null; // sem HEAD ou sem pipeline.json commitado: sem legado
+    return null; // sem a ref ou sem pipeline.json commitado: sem legado
   }
   const { valor, erro } = legadoAteDoTexto(texto);
   if (erro !== null) process.stderr.write(`confere-lgpd: sem legado, ${erro}\n`);
   if (valor === null) return null;
+  let completo;
   try {
-    return execFileSync('git', ['-C', raiz, 'rev-parse', '-q', '--verify', `${valor}^{commit}`], { ...calado, encoding: 'utf8' }).trim();
+    completo = execFileSync('git', ['-C', raiz, 'rev-parse', '-q', '--verify', `${valor}^{commit}`], { ...calado, encoding: 'utf8' }).trim();
   } catch {
     process.stderr.write(`confere-lgpd: sem legado, lgpd.legadoAte ${valor} não é um commit deste repositório\n`);
     return null;
   }
+  try {
+    execFileSync('git', ['-C', raiz, 'merge-base', '--is-ancestor', completo, destino], calado);
+  } catch {
+    process.stderr.write(`confere-lgpd: sem legado, lgpd.legadoAte ${valor} não é ancestral de ${destino}\n`);
+    return null;
+  }
+  return completo;
 }
 
-/** Nome de agora (no HEAD) → nome no commit da âncora, para os renomes feitos depois dela. */
-function renomesDesde(raiz, sha) {
-  const campos = execFileSync('git', ['-C', raiz, '-c', 'core.quotepath=false', 'diff', '--name-status', '-M', '-z', sha, 'HEAD'], calado).toString('utf8').split('\0');
+/** Nome de agora (em `destino`) → nome no commit da âncora, para os renomes feitos depois dela. */
+function renomesDesde(raiz, sha, destino) {
+  const campos = execFileSync('git', ['-C', raiz, '-c', 'core.quotepath=false', 'diff', '--name-status', '-M', '-z', sha, destino], calado).toString('utf8').split('\0');
   const mapa = new Map();
   for (let i = 0; i < campos.length && campos[i] !== ''; ) {
     if (/^[RC]/.test(campos[i])) { if (campos[i].startsWith('R')) mapa.set(campos[i + 2], campos[i + 1]); i += 3; }
@@ -288,13 +301,15 @@ function renomesDesde(raiz, sha) {
 }
 
 const ancorasDoRepositorio = new Map();
-/** O texto de `rel` (o nome no HEAD) no commit da âncora e o nome que ele tinha lá; { ancora: null } sem legado ou se o arquivo não existia. */
-function ancoraDe(raiz, rel) {
-  if (!ancorasDoRepositorio.has(raiz)) {
-    const sha = legadoDoRepositorio(raiz);
-    ancorasDoRepositorio.set(raiz, sha === null ? null : { sha, renomes: renomesDesde(raiz, sha) });
+/** O texto de `rel` (o nome em `destino`) no commit da âncora e o nome que ele tinha lá; { ancora: null } sem legado ou se o arquivo não existia. */
+function ancoraDe(raiz, rel, contexto = {}) {
+  const { config = 'HEAD', destino = 'HEAD' } = contexto;
+  const chaveDoContexto = `${raiz}\0${config}\0${destino}`;
+  if (!ancorasDoRepositorio.has(chaveDoContexto)) {
+    const sha = legadoDoRepositorio(raiz, contexto);
+    ancorasDoRepositorio.set(chaveDoContexto, sha === null ? null : { sha, renomes: renomesDesde(raiz, sha, destino) });
   }
-  const dados = ancorasDoRepositorio.get(raiz);
+  const dados = ancorasDoRepositorio.get(chaveDoContexto);
   if (dados === null) return { ancora: null, relAncora: rel };
   const relAncora = dados.renomes.get(rel) ?? rel;
   try {
@@ -304,17 +319,74 @@ function ancoraDe(raiz, rel) {
   }
 }
 
-/** Confere o texto de cada arquivo contra a âncora. `pares`: [rel de agora, rel no HEAD (o nome antigo, se mudou neste commit)]. */
-function conferirPares(raiz, pares, lerAgora) {
+/** Confere o texto de cada arquivo contra a âncora. `pares`: [rel de agora, rel em `destino` (o nome antigo, se mudou neste commit)]. */
+function conferirPares(raiz, pares, lerAgora, contexto = {}) {
   return pares.filter(([rel]) => !IGNORADO.test(rel)).flatMap(([rel, relAntes]) => {
     const texto = decodificar(lerAgora(rel));
-    const { ancora, relAncora } = ancoraDe(raiz, relAntes);
+    const { ancora, relAncora } = ancoraDe(raiz, relAntes, contexto);
     return marcarLegado(varrer(texto, rel), texto, ancora, relAncora, { relAgora: rel });
   });
 }
 
+/**
+ * O legadoAte só pode recuar ou sair: o valor que entra no commit tem de ser o de antes ou um ancestral dele. Mudar para a frente
+ * perdoaria mais dívida; pôr a chave pela primeira vez (não havia valor de antes) e tirá-la são livres. Devolve o motivo da recusa, ou null.
+ */
+function mudancaDoLegado(raiz) {
+  const lerValor = (ref) => {
+    try {
+      return legadoAteDoTexto(execFileSync('git', ['-C', raiz, 'show', `${ref}:.claude/pipeline.json`], { ...calado, encoding: 'utf8' })).valor;
+    } catch {
+      return null;
+    }
+  };
+  const antes = lerValor('HEAD');
+  const depois = lerValor('');
+  if (antes === null || depois === null) return null;
+  const completo = (v) => {
+    try {
+      return execFileSync('git', ['-C', raiz, 'rev-parse', '-q', '--verify', `${v}^{commit}`], { ...calado, encoding: 'utf8' }).trim();
+    } catch {
+      return null;
+    }
+  };
+  const [velho, novo] = [completo(antes), completo(depois)];
+  if (velho === null || novo === velho) return null; // o valor de antes já não valia
+  if (novo === null) return null; // um valor que não é commit não ancora nada
+  try {
+    execFileSync('git', ['-C', raiz, 'merge-base', '--is-ancestor', novo, velho], calado);
+    return null;
+  } catch {
+    return `lgpd.legadoAte só pode recuar (para um ancestral de ${antes}) ou sair, e este commit o muda para ${depois}: avançar perdoaria mais dívida`;
+  }
+}
+
+const ARVORE_VAZIA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/**
+ * Os achados nos arquivos que o push de `local` leva em relação a `base` (o diff `base...local`; a árvore vazia quando a base é null,
+ * e então o repositório todo). A regra do legado é a da base (quem já está no repositório), seguida até `local`. Para o hook pre-push.
+ */
+export function conferirRef(raiz, baseOuNull, local) {
+  const base = baseOuNull ?? ARVORE_VAZIA;
+  const alvo = base === ARVORE_VAZIA ? [base, local] : [`${base}...${local}`];
+  const campos = git(raiz, '-c', 'core.quotepath=false', 'diff', '--name-status', '-M', '--diff-filter=ACMRT', '-z', ...alvo, '--').toString('utf8').split('\0');
+  const nomes = [];
+  for (let i = 0; i < campos.length && campos[i] !== ''; ) {
+    if (/^[RC]/.test(campos[i])) { nomes.push(campos[i + 2]); i += 3; }
+    else { nomes.push(campos[i + 1]); i += 2; }
+  }
+  const contexto = { config: base, destino: local };
+  return conferirPares(raiz, nomes.map((rel) => [rel, rel]), (rel) => git(raiz, 'show', `${local}:${rel}`), contexto);
+}
+
 function comoPreCommit() {
   const raiz = raizDoGit();
+  const recuo = mudancaDoLegado(raiz);
+  if (recuo !== null) {
+    process.stderr.write(`Commit recusado pelo confere-lgpd: ${recuo}.\n`);
+    return 1;
+  }
   // com -z: "R100\0velho\0novo\0" no renomeado, "M\0nome\0" no resto
   const campos = git(raiz, '-c', 'core.quotepath=false', 'diff', '--cached', '--name-status', '-M', '--diff-filter=ACMRT', '-z')
     .toString('utf8').split('\0');

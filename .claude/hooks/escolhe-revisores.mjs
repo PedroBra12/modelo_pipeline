@@ -182,12 +182,15 @@ const ehCodigo = (caminho) => ehArquivoDeCodigo(caminho);
 const binarioEmPasta = (caminho, pastas) => !/\.md$/i.test(caminho) && pastas.some((re) => re.test(caminho));
 // imagem, fonte, pdf e vídeo: binário esperado, sem texto a ler. Não contam como ilegíveis nem disparam gatilho de conteúdo.
 const MIDIA = /\.(png|jpe?g|gif|webp|ico|avif|woff2?|ttf|otf|pdf|mp4|webm)$/i;
+// documentação não dispara gatilho de caminho (docs/login.md não é o código de login), menos nestes dois: eles cobrem os .md de .claude/ de propósito
+const COBRE_DOCUMENTACAO = new Set(['config_pipeline', 'lgpd_regras']);
+const ehDocumentacao = (caminho) => /\.md$/i.test(caminho) || /(^|\/)docs\//i.test(caminho);
 
 /** Os motivos pelos quais o gatilho dispara no diff (nunca repete o trecho achado: pode ser dado pessoal). */
 function motivosDoGatilho(g, arquivos, ignorar, pastas) {
   const motivos = [];
   for (const a of arquivos) {
-    if (g.caminhos.some((re) => re.test(a.caminho))) motivos.push({ gatilho: g.nome, arquivo: a.caminho, por: 'caminho' });
+    if (g.caminhos.some((re) => re.test(a.caminho)) && (COBRE_DOCUMENTACAO.has(g.nome) || !ehDocumentacao(a.caminho))) motivos.push({ gatilho: g.nome, arquivo: a.caminho, por: 'caminho' });
     if (g.conteudo.length === 0) continue;
     if (!g.todo_arquivo && [...ignorar, ...g.ignorar].some((re) => re.test(a.caminho))) continue;
     if (a.binario && MIDIA.test(a.caminho)) continue;
@@ -207,16 +210,19 @@ function motivosDoGatilho(g, arquivos, ignorar, pastas) {
 /**
  * O confere-lgpd nas linhas novas do diff: todo achado ativo (não suprimido), o aviso médio inclusive, chama o revisor-lgpd.
  * O texto é o das linhas adicionadas juntas (a linha do achado volta ao número da linha no arquivo); o trecho achado nunca sai daqui.
- * Binário e mídia (imagem, fonte, pdf, vídeo) não têm linha a ler: o pre-commit do confere-lgpd cuida deles, e um logo novo não vale um revisor opus.
+ * O binário (a mídia inclusive) roda o varrer com "\0": só as regras de caminho e de binário do confere-lgpd, sem gatilho de conteúdo.
  */
 function motivosDoConfereLgpd(arquivos) {
   if (!regrasCarregaram()) throw new Error('as regras do confere-lgpd não carregaram (lgpd-regras.mjs ou config.mjs quebrado): sem elas a revisão de LGPD não vale');
   const motivos = [];
   for (const a of arquivos) {
-    if (a.binario || a.linhas.length === 0 || MIDIA.test(a.caminho)) continue;
-    for (const achado of varrer(a.linhas.map((l) => l.texto).join('\n'), a.caminho)) {
+    if (!a.binario && a.linhas.length === 0) continue;
+    // o binário não tem linha a ler: o "\0" faz o varrer aplicar só as regras de caminho e de binário (a imagem nova cai na de print)
+    const achados = a.binario ? varrer('\0', a.caminho) : varrer(a.linhas.map((l) => l.texto).join('\n'), a.caminho);
+    for (const achado of achados) {
       if (achado.suprimido) continue;
-      motivos.push({ gatilho: 'confere-lgpd', arquivo: a.caminho, linha: a.linhas[Math.min(achado.linha, a.linhas.length) - 1].n, por: achado.regra.id });
+      const linha = a.binario ? undefined : a.linhas[Math.min(achado.linha, a.linhas.length) - 1].n;
+      motivos.push({ gatilho: 'confere-lgpd', arquivo: a.caminho, ...(linha === undefined ? {} : { linha }), por: achado.regra.id });
     }
   }
   return motivos;

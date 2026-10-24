@@ -17,7 +17,7 @@ const CODIGO = { test: ehArquivoDeCodigo }; // a lista única de extensões de c
 const GERADO = /(^|\/)gerado\//; // arquivo gerado e citado no AGENTS.md não conta como código que mudou (as demais regras valem)
 const ARQUIVO_CITAVEL = new RegExp(`\\.(${[...EXTENSOES_DE_CODIGO, 'md'].join('|')})$`, 'i');
 const PARTES = ['Faz:', 'Não faz:', 'Como testar:'];
-const CITADOS_DE_FORA = new Set(['package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.base.json', 'README.md', 'CLAUDE.md', 'AGENTS.md', 'PRODUCT.md', 'SKILL.md', 'pipeline.json']);
+const CITADOS_DE_FORA = new Set(['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'tsconfig.json', 'tsconfig.base.json', 'README.md', 'CLAUDE.md', 'AGENTS.md', 'PRODUCT.md', 'SKILL.md', 'pipeline.json']);
 const SEM_CONFERIR_LINKS = /^\.claude\/skills\//; // skills de terceiros: os links de exemplo são deles
 
 /**

@@ -194,3 +194,9 @@ test('a lista única de extensões de código: as pedidas estão nela e o resto 
   for (const e of pedidas) assert.ok(ehArquivoDeCodigo(`a/b/x.${e}`) && ehArquivoDeCodigo(`X.${e.toUpperCase()}`), e);
   for (const n of ['README.md', 'a.png', 'LICENSE', 'x.txt', 'ts', 'a.tsx.bak']) assert.equal(ehArquivoDeCodigo(n), false, n);
 });
+
+test('lockfile não é código: package-lock.json, pnpm-lock.yaml, yarn.lock e bun.lockb, na raiz ou em subpasta; o package.json é', async () => {
+  const { ehArquivoDeCodigo } = await import('./config.mjs');
+  for (const n of ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'apps/web/package-lock.json', 'packages/x/pnpm-lock.yaml', 'PACKAGE-LOCK.JSON']) assert.equal(ehArquivoDeCodigo(n), false, n);
+  for (const n of ['package.json', 'pnpm-workspace.yaml', 'apps/web/package.json', 'x-package-lock.json.ts', 'my-yarn.lock.ts']) assert.equal(ehArquivoDeCodigo(n), true, n);
+});

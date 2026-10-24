@@ -97,3 +97,145 @@ test('o hook pre-push, num git de verdade, com o repositorio no marcador: nega c
     }
   }
 });
+
+// ---------- o confere-lgpd sobre o que sobe ----------
+
+import { regras } from './confere-lgpd.mjs';
+
+const TEL = regras.find((r) => r.id === 'telefone_literal').pega[0];
+
+/** Um repositório com um remoto bare e o `origin/main` já subido; `antes` roda sobre a main antes de subir. Devolve o git, a raiz, os hooks e o hook do push. */
+function comOrigemMain(base, { antes, semOrigemMain = false } = {}) {
+  const git = (pasta, ...args) => {
+    const r = spawnSync('git', ['-c', 'core.hooksPath=', '-c', 'core.autocrlf=false', ...args], { cwd: pasta, encoding: 'utf8' });
+    return { ok: r.status === 0, saida: `${r.stdout}${r.stderr}`.trim() };
+  };
+  const remoto = join(base, 'remoto.git');
+  const raiz = join(base, 'repo');
+  mkdirSync(raiz);
+  const hooks = copiarHooks(raiz, CONFIG_PADRAO);
+  git(base, 'init', '-q', '--bare', remoto);
+  git(raiz, 'init', '-q', '-b', 'main');
+  for (const [k, v] of [['user.name', 'teste'], ['user.email', 'teste@example.com']]) git(raiz, 'config', k, v);
+  mkdirSync(join(raiz, 'docs'));
+  writeFileSync(join(raiz, 'a.txt'), 'a\n');
+  git(raiz, 'add', '-A');
+  git(raiz, 'commit', '-q', '-m', 'a');
+  antes?.({ raiz, git: (...a) => git(raiz, ...a) });
+  git(raiz, 'remote', 'add', 'origin', remoto);
+  if (!semOrigemMain) git(raiz, 'push', '-q', 'origin', 'main');
+  git(raiz, 'switch', '-q', '-c', 'pr/x');
+  const sha = (ref = 'HEAD') => git(raiz, 'rev-parse', ref).saida;
+  const commita = (rel, texto, msg = 'muda') => {
+    mkdirSync(join(raiz, rel, '..'), { recursive: true });
+    writeFileSync(join(raiz, rel), texto);
+    git(raiz, 'add', '-A');
+    assert.equal(git(raiz, 'commit', '-q', '-m', msg).ok, true);
+    return sha();
+  };
+  /** O hook pre-push como o git o chama: remoto e URL nos argumentos, uma linha por ref na entrada. */
+  const hook = (linhas) => spawnSync(process.execPath, [join(hooks, 'confere-push.mjs'), 'origin', URL], { cwd: raiz, input: `${linhas.join('\n')}\n`, encoding: 'utf8' });
+  const linha = (local, remotoSha = ZERO, ref = 'refs/heads/pr/x') => `${ref} ${local} ${ref} ${remotoSha}`;
+  return { git: (...a) => git(raiz, ...a), raiz, hooks, sha, commita, hook, linha };
+}
+const comBase = (opcoes, fn) => {
+  const base = mkdtempSync(join(tmpdir(), 'confere-push-lgpd-'));
+  try {
+    fn(comOrigemMain(base, opcoes));
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+};
+
+test('push: dado pessoal nos arquivos da ref nega (ref nova: origin/main...local; ref que existe: remoto...local), sem repetir o trecho; o limpo, o que a ref não tocou, a tag e nada a subir passam; as regras quebradas negam', () => {
+  // a dívida que já está no origin/main fica onde está: o arquivo que a ref não tocou não é conferido
+  comBase({ antes: ({ raiz, git }) => { writeFileSync(join(raiz, 'docs', 'velho.md'), `${TEL}\n`); git('add', '-A'); git('commit', '-q', '-m', 'dívida'); } }, ({ commita, hook, linha, git, hooks }) => {
+    const limpo = commita('docs/a.md', '# limpo\n');
+    assert.equal(hook([linha(limpo)]).status, 0, 'ref nova limpa');
+    assert.equal(hook([`refs/tags/v1 ${limpo} refs/tags/v1 ${ZERO}`]).status, 0, 'tag limpa');
+    assert.equal(hook([]).status, 0, 'nada a subir');
+    git('push', '-q', '--no-verify', 'origin', 'pr/x');
+    assert.equal(hook([linha(limpo, limpo)]).status, 0, 'nada novo');
+    const sujo = commita('docs/contato.md', `${TEL}\n`, 'contato');
+    for (const rotulo of ['ref nova', 'ref que existe']) {
+      const r = hook([rotulo === 'ref nova' ? linha(sujo) : linha(sujo, limpo)]);
+      assert.equal(r.status, 1, rotulo);
+      assert.match(r.stderr, /confere-push: push para origin negado/);
+      assert.match(r.stderr, /telefone_literal/);
+      assert.match(r.stderr, /docs\/contato\.md:1/);
+      assert.doesNotMatch(r.stderr, /90000/, `${rotulo}: o número nunca vai para a saída`);
+      assert.doesNotMatch(r.stderr, /velho\.md/, `${rotulo}: a dívida que a ref não tocou não entra`);
+    }
+    // o resto continua negado antes: apagar a ref e a main
+    assert.equal(hook([`(delete) ${ZERO} refs/heads/pr/x ${limpo}`]).status, 1);
+    assert.equal(hook([`refs/heads/main ${limpo} refs/heads/main ${ZERO}`]).status, 1);
+    // as regras do confere-lgpd que não carregam negam o push (falha fechado)
+    writeFileSync(join(hooks, 'lgpd-regras.mjs'), 'export const REGRAS = ;\n<<<<<<< HEAD\n');
+    const quebrado = hook([linha(limpo)]);
+    assert.equal(quebrado.status, 1);
+    assert.match(quebrado.stderr, /confere-push: push para origin negado.*(regras|confere-lgpd)/s);
+  });
+});
+
+test('push: sem origin/main a ref nova é conferida inteira (da árvore vazia): a dívida antiga também nega', () => {
+  comBase({ semOrigemMain: true, antes: ({ raiz, git }) => { writeFileSync(join(raiz, 'docs', 'velho.md'), `${TEL}\n`); git('add', '-A'); git('commit', '-q', '-m', 'dívida'); } }, ({ commita, hook, linha }) => {
+    const sujo = commita('docs/novo.md', '# novo\n');
+    const r = hook([linha(sujo)]);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /docs\/velho\.md/);
+  });
+});
+
+test('push: o legadoAte do origin/main (a regra de quem já está lá) perdoa a dívida antiga no arquivo que a ref mexeu; a dívida nova e a chave mudada na própria ref, não', () => {
+  comBase({
+    antes: ({ raiz, git }) => {
+      writeFileSync(join(raiz, 'docs', 'contato.md'), `# contato\n${TEL}\n`);
+      git('add', '-A');
+      git('commit', '-q', '-m', 'dívida de antes');
+      const ancora = git('rev-parse', 'HEAD').saida;
+      mkdirSync(join(raiz, '.claude'), { recursive: true });
+      writeFileSync(join(raiz, '.claude', 'pipeline.json'), JSON.stringify({ ...CONFIG_PADRAO, lgpd: { legadoAte: ancora } }));
+      git('add', '-A');
+      git('commit', '-q', '-m', 'ancora');
+    },
+  }, ({ raiz, commita, hook, linha, git }) => {
+    const titulo = commita('docs/contato.md', `# contato da loja\n${TEL}\n`, 'título');
+    assert.equal(hook([linha(titulo)]).status, 0, 'a mesma linha de antes, com outro título');
+    const copia = commita('docs/contato.md', `# contato da loja\n${TEL}\n${TEL}\n`, 'cópia');
+    assert.equal(hook([linha(copia)]).status, 1, 'a cópia é dívida nova');
+    const novo = commita('docs/novo.md', `${TEL}\n`, 'novo');
+    assert.equal(hook([linha(novo)]).status, 1);
+    git('reset', '-q', '--hard', titulo);
+    writeFileSync(join(raiz, '.claude', 'pipeline.json'), JSON.stringify({ ...CONFIG_PADRAO, lgpd: { legadoAte: git('rev-parse', 'HEAD').saida } }));
+    writeFileSync(join(raiz, 'docs', 'contato.md'), `# contato\n${TEL}\n${TEL}\n`);
+    git('add', '-A');
+    git('commit', '-q', '-m', 'muda a chave e copia');
+    assert.equal(hook([linha(git('rev-parse', 'HEAD').saida)]).status, 1, 'vale o pipeline.json da base, não o da ref');
+  });
+});
+
+test('push: o legadoAte da base que não é ancestral da ref não vale', () => {
+  comBase({
+    antes: ({ raiz, git }) => {
+      writeFileSync(join(raiz, 'docs', 'contato.md'), `${TEL}\n`);
+      git('add', '-A');
+      git('commit', '-q', '-m', 'dívida');
+      git('switch', '-q', '-c', 'lateral', 'HEAD~1');
+      mkdirSync(join(raiz, 'docs'), { recursive: true });
+      writeFileSync(join(raiz, 'docs', 'contato.md'), `${TEL}\n# lateral\n`);
+      git('add', '-A');
+      git('commit', '-q', '-m', 'lateral');
+      const lateral = git('rev-parse', 'HEAD').saida;
+      git('switch', '-q', 'main');
+      mkdirSync(join(raiz, '.claude'), { recursive: true });
+      writeFileSync(join(raiz, '.claude', 'pipeline.json'), JSON.stringify({ ...CONFIG_PADRAO, lgpd: { legadoAte: lateral } }));
+      git('add', '-A');
+      git('commit', '-q', '-m', 'chave de outro histórico');
+    },
+  }, ({ commita, hook, linha }) => {
+    const titulo = commita('docs/contato.md', `${TEL}\n# título\n`, 'título');
+    const r = hook([linha(titulo)]);
+    assert.equal(r.status, 1, 'sem legado, a linha antiga nega');
+    assert.match(r.stderr, /telefone_literal/);
+  });
+});

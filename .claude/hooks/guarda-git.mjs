@@ -36,7 +36,8 @@ const DESVIA_REMOTO = /^(remote\.|url\.|alias\.|include(if)?\.|branch\..+\.(push
 const MUDA_PASTA = /(^|[\s;&|(){}])(cd|chdir|pushd|popd|set-location|sl|push-location|pop-location)(?=[\s;&|)}]|$)/im;
 const AMBIENTE = /(^|\W)(GIT|GH)_\w*\s*=/i; // GIT_DIR, GIT_CONFIG_*, GH_REPO, GH_HOST… (no Windows, sem caixa)
 // vale em qualquer comando, não só no que sobe: a configuração por ambiente desliga os hooks do git, e o NODE_OPTIONS muda o que o node carrega dentro deles
-const AMBIENTE_DOS_HOOKS = /(^|\W)(GIT_CONFIG\w*|NODE_OPTIONS)\s*=/i;
+// (só o nome, sem exigir o "=": o Set-Item env:, o New-Item e o [Environment]::SetEnvironmentVariable do PowerShell, o setx e o env mudam a variável sem escrevê-la como VAR=valor)
+const AMBIENTE_DOS_HOOKS = /\b(GIT_CONFIG\w*|NODE_OPTIONS)\b/i;
 // o comando entre aspas que vai para outro shell é lido também; o codificado não se lê, e se nega
 const SHELL_ANINHADO = /\b(?:bash|sh|zsh|cmd|pwsh|powershell)(?:\.exe)?\s+(?:-c|-command|\/c|\/k)\s+(["'])((?:(?!\1)[\s\S])*)\1/gi;
 const CODIFICADO = /\b(pwsh|powershell)(\.exe)?\s+(-\w+\s+)*-(e|ec|enc|encodedcommand)\b/i;

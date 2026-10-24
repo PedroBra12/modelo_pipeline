@@ -22,8 +22,10 @@ export const EXTENSOES_DE_CODIGO = [
   'py', 'go', 'rs', 'rb', 'java', 'kt', 'cs', 'php', 'vue', 'svelte', 'css', 'scss', 'html', 'sh', 'yml', 'yaml', 'toml', 'prisma',
 ];
 const CODIGO = new RegExp(`\\.(${EXTENSOES_DE_CODIGO.join('|')})$`, 'i');
+// o lockfile é gerado pelo gerenciador de pacotes e não tem o que revisar: não é código (o package.json é)
+const LOCKFILE = /(^|[\\/])(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb)$/i;
 /** O caminho (ou nome) é de um arquivo de código? */
-export const ehArquivoDeCodigo = (caminho) => CODIGO.test(caminho);
+export const ehArquivoDeCodigo = (caminho) => CODIGO.test(caminho) && !LOCKFILE.test(caminho);
 
 const REPOSITORIO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SCRIPT = /^[A-Za-z0-9_][A-Za-z0-9_:.-]*$/; // vai para `npm run`, num shell: só nome de script
@@ -112,14 +114,14 @@ export const SUPRESSAO = /lgpd-ignora:\s*([\w ,]+?)\s*--\s*\S.{9,}/;
  * O projeto que adotar o modelo soma aqui, e no pipeline.json, os caminhos e os conteúdos dele (pastas de rotas, de permissão, de dados).
  */
 export const PISO_GATILHOS = {
-  permissao: { revisores: ['revisor-seguranca'], caminhos: ['(^|/)(auth|middleware|proxy)(/|\\.)'], conteudo: ['security\\s+definer', '\\bgrant\\b'], remocoes: true, exemplos: ['src/x/servidor.ts', 'src/api/x/route.ts', 'src/x/dados.ts'] },
-  dado_pessoal: { revisores: ['revisor-lgpd', 'revisor-seguranca'], caminhos: [], conteudo: ['cpf', 'e_?mail', 'celular', 'nascimento'], remocoes: true, exemplos: ['db/migrations/x.sql', 'src/x/dados.ts'] },
-  banco: { revisores: ['revisor-seguranca'], caminhos: ['\\.sql$'], conteudo: ['\\.where\\(', '\\bwhere\\s*:'], remocoes: true, exemplos: ['db/migrations/20260101000000_x.sql', 'src/x/dados.ts'] },
+  permissao: { revisores: ['revisor-seguranca'], caminhos: ['(^|/)(auth[\\w-]*|middleware|proxy)(/|\\.)'], conteudo: ['security\\s+definer', '\\bgrant\\b'], remocoes: true, exemplos: ['src/x/servidor.ts', 'src/api/x/route.ts', 'src/x/dados.ts'] },
+  dado_pessoal: { revisores: ['revisor-lgpd', 'revisor-seguranca'], caminhos: [], conteudo: ['cpf', 'e_?mail', 'celular', 'nascimento', 'telefone'], remocoes: true, exemplos: ['db/migrations/x.sql', 'src/x/dados.ts'] },
+  banco: { revisores: ['revisor-seguranca'], caminhos: ['\\.sql$'], conteudo: ['\\bwhere\\s*:\\s*\\{', '(^\\s*|\\)\\s*|\\b(db|knex|trx|tx|qb|q|query|builder|sb|supabase|client)\\s*)\\.where\\(\\s*[\'"`{(\\w]'], remocoes: true, exemplos: ['db/migrations/20260101000000_x.sql', 'src/x/dados.ts'] },
   config_pipeline: { revisores: ['revisor-seguranca', 'revisor-arquitetura'], caminhos: ['^\\.claude/(pipeline\\.json|agents/|hooks/|settings(\\.local)?\\.json|skills/pipeline/|skills/adjust-pipeline/)'], conteudo: [], exemplos: ['.claude/pipeline.json'] },
   rede_rota: { revisores: ['revisor-seguranca'], caminhos: ['(^|/)api/', '(^|/)route\\.[cm]?[jt]sx?$'], conteudo: ['[\'"]use server[\'"]', 'fetch\\('], remocoes: true, exemplos: ['src/x/servidor.ts', 'src/api/x/route.ts', 'src/app/x/route.ts'] },
   lgpd_ignora: { revisores: ['revisor-lgpd'], caminhos: [], conteudo: [SUPRESSAO.source], todo_arquivo: true, exemplos: [] },
-  lgpd_regras: { revisores: ['revisor-lgpd'], caminhos: ['^\\.claude/hooks/(lgpd-regras|confere-lgpd)', '^\\.claude/hooks/config\\.mjs$', '^\\.claude/agents/revisor-lgpd\\.md$'], conteudo: [], exemplos: ['.claude/hooks/lgpd-regras.mjs'] },
-  tela: { revisores: ['revisor-tela'], caminhos: ['^(apps|packages|src)/.+\\.(jsx|tsx|vue|svelte|css|scss|html)$'], conteudo: [], exemplos: ['src/x/Tela.jsx'] },
+  lgpd_regras: { revisores: ['revisor-lgpd'], caminhos: ['^\\.claude/hooks/(lgpd-regras|confere-lgpd)', '^\\.claude/hooks/config\\.mjs$', '^\\.claude/agents/revisor-lgpd\\.md$'], conteudo: ['legadoAte'], exemplos: ['.claude/hooks/lgpd-regras.mjs'] },
+  tela: { revisores: ['revisor-tela'], caminhos: ['^(apps|packages|src)/(?!.*\\.(test|spec|stories)\\.).+\\.(jsx|tsx|vue|svelte|css|scss|html)$'], conteudo: [], exemplos: ['src/x/Tela.jsx'] },
 };
 /** O mínimo de `sempre`, `comportamento` e dos caminhos que tornam o `qa` obrigatório. */
 export const PISO_REVISAO = { sempre: ['revisor-arquitetura', 'ponytail-review'], comportamento: ['qa'], comportamento_caminhos: ['^(apps|packages|src)/'] };

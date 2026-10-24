@@ -144,3 +144,10 @@ test('marca-alterado: anota o código do produto (tela .jsx inclusive), não o .
   assert.equal(relevante(raiz, join(raiz, 'docs', 'schema.sql')), null);
   assert.equal(relevante(raiz, join(raiz, '.claude', 'hooks', 'portao.mjs')), null);
 });
+
+test('marca-alterado: o lockfile não é código do produto', async () => {
+  const { relevante } = await import('./marca-alterado.mjs');
+  const raiz = join(tmpdir(), 'projeto');
+  for (const n of ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'apps/web/package-lock.json']) assert.equal(relevante(raiz, join(raiz, ...n.split('/'))), null, n);
+  assert.equal(relevante(raiz, join(raiz, 'package.json')), 'package.json');
+});

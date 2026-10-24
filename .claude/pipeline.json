@@ -28,14 +28,14 @@
         "revisores": ["revisor-seguranca"],
         "remocoes": true,
         "caminhos": [
-          "(^|/)(auth|permiss[^/]*|pap[eé]is|roles?|cargos?|rbac|acl|polic(y|ies)|guards?|sess(ao|oes|ion|ions)|middleware|proxy|login|jwt)(/|\\.)",
-          "(^|/)(auth|middleware|proxy)(/|\\.)"
+          "(^|/)(auth[\\w-]*|permiss[^/]*|pap[eé]is|roles?|cargos?|rbac|acl|polic(y|ies)|guards?|sess(ao|oes|ion|ions)|middleware|proxy|login|jwt)(/|\\.)",
+          "(^|/)(auth[\\w-]*|middleware|proxy)(/|\\.)"
         ],
         "conteudo": [
           "create\\s+policy", "alter\\s+policy", "row\\s+level\\s+security", "\\bpolic(y|ies)\\b",
           "security\\s+definer", "\\bgrant\\b", "\\brevoke\\b",
           "autoriz", "\\bforbidden\\b", "\\bunauthorized\\b",
-          "\\bpermiss", "\\bpap(el|[eé]is)\\b", "\\broles\\b"
+          "\\bpermiss", "\\bpap(el|[eé]is)\\b", "\\broles\\b", "\\.role\\b", "\\bis_?admin\\b"
         ],
         "ignorar": ["^\\.claude/"]
       },
@@ -45,8 +45,8 @@
         "remocoes": true,
         "caminhos": [],
         "conteudo": [
-          "cpf", "\\bcnpj", "\\brg\\b", "\\bcep\\b", "e_?mail", "celular", "telefone", "\\bphone", "whatsapp",
-          "nascimento", "endere[cç]o", "\\baddress", "anonimiz", "\\bpurg"
+          "cpf", "cnpj", "\\brg(\\b|_)|_rg\\b", "\\bcep\\b", "e_?mail", "celular", "telefone", "\\bphone", "whatsapp", "documento",
+          "nascimento", "endere[cç]o", "(e_?mail|street|shipping|billing|home|postal)_?address|\\baddress_?line", "anonimiz", "\\bpurg"
         ],
         "ignorar": ["^\\.claude/"]
       },
@@ -55,7 +55,11 @@
         "revisores": ["revisor-seguranca"],
         "remocoes": true,
         "caminhos": ["\\.sql$", "(^|/)migrations?/", "schema\\.prisma$"],
-        "conteudo": ["\\.where\\(", "\\bwhere\\s*:", "\\.eq\\(\\s*['\"`]", "\\.from\\(\\s*['\"`]", "\\.rpc\\("]
+        "conteudo": [
+          "\\b(supabase|client|db|sb|knex|trx|tx|admin)\\.from\\(",
+          "(^\\s*|\\)\\s*|\\b(db|knex|trx|tx|qb|q|query|builder|sb|supabase|client)\\s*)\\.where\\(\\s*['\"`{(\\w]",
+          "\\bwhere\\s*:\\s*\\{", "\\.eq\\(\\s*['\"`]", "\\.rpc\\("
+        ]
       },
       {
         "nome": "config_pipeline",
@@ -67,8 +71,8 @@
         "nome": "rede_rota",
         "revisores": ["revisor-seguranca"],
         "remocoes": true,
-        "caminhos": ["(^|/)api/", "(^|/)(server|servidor|routes?|controllers?|handlers?)/", "(^|/)route\\.[cm]?[jt]sx?$"],
-        "conteudo": ["fetch\\(", "\\baxios\\b", "process\\.env", "import\\.meta\\.env", "['\"]use server['\"]", "Cache-Control"]
+        "caminhos": ["(^|/)api/", "(^|/)(server|servidor|routes?|controllers?|handlers?)/", "(^|/)route\\.[cm]?[jt]sx?$", "(^|/)(actions?|acoes)(/|\\.[cm]?[jt]sx?$)"],
+        "conteudo": ["fetch\\(", "\\baxios\\b", "process\\.env", "import\\.meta\\.env", "['\"]use server['\"]", "Cache-Control", "service_role", "Deno\\.env", "auth\\.admin"]
       },
       {
         "nome": "lgpd_ignora",
@@ -81,12 +85,12 @@
         "nome": "lgpd_regras",
         "revisores": ["revisor-lgpd"],
         "caminhos": ["^\\.claude/hooks/(lgpd-regras|confere-lgpd)", "^\\.claude/hooks/config\\.mjs$", "^\\.claude/agents/revisor-lgpd\\.md$"],
-        "conteudo": []
+        "conteudo": ["legadoAte"]
       },
       {
         "nome": "tela",
         "revisores": ["revisor-tela"],
-        "caminhos": ["^(apps|packages|src)/.+\\.(jsx|tsx|vue|svelte|css|scss|html)$"],
+        "caminhos": ["^(apps|packages|src)/(?!.*\\.(test|spec|stories)\\.).+\\.(jsx|tsx|vue|svelte|css|scss|html)$"],
         "conteudo": []
       }
     ],

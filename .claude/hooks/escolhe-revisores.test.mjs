@@ -248,7 +248,7 @@ test('cada regex de caminho de cada gatilho casa com ao menos um arquivo do repo
   // O projeto que soma caminhos dele no pipeline.json é pego aqui se um deles não casar com arquivo nenhum do repositório.
   const EXEMPLOS_DO_MODELO = [
     'src/auth/sessao.ts', 'src/x/permissoes.ts', 'src/x/papeis.ts', 'src/middleware.ts', 'db/migrations/20260101000000_x.sql', 'src/api/x/route.ts',
-    'src/servidor/x.ts', 'src/routes/x.ts', 'src/controllers/x.ts', 'src/handlers/x.ts', 'src/app/x/route.ts', 'src/x/Tela.jsx',
+    'src/servidor/x.ts', 'src/routes/x.ts', 'src/controllers/x.ts', 'src/handlers/x.ts', 'src/app/x/route.ts', 'src/x/Tela.jsx', 'src/actions/x.ts', 'src/app/clientes/actions.ts',
     'src/roles/x.ts', 'src/cargos/x.ts', 'src/rbac/x.ts', 'src/acl/x.ts', 'src/policies/x.ts', 'src/guards/x.ts', 'src/sessoes/x.ts', 'src/login/x.ts', 'src/jwt.ts', 'src/permissoes/x.ts',
     'prisma/schema.prisma', 'db/migrations/1_x.ts', 'apps/web/x.tsx', 'packages/ui/x.vue', 'src/x/y.svelte', 'src/x/y.css', 'src/x/y.scss', 'src/index.html', 'src/x/y.ts',
   ];
@@ -324,7 +324,7 @@ test('código é qualquer arquivo com extensão de código em qualquer lugar do 
     assert.ok(SEMPRE.every((n) => nomes(saida.obrigatorios).includes(n)), `${caminho}: é código`);
     assert.equal(saida.codigo, 1, caminho);
   }
-  for (const caminho of ['README.md', 'docs/a.md', 'logo.png', 'LICENSE', 'data/lista.txt', 'fonte.woff2']) {
+  for (const caminho of ['README.md', 'docs/a.md', 'logo.svg', 'LICENSE', 'data/lista.txt', 'fonte.woff2']) {
     const saida = em({}, { [caminho]: 'y\n' });
     assert.deepEqual(saida.obrigatorios, [], `${caminho}: não é código`);
     assert.equal(saida.codigo, 0, caminho);
@@ -365,7 +365,7 @@ test('uma linha adicionada que começa com "++" (parece cabeçalho) conta, e a n
   });
 });
 
-test('um binário numa pasta de trabalho aciona os gatilhos de conteúdo (não dá para olhar dentro dele); a imagem não (git de verdade)', () => {
+test('um binário numa pasta de trabalho aciona os gatilhos de conteúdo (não dá para olhar dentro dele); a imagem só pela regra de print (git de verdade)', () => {
   const raiz = mkdtempSync(join(tmpdir(), 'revisores-bin-'));
   com({ raiz }, () => {
     const git = (...a) => execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'core.hooksPath=', '-c', 'core.autocrlf=false', ...a], { cwd: raiz, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -382,7 +382,8 @@ test('um binário numa pasta de trabalho aciona os gatilhos de conteúdo (não d
     assert.deepEqual(nomes(saida.obrigatorios), ['revisor-lgpd', 'revisor-seguranca'], 'o .bin não é código (sem o sempre nem o qa), mas não se lê');
     const motivos = saida.obrigatorios.flatMap((r) => r.motivos);
     assert.ok(motivos.some((m) => /binário/.test(m.por) && m.arquivo === 'src/public/dados.bin'));
-    assert.ok(!motivos.some((m) => m.arquivo === 'src/public/logo.png'), 'o logo.png binário não vira motivo');
+    assert.ok(!saida.obrigatorios.find((r) => r.nome === 'revisor-seguranca').motivos.some((m) => m.arquivo === 'src/public/logo.png'), 'o logo.png binário não dispara gatilho de conteúdo (a segurança não o vê)');
+    assert.ok(saida.obrigatorios.find((r) => r.nome === 'revisor-lgpd').total >= 3, 'a LGPD vê o .bin (gatilho e binário desconhecido) e a imagem (regra de print)');
   });
 });
 

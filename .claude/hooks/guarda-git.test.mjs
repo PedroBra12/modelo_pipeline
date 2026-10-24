@@ -163,6 +163,18 @@ const bloqueia = [
   'git config include.path /tmp/x',
   'git config includeIf.gitdir:/p/.path /tmp/x',
   'git config --global include.path /tmp/x',
+  // só o nome, sem o "=": o PowerShell e o env mudam a variável sem escrevê-la como VAR=valor
+  'Set-Item env:NODE_OPTIONS "--require ./x.js"',
+  'Set-Item -Path Env:NODE_OPTIONS -Value "--require ./x.js"; git commit -m x',
+  'Set-Item env:GIT_CONFIG_COUNT 1',
+  'Set-Item -Path env:GIT_CONFIG_GLOBAL -Value /tmp/x',
+  'New-Item -Path Env:NODE_OPTIONS -Value "--require ./x.js"',
+  '[Environment]::SetEnvironmentVariable("NODE_OPTIONS", "--require ./x.js")',
+  "[System.Environment]::SetEnvironmentVariable('GIT_CONFIG_COUNT', '1')",
+  '$env:node_options = "--require ./x.js"',
+  'env NODE_OPTIONS=--require=./x.js git commit -m x',
+  'export GIT_CONFIG_PARAMETERS="x"',
+  'setx NODE_OPTIONS "--require ./x.js"',
 ];
 
 const libera = [
