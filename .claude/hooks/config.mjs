@@ -116,11 +116,11 @@ export const SUPRESSAO = /lgpd-ignora:\s*([\w ,]+?)\s*--\s*\S.{9,}/;
 export const PISO_GATILHOS = {
   permissao: { revisores: ['revisor-seguranca'], caminhos: ['(^|/)(auth[\\w-]*|middleware|proxy)(/|\\.)'], conteudo: ['security\\s+definer', '\\bgrant\\b'], remocoes: true, exemplos: ['src/x/servidor.ts', 'src/api/x/route.ts', 'src/x/dados.ts'] },
   dado_pessoal: { revisores: ['revisor-lgpd', 'revisor-seguranca'], caminhos: [], conteudo: ['cpf', 'e_?mail', 'celular', 'nascimento', 'telefone'], remocoes: true, exemplos: ['db/migrations/x.sql', 'src/x/dados.ts'] },
-  banco: { revisores: ['revisor-seguranca'], caminhos: ['\\.sql$'], conteudo: ['\\bwhere\\s*:\\s*\\{', '(^\\s*|\\)\\s*|\\b(db|knex|trx|tx|qb|q|query|builder|sb|supabase|client)\\s*)\\.where\\(\\s*[\'"`{(\\w]'], remocoes: true, exemplos: ['db/migrations/20260101000000_x.sql', 'src/x/dados.ts'] },
+  banco: { revisores: ['revisor-seguranca'], caminhos: ['\\.sql$'], conteudo: ['\\bwhere\\s*:\\s*(\\{|(eq|and|or|not|inArray|sql)\\b)', '(^\\s*|\\)\\s*|\\b(db|knex|trx|tx|qb|q|query|builder|sb|supabase|client)\\s*)\\.where\\(\\s*[\'"`{(\\w]'], remocoes: true, exemplos: ['db/migrations/20260101000000_x.sql', 'src/x/dados.ts'] },
   config_pipeline: { revisores: ['revisor-seguranca', 'revisor-arquitetura'], caminhos: ['^\\.claude/(pipeline\\.json|agents/|hooks/|settings(\\.local)?\\.json|skills/pipeline/|skills/adjust-pipeline/)'], conteudo: [], exemplos: ['.claude/pipeline.json'] },
   rede_rota: { revisores: ['revisor-seguranca'], caminhos: ['(^|/)api/', '(^|/)route\\.[cm]?[jt]sx?$'], conteudo: ['[\'"]use server[\'"]', 'fetch\\('], remocoes: true, exemplos: ['src/x/servidor.ts', 'src/api/x/route.ts', 'src/app/x/route.ts'] },
   lgpd_ignora: { revisores: ['revisor-lgpd'], caminhos: [], conteudo: [SUPRESSAO.source], todo_arquivo: true, exemplos: [] },
-  lgpd_regras: { revisores: ['revisor-lgpd'], caminhos: ['^\\.claude/hooks/(lgpd-regras|confere-lgpd)', '^\\.claude/hooks/config\\.mjs$', '^\\.claude/agents/revisor-lgpd\\.md$'], conteudo: ['legadoAte'], exemplos: ['.claude/hooks/lgpd-regras.mjs'] },
+  lgpd_regras: { revisores: ['revisor-lgpd'], caminhos: ['^\\.claude/hooks/(lgpd-regras|confere-lgpd)', '^\\.claude/hooks/config\\.mjs$', '^\\.claude/agents/revisor-lgpd\\.md$'], conteudo: ['legadoAte'], remocoes: true, exemplos: ['.claude/hooks/lgpd-regras.mjs'] },
   tela: { revisores: ['revisor-tela'], caminhos: ['^(apps|packages|src)/(?!.*\\.(test|spec|stories)\\.).+\\.(jsx|tsx|vue|svelte|css|scss|html)$'], conteudo: [], exemplos: ['src/x/Tela.jsx'] },
 };
 /** O mínimo de `sempre`, `comportamento` e dos caminhos que tornam o `qa` obrigatório. */

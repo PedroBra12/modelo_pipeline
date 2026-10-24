@@ -387,6 +387,21 @@ test('um binário numa pasta de trabalho aciona os gatilhos de conteúdo (não d
   });
 });
 
+test('imagem removida ou renomeada sem mudar não chama o revisor-lgpd; a adicionada e a mudada chamam (git de verdade)', () => {
+  const png = (n) => Buffer.from([137, 80, 78, 71, 0, n, 2, 0, 255]);
+  com(repositorio([{ arquivos: { 'docs/b.png': png(1), 'docs/c.png': png(2), 'docs/d.png': png(3) } }]), ({ raiz, git }) => {
+    git('rm', '-q', 'docs/b.png');
+    git('mv', 'docs/c.png', 'docs/e.png');
+    writeFileSync(join(raiz, 'docs', 'd.png'), png(9));
+    writeFileSync(join(raiz, 'docs', 'f.png'), png(4));
+    git('add', '-A');
+    git('commit', '-q', '-m', 'imagens');
+    const lgpd = rodar(raiz, 'HEAD~1', 'HEAD', '--json').json().obrigatorios.find((r) => r.nome === 'revisor-lgpd');
+    assert.deepEqual(lgpd.motivos.map((m) => m.arquivo).sort(), ['docs/d.png', 'docs/f.png'], 'só a mudada (d) e a adicionada (f)');
+    assert.equal(lgpd.total, 2);
+  });
+});
+
 test('a base é o merge-base: o que só a main adiantada mudou não entra (git de verdade)', () => {
   const r = repositorio([{ arquivos: { 'src/lib/a.js': 'a\n' } }, { branch: 'trabalho', arquivos: { 'src/lib/b.js': 'b\n' } }]);
   com(r, ({ raiz, git }) => {

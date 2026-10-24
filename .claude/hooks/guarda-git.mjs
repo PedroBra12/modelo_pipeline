@@ -35,9 +35,17 @@ const PULA_CONFERENCIA = /^core\.hookspath/i; // o confere-docs, o confere-lgpd 
 const DESVIA_REMOTO = /^(remote\.|url\.|alias\.|include(if)?\.|branch\..+\.(push)?remote(=|$))/i; // trocaria o destino do push, o esconderia num apelido, ou traria por um include uma configuração que desvia os hooks
 const MUDA_PASTA = /(^|[\s;&|(){}])(cd|chdir|pushd|popd|set-location|sl|push-location|pop-location)(?=[\s;&|)}]|$)/im;
 const AMBIENTE = /(^|\W)(GIT|GH)_\w*\s*=/i; // GIT_DIR, GIT_CONFIG_*, GH_REPO, GH_HOST… (no Windows, sem caixa)
-// vale em qualquer comando, não só no que sobe: a configuração por ambiente desliga os hooks do git, e o NODE_OPTIONS muda o que o node carrega dentro deles
-// (só o nome, sem exigir o "=": o Set-Item env:, o New-Item e o [Environment]::SetEnvironmentVariable do PowerShell, o setx e o env mudam a variável sem escrevê-la como VAR=valor)
-const AMBIENTE_DOS_HOOKS = /\b(GIT_CONFIG\w*|NODE_OPTIONS)\b/i;
+// Vale em qualquer comando, não só no que sobe: a configuração por ambiente (GIT_CONFIG*) desliga os hooks do git, e o NODE_OPTIONS muda o que o
+// node carrega dentro deles. Nega só quem MUDA o ambiente: a atribuição NOME=, export/set/setx NOME, Set-Item/New-Item env:NOME, $env:NOME = e
+// SetEnvironmentVariable(NOME. Ler (grep, echo, printenv, Get-Item, $env:NOME) e tirar (unset, env -u, Remove-Item env:) passam.
+const NOME_DO_AMBIENTE = String.raw`(?:GIT_CONFIG\w*|NODE_OPTIONS)`;
+const MUDA_AMBIENTE_DOS_HOOKS = [
+  new RegExp(String.raw`\b${NOME_DO_AMBIENTE}\s*=(?!=)`, 'i'),
+  new RegExp(String.raw`(^|[\s;&|(){])(export|set|setx)\s+(-\w+\s+)*${NOME_DO_AMBIENTE}\b`, 'i'),
+  new RegExp(String.raw`\b(Set|New)-Item(Property)?\b[^;|\n]*\benv:\s*${NOME_DO_AMBIENTE}\b`, 'i'),
+  new RegExp(String.raw`SetEnvironmentVariable\s*\(\s*['"]?${NOME_DO_AMBIENTE}\b`, 'i'),
+];
+const mudaAmbienteDosHooks = (texto) => MUDA_AMBIENTE_DOS_HOOKS.some((re) => re.test(texto));
 // o comando entre aspas que vai para outro shell é lido também; o codificado não se lê, e se nega
 const SHELL_ANINHADO = /\b(?:bash|sh|zsh|cmd|pwsh|powershell)(?:\.exe)?\s+(?:-c|-command|\/c|\/k)\s+(["'])((?:(?!\1)[\s\S])*)\1/gi;
 const CODIFICADO = /\b(pwsh|powershell)(\.exe)?\s+(-\w+\s+)*-(e|ec|enc|encodedcommand)\b/i;
@@ -206,7 +214,7 @@ export function analisar(comando, repo = lerRepositorio()) {
     total.proibido ??= r.proibido;
     total.sobe ||= r.sobe;
   }
-  if (AMBIENTE_DOS_HOOKS.test(limpo)) total.proibido ??= 'variável GIT_CONFIG_* ou NODE_OPTIONS no comando (desvia os hooks do git)';
+  if (mudaAmbienteDosHooks(limpo)) total.proibido ??= 'mudar GIT_CONFIG_* ou NODE_OPTIONS no ambiente (desvia os hooks do git); ler ou tirar a variável passa';
   if (total.sobe && MUDA_PASTA.test(limpo)) total.proibido ??= 'push ou PR com troca de pasta no comando';
   if (total.sobe && AMBIENTE.test(limpo)) total.proibido ??= 'push ou PR com variável GIT_ ou GH_ no comando';
   return total;

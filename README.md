@@ -162,12 +162,14 @@ Risco aceito: o ciclo de subir e descer entre sessões. Cada degrau para baixo p
    - `portaoRapido`: nome do script no `package.json` que roda checagem de tipos, lint e testes rápidos no fim de cada turno (padrão: `checar:rapido`);
    - `pastasDeTrabalho`: lista de regex das pastas que exigem `AGENTS.md` próprio;
    - `revisao`: os caminhos e conteúdos dos gatilhos do seu projeto (onde mora a permissão, o dado pessoal, o banco, a rede e a tela), somados aos do modelo (ver "O que adaptar").
+
+   Mantenha um agente e um nível por linha em `agentes` e `niveis`: o `ajusta-pipeline.mjs` edita a linha do alvo, então não passe um formatador que reescreva o arquivo.
 5. **Preencha os marcadores `<...>`** em [`CLAUDE.md`](CLAUDE.md), [`AGENTS.md`](AGENTS.md), [`PRODUCT.md`](PRODUCT.md), [`docs/plano.md`](docs/plano.md), [`docs/arquitetura.md`](docs/arquitetura.md) e [`docs/decisoes.md`](docs/decisoes.md). As suas decisões começam na D4.
 6. **Valide a suíte de testes dos hooks:**
    ```bash
    node --test ".claude/hooks/*.test.mjs"
    ```
-7. **Faça o primeiro commit e o PR pelo próprio pipeline.** O `pre-commit` roda os testes, então dê tempo ao comando (uns 2 min). Depois, `git push -u origin pr/inicio` e `gh pr create --draft --base main`. O merge é seu.
+7. **Faça o primeiro commit e o PR pelo próprio pipeline.** O `pre-commit` roda os testes, então dê tempo ao comando (de 1 a 2 min). Depois, `git push -u origin pr/inicio` e `gh pr create --draft --base main`. O merge é seu.
 
 ### 2. Abrir o terminal com o agente Orquestrador (e criar alias)
 
@@ -203,7 +205,7 @@ Para abrir direto com um alias (`nome_alias`), adicione ao seu terminal:
   - Some as pastas do seu projeto em `revisao.gatilhos`, em `comportamento_caminhos` (o `qa`) e no gatilho `tela` do `pipeline.json`. Para que não possam ser tirados sem revisão, some-os também no `PISO_GATILHOS` e no `PISO_REVISAO` do [`config.mjs`](.claude/hooks/config.mjs).
   - O modelo já traz alguns padrões de provedor comum (`service_role`, `Deno.env`, `auth.admin`, `.rpc(`, o `where: {` do Prisma). Eles não casam onde o provedor não existe e não custam nada. Para Supabase, some ao gatilho `permissao` os conteúdos `\bauth\.(uid|jwt|role|users)` e `\bauthenticated\b`.
   - Rode `node .claude/hooks/escolhe-revisores.mjs main HEAD` num diff real que toque cada pasta: o gatilho escrito de memória costuma não casar com nenhum arquivo.
-- **Projeto que já tem dado pessoal no histórico:** ponha `"lgpd": { "legadoAte": "<sha do commit em que adotou o modelo>" }` no `pipeline.json`. O que já estava naquele commit fica como dívida contada (`node .claude/hooks/confere-lgpd.mjs --todos <pastas>`) e sai quando alguém toca na linha. O `legadoAte` só pode recuar ou sair (o `pre-commit` recusa movê-lo para a frente), e mexer nele chama o `revisor-lgpd`. Avalie com o jurídico se o dado real no histórico é um incidente.
+- **Projeto que já tem dado pessoal no histórico:** ponha `"lgpd": { "legadoAte": "<sha do commit em que adotou o modelo>" }` no `pipeline.json`. O que já estava naquele commit fica como dívida contada (`node .claude/hooks/confere-lgpd.mjs --todos <pastas>`) e sai quando alguém toca na linha. O `legadoAte` só vale se for o commit que trouxe o pipeline ou um anterior a ele, então o legado só perdoa o que é de antes do pipeline. Ele só pode recuar ou sair: o `pre-commit` recusa movê-lo para a frente, e mexer nele, inclusive tirá-lo, chama o `revisor-lgpd`. Avalie com o jurídico se o dado real no histórico é um incidente.
 - **Projeto sem dados pessoais (sem LGPD):**
   1. Remova o bloco do matcher `Edit|Write|MultiEdit|NotebookEdit` em `PreToolUse` no [`.claude/settings.json`](.claude/settings.json), e a chamada do `confere-lgpd.mjs` em [`.claude/hooks/git/pre-commit`](.claude/hooks/git/pre-commit) e no `git/pre-merge-commit`.
   2. Apague os gatilhos `lgpd_ignora` e `lgpd_regras` inteiros, e tire o `revisor-lgpd` do `dado_pessoal`, no `pipeline.json` e no `PISO_GATILHOS`.

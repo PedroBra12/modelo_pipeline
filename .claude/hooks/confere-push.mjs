@@ -3,7 +3,7 @@
 // O git passa o remoto e a URL nos argumentos e, na entrada, uma linha por ref: <ref local> <sha local> <ref remota> <sha remoto>.
 // Vale para todo push daqui, como quer que o comando seja escrito; só o usuário passa por cima, com --no-verify.
 // Falha fechado: sem repositório configurado (marcador, ausente, inválido) ou com o arquivo ilegível, nega todo push.
-// O confere-lgpd roda também sobre os arquivos de cada ref que sobe (o diff <remoto>...<local>, ou origin/main...<local> quando a ref é
+// O confere-lgpd roda também sobre os arquivos de cada ref que sobe (commit a commit de <remoto>..<local>, ou de origin/main..<local> quando a ref é
 // nova): é a trava de quem commitou sem o hook (clone à parte, pull --ff-only, PATH com outro node). Achado que bloqueia nega o push.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +49,10 @@ export function avaliarLgpdDoPush(linhas, existe, conferir, regrasOk = regrasCar
       return `não consegui conferir o dado pessoal de ${ref} (${erro instanceof Error ? erro.message : String(erro)})`;
     }
     const bloqueiam = achados.filter(bloqueia);
-    if (bloqueiam.length > 0) return `dado pessoal nos arquivos de ${ref} (confere-lgpd; o commit foi feito sem o hook?):\n${relatorio(bloqueiam)}`;
+    if (bloqueiam.length > 0) {
+      const commits = [...new Set(bloqueiam.map((a) => a.commit).filter(Boolean).map((c) => c.slice(0, 10)))];
+      return `dado pessoal nos commits de ${ref} (confere-lgpd; o commit foi feito sem o hook?):\n${relatorio(bloqueiam)}${commits.length > 0 ? `\nCommit(s): ${commits.join(', ')}` : ''}`;
+    }
   }
   return null;
 }

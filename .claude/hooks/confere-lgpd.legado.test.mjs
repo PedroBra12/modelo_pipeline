@@ -157,17 +157,102 @@ function gate(base, git, mensagem) {
   const c = git(...semHooks, 'commit', '-q', '-m', mensagem);
   return { ok: c.ok, saida: `${saida}${c.saida}` };
 }
-/** Commita a dívida de antes e ancora o legado nesse commit (o pipeline.json com a chave entra no commit seguinte). */
+/** O arquivo que marca a adoção do pipeline: o commit mais antigo que o adiciona é o teto do legadoAte. */
+const MARCA_DA_ADOCAO = ['.claude', 'hooks', 'confere-lgpd.mjs'];
+const poeMarcaDaAdocao = (base) => {
+  mkdirSync(join(base, '.claude', 'hooks'), { recursive: true });
+  writeFileSync(join(base, ...MARCA_DA_ADOCAO), '// o hook que a adoção traz\n');
+};
+/**
+ * Commita a dívida de antes e ancora o legado nesse commit. O commit seguinte é a adoção: traz o hook (a marca), o pipeline.json e a
+ * chave, e o legadoAte (a dívida) é ancestral dele. Devolve o sha da dívida; o da adoção fica em \`ancorar.adocao\`.
+ */
 function ancorar(base, git) {
   git('add', '-A');
   assert.equal(git(...semHooks, 'commit', '-q', '-m', 'docs: antes do pipeline').ok, true);
   const sha = git('rev-parse', 'HEAD').saida.trim();
   mkdirSync(join(base, '.claude'), { recursive: true });
   writeFileSync(join(base, '.claude', 'pipeline.json'), JSON.stringify({ lgpd: { legadoAte: sha } }));
+  poeMarcaDaAdocao(base);
   git('add', '-A');
-  assert.equal(git(...semHooks, 'commit', '-q', '-m', 'ancora o legado').ok, true);
+  assert.equal(git(...semHooks, 'commit', '-q', '-m', 'adoção do pipeline: o hook, o pipeline.json e a âncora').ok, true);
+  ancorar.adocao = git('rev-parse', 'HEAD').saida.trim();
   return sha;
 }
+
+test('o legadoAte é preso à adoção: tirar a chave e pô-la de volta num commit mais novo não adianta a âncora', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const { base, git } = repositorio();
+  try {
+    writeFileSync(join(base, 'docs', 'contato.md'), `# contato\n${tel}\n`);
+    const divida = ancorar(base, git);
+    const adocao = ancorar.adocao;
+    const pipeline = (legadoAte, extra = {}) => writeFileSync(join(base, '.claude', 'pipeline.json'), JSON.stringify({ ...extra, ...(legadoAte === undefined ? {} : { lgpd: { legadoAte } }) }));
+    // na adoção a chave vale: mexer no título mantém a dívida de antes perdoada
+    writeFileSync(join(base, 'docs', 'contato.md'), `# contato da loja\n${tel}\n`);
+    git('add', '-A');
+    let r = gate(base, git, 'docs: título');
+    assert.equal(r.ok, true, r.saida);
+    const maisNovo = git('rev-parse', 'HEAD').saida.trim(); // depois da adoção
+    // tirar a chave (livre) ...
+    pipeline(undefined);
+    git('add', '-A');
+    r = gate(base, git, 'tira a chave');
+    assert.equal(r.ok, true, r.saida);
+    // ... e pô-la de volta apontando para um commit mais novo que a adoção: o commit passa (não havia valor de antes), mas a âncora não vale
+    pipeline(maisNovo);
+    git('add', '-A');
+    r = gate(base, git, 'põe a chave de volta, mais nova');
+    assert.equal(r.ok, true, r.saida);
+    writeFileSync(join(base, 'docs', 'contato.md'), `# contato da loja toda\n${tel}\n`);
+    git('add', '-A');
+    r = gate(base, git, 'docs: outro título');
+    assert.equal(r.ok, false, 'a âncora mais nova que a adoção não perdoa a dívida');
+    assert.match(r.saida, /telefone_literal/);
+    assert.match(r.saida, /legadoAte.*adoção/);
+    // a própria adoção vale (igual a ela), e a dívida (ancestral dela) também; a chave só recua (adocao -> divida), nunca avança
+    git('reset', '-q', '--hard', 'HEAD');
+    for (const valor of [undefined, adocao, divida]) {
+      pipeline(valor);
+      git('add', '-A');
+      r = gate(base, git, `chave ${valor === undefined ? 'fora' : valor.slice(0, 7)}`);
+      assert.equal(r.ok, true, r.saida);
+      if (valor === undefined) continue;
+      writeFileSync(join(base, 'docs', 'contato.md'), `# contato ${valor.slice(0, 7)}
+${tel}
+`);
+      git('add', '-A');
+      r = gate(base, git, `docs: título com a âncora ${valor.slice(0, 7)}`);
+      assert.equal(r.ok, true, `a âncora ${valor.slice(0, 7)} é da adoção ou anterior: vale. ${r.saida}`);
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('sem o hook no histórico (o pipeline ainda não foi adotado) o legadoAte não vale', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const { base, git } = repositorio();
+  try {
+    writeFileSync(join(base, 'docs', 'contato.md'), `# contato\n${tel}\n`);
+    git('add', '-A');
+    assert.equal(git(...semHooks, 'commit', '-q', '-m', 'dívida').ok, true);
+    gravaPipelineSimples(base, git('rev-parse', 'HEAD').saida.trim());
+    git('add', '-A');
+    assert.equal(git(...semHooks, 'commit', '-q', '-m', 'chave sem adoção').ok, true);
+    writeFileSync(join(base, 'docs', 'contato.md'), `# contato da loja\n${tel}\n`);
+    git('add', '-A');
+    const r = gate(base, git, 'docs: título');
+    assert.equal(r.ok, false);
+    assert.match(r.saida, /legadoAte.*adoção/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+const gravaPipelineSimples = (base, legadoAte) => {
+  mkdirSync(join(base, '.claude'), { recursive: true });
+  writeFileSync(join(base, '.claude', 'pipeline.json'), JSON.stringify({ lgpd: { legadoAte } }));
+};
 
 test('sem a chave lgpd.legadoAte não há legado nenhum: a linha antiga também bloqueia (o caso do modelo)', () => {
   const tel = regra('telefone_literal').pega[0];

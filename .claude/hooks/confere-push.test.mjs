@@ -119,7 +119,7 @@ function comOrigemMain(base, { antes, semOrigemMain = false } = {}) {
   for (const [k, v] of [['user.name', 'teste'], ['user.email', 'teste@example.com']]) git(raiz, 'config', k, v);
   mkdirSync(join(raiz, 'docs'));
   writeFileSync(join(raiz, 'a.txt'), 'a\n');
-  git(raiz, 'add', '-A');
+  git(raiz, 'add', 'a.txt'); // os hooks copiados só entram no repositório quando o teste os adota (add -A)
   git(raiz, 'commit', '-q', '-m', 'a');
   antes?.({ raiz, git: (...a) => git(raiz, ...a) });
   git(raiz, 'remote', 'add', 'origin', remoto);
@@ -237,5 +237,64 @@ test('push: o legadoAte da base que não é ancestral da ref não vale', () => {
     const r = hook([linha(titulo)]);
     assert.equal(r.status, 1, 'sem legado, a linha antiga nega');
     assert.match(r.stderr, /telefone_literal/);
+  });
+});
+
+test('push: o legadoAte da base que é posterior à adoção do pipeline não vale (a âncora adiantada depois de tirar e pôr a chave)', () => {
+  comBase({
+    antes: ({ raiz, git }) => {
+      git('add', '-A'); // o hook copiado entra aqui: esta é a adoção
+      git('commit', '-q', '-m', 'adoção do pipeline');
+      writeFileSync(join(raiz, 'docs', 'contato.md'), `# contato\n${TEL}\n`);
+      git('add', '-A');
+      git('commit', '-q', '-m', 'dívida depois da adoção');
+      const adiantada = git('rev-parse', 'HEAD').saida;
+      writeFileSync(join(raiz, '.claude', 'pipeline.json'), JSON.stringify({ ...CONFIG_PADRAO, lgpd: { legadoAte: adiantada } }));
+      git('add', '-A');
+      git('commit', '-q', '-m', 'chave adiantada');
+    },
+  }, ({ commita, hook, linha }) => {
+    const titulo = commita('docs/contato.md', `# contato da loja\n${TEL}\n`, 'título');
+    const r = hook([linha(titulo)]);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /telefone_literal/);
+  });
+});
+
+test('push: cada commit da ref é conferido contra o pai, não só a árvore final: o dado pessoal de um commit do meio, apagado depois, nega e o commit é nomeado', () => {
+  comBase({}, ({ commita, hook, linha }) => {
+    commita('docs/a.md', '# um\n');
+    const meio = commita('docs/contato.md', `${TEL}\n`, 'contato');
+    const fim = commita('docs/contato.md', '# apagado\n', 'apaga');
+    const r = hook([linha(fim)]);
+    assert.equal(r.status, 1, 'a árvore final está limpa, mas o commit do meio fica no histórico');
+    assert.match(r.stderr, /telefone_literal/);
+    assert.match(r.stderr, new RegExp(meio.slice(0, 10)), 'diz em que commit está');
+    assert.doesNotMatch(r.stderr, /90000/);
+  });
+});
+
+test('push: o merge da main que já está no origin/main não conta (só o que o merge resolveu de novo), e o commit raiz da ref é conferido', () => {
+  comBase({}, ({ raiz, git, commita, hook, linha, sha }) => {
+    commita('docs/a.md', '# a\n');
+    git('switch', '-q', 'main');
+    mkdirSync(join(raiz, 'docs'), { recursive: true });
+    writeFileSync(join(raiz, 'docs', 'da-main.md'), `${TEL}\n`);
+    git('add', '-A');
+    git('commit', '-q', '-m', 'dívida que já está na main');
+    git('push', '-q', '--no-verify', 'origin', 'main');
+    git('switch', '-q', 'pr/x');
+    assert.equal(git('merge', '--no-ff', '-q', '-m', 'junta a main', 'main').ok, true);
+    assert.equal(hook([linha(sha())]).status, 0, 'o merge traz o que o origin/main já tem');
+    // um commit raiz (sem pai) numa ref nova, sem origin/main em comum, é conferido inteiro
+    const sujo = join(raiz, '..', 'sujo.md');
+    writeFileSync(sujo, `${TEL}\n`);
+    const plumbing = (args, input) => spawnSync('git', args, { cwd: raiz, input, encoding: 'utf8' }).stdout.trim();
+    const blob = plumbing(['hash-object', '-w', sujo]);
+    const arvore = plumbing(['mktree'], `100644 blob ${blob}\tsujo.md\n`);
+    const raizSuja = plumbing(['commit-tree', '-m', 'raiz com dado pessoal', arvore]);
+    const r = hook([linha(raizSuja, ZERO, 'refs/heads/orfa')]);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /sujo\.md/);
   });
 });

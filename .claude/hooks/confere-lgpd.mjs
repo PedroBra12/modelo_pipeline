@@ -261,7 +261,7 @@ const calado = { maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore
 /**
  * O sha completo de `lgpd.legadoAte`, lido do pipeline.json em `config` (o HEAD no commit; no push, a base, que é a regra de quem já
  * está no repositório: um commit que põe ou muda a chave não perdoa a si mesmo); null = sem legado. Só vale se for ancestral de
- * `destino` (o HEAD, ou o que sobe no push): o commit de outro histórico não ancora nada.
+ * `destino` (o HEAD, ou o que sobe no push: o commit de outro histórico não ancora nada) e do commit da adoção do pipeline, ou ele mesmo.
  */
 function legadoDoRepositorio(raiz, { config = 'HEAD', destino = 'HEAD' } = {}) {
   let texto;
@@ -286,6 +286,27 @@ function legadoDoRepositorio(raiz, { config = 'HEAD', destino = 'HEAD' } = {}) {
     process.stderr.write(`confere-lgpd: sem legado, lgpd.legadoAte ${valor} não é ancestral de ${destino}\n`);
     return null;
   }
+  // preso à adoção: o legadoAte é a dívida de antes do pipeline, então tem de ser ancestral do commit que o trouxe (o mais antigo que adicionou o hook),
+  // ou ele mesmo. Sem isso, tirar a chave e pô-la de volta num commit mais novo adiantaria a âncora e perdoaria o que veio depois.
+  let adocao = null;
+  try {
+    const adicoes = execFileSync('git', ['-C', raiz, 'log', '--diff-filter=A', '--format=%H', destino, '--', '.claude/hooks/confere-lgpd.mjs'], { ...calado, encoding: 'utf8' }).split('\n').filter(Boolean);
+    adocao = adicoes.at(-1) ?? null; // o log vai do mais novo ao mais antigo: o último da lista é a adoção
+  } catch {
+    adocao = null;
+  }
+  if (adocao === null) {
+    process.stderr.write(`confere-lgpd: sem legado, lgpd.legadoAte ${valor} não tem adoção a que se prender (.claude/hooks/confere-lgpd.mjs não está no histórico de ${destino})\n`);
+    return null;
+  }
+  if (completo !== adocao) {
+    try {
+      execFileSync('git', ['-C', raiz, 'merge-base', '--is-ancestor', completo, adocao], calado);
+    } catch {
+      process.stderr.write(`confere-lgpd: sem legado, lgpd.legadoAte ${valor} é posterior à adoção do pipeline (${adocao.slice(0, 10)}): só vale a dívida de antes dela\n`);
+      return null;
+    }
+  }
   return completo;
 }
 
@@ -300,20 +321,23 @@ function renomesDesde(raiz, sha, destino) {
   return mapa;
 }
 
-const ancorasDoRepositorio = new Map();
-/** O texto de `rel` (o nome em `destino`) no commit da âncora e o nome que ele tinha lá; { ancora: null } sem legado ou se o arquivo não existia. */
+const legadosDoRepositorio = new Map();
+const renomesDoLegado = new Map();
+/**
+ * O texto de `rel` (o nome em `nomesEm`) no commit da âncora e o nome que ele tinha lá; { ancora: null } sem legado ou se o arquivo não existia.
+ * `contexto`: `config` (de onde sai a regra), `destino` (de quem a âncora é ancestral) e `nomesEm` (o commit em que `rel` é o nome do arquivo; `destino` por padrão).
+ */
 function ancoraDe(raiz, rel, contexto = {}) {
-  const { config = 'HEAD', destino = 'HEAD' } = contexto;
-  const chaveDoContexto = `${raiz}\0${config}\0${destino}`;
-  if (!ancorasDoRepositorio.has(chaveDoContexto)) {
-    const sha = legadoDoRepositorio(raiz, contexto);
-    ancorasDoRepositorio.set(chaveDoContexto, sha === null ? null : { sha, renomes: renomesDesde(raiz, sha, destino) });
-  }
-  const dados = ancorasDoRepositorio.get(chaveDoContexto);
-  if (dados === null) return { ancora: null, relAncora: rel };
-  const relAncora = dados.renomes.get(rel) ?? rel;
+  const { config = 'HEAD', destino = 'HEAD', nomesEm = destino } = contexto;
+  const chaveDoLegado = `${raiz}\0${config}\0${destino}`;
+  if (!legadosDoRepositorio.has(chaveDoLegado)) legadosDoRepositorio.set(chaveDoLegado, legadoDoRepositorio(raiz, { config, destino }));
+  const sha = legadosDoRepositorio.get(chaveDoLegado);
+  if (sha === null) return { ancora: null, relAncora: rel };
+  const chaveDosRenomes = `${sha}\0${raiz}\0${nomesEm}`;
+  if (!renomesDoLegado.has(chaveDosRenomes)) renomesDoLegado.set(chaveDosRenomes, renomesDesde(raiz, sha, nomesEm));
+  const relAncora = renomesDoLegado.get(chaveDosRenomes).get(rel) ?? rel;
   try {
-    return { ancora: decodificar(execFileSync('git', ['-C', raiz, 'show', `${dados.sha}:${relAncora}`], calado)), relAncora };
+    return { ancora: decodificar(execFileSync('git', ['-C', raiz, 'show', `${sha}:${relAncora}`], calado)), relAncora };
   } catch {
     return { ancora: null, relAncora }; // o arquivo não existia na âncora
   }
@@ -364,20 +388,32 @@ function mudancaDoLegado(raiz) {
 const ARVORE_VAZIA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 /**
- * Os achados nos arquivos que o push de `local` leva em relação a `base` (o diff `base...local`; a árvore vazia quando a base é null,
- * e então o repositório todo). A regra do legado é a da base (quem já está no repositório), seguida até `local`. Para o hook pre-push.
+ * Os achados nos arquivos que o push de `local` leva em relação a `base`, **commit a commit**: cada commit de `git rev-list --reverse base..local`
+ * (todos os de `local` quando a base é null) contra o pai dele, e não só a árvore final: o dado pessoal de um commit do meio, apagado depois,
+ * fica no histórico que sobe. Num merge só entra o que difere de todos os pais (o que ele resolveu de novo); o que veio da outra ponta já está
+ * no remoto ou aparece nos commits dela. O commit raiz é conferido inteiro. Cada achado leva o `commit`. A regra do legado é a da base (quem já
+ * está no repositório), seguida até o commit conferido. Para o hook pre-push.
  */
 export function conferirRef(raiz, baseOuNull, local) {
-  const base = baseOuNull ?? ARVORE_VAZIA;
-  const alvo = base === ARVORE_VAZIA ? [base, local] : [`${base}...${local}`];
-  const campos = git(raiz, '-c', 'core.quotepath=false', 'diff', '--name-status', '-M', '--diff-filter=ACMRT', '-z', ...alvo, '--').toString('utf8').split('\0');
-  const nomes = [];
-  for (let i = 0; i < campos.length && campos[i] !== ''; ) {
-    if (/^[RC]/.test(campos[i])) { nomes.push(campos[i + 2]); i += 3; }
-    else { nomes.push(campos[i + 1]); i += 2; }
+  const faixa = baseOuNull === null ? [local] : [`${baseOuNull}..${local}`];
+  const commits = git(raiz, 'rev-list', '--reverse', ...faixa).toString('utf8').split('\n').filter(Boolean);
+  const achados = [];
+  for (const commit of commits) {
+    const pais = git(raiz, 'rev-list', '--parents', '-n', '1', commit).toString('utf8').trim().split(' ').slice(1);
+    const nomes = [];
+    if (pais.length > 1) {
+      for (const nome of git(raiz, '-c', 'core.quotepath=false', 'diff-tree', '-r', '--cc', '--name-only', '-z', '--no-commit-id', commit).toString('utf8').split('\0')) if (nome !== '') nomes.push(nome);
+    } else {
+      const campos = git(raiz, '-c', 'core.quotepath=false', 'diff-tree', '-r', '--root', '-M', '--name-status', '--diff-filter=ACMRT', '-z', '--no-commit-id', commit).toString('utf8').split('\0');
+      for (let i = 0; i < campos.length && campos[i] !== ''; ) {
+        if (/^[RC]/.test(campos[i])) { nomes.push(campos[i + 2]); i += 3; }
+        else { nomes.push(campos[i + 1]); i += 2; }
+      }
+    }
+    const contexto = { config: baseOuNull ?? ARVORE_VAZIA, destino: local, nomesEm: commit };
+    for (const a of conferirPares(raiz, nomes.map((rel) => [rel, rel]), (rel) => git(raiz, 'show', `${commit}:${rel}`), contexto)) achados.push({ ...a, commit });
   }
-  const contexto = { config: base, destino: local };
-  return conferirPares(raiz, nomes.map((rel) => [rel, rel]), (rel) => git(raiz, 'show', `${local}:${rel}`), contexto);
+  return achados;
 }
 
 function comoPreCommit() {

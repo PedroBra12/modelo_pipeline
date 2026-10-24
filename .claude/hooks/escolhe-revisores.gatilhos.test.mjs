@@ -83,11 +83,11 @@ test('banco: .sql, migrations/ e schema.prisma pelo caminho', () => {
 test('banco: o filtro de consulta preso a quem chama (o receptor de .from( (client, db, sb, knex, trx, tx, admin), .where( de consulta, where: {, .eq(\', .rpc() chama a segurança, e tirá-lo também', () => {
   for (const l of ["await supabase.from('clientes').select()", 'client.from("t")', 'db.from(t)', 'sb.from(`t`)', "knex.from('t')", 'trx.from("t")', 'tx.from(t)', 'admin.from("t")',
     'knex("t").where("id", id)', '  .where(eq(t.dono, id))', 'await db.select().from(t).where(eq(t.id, 1))', 'query.where({ id })', 'q.where(and(a, b))', 'qb.where(`id = ${id}`)', 'db.where(x)',
-    'findMany({ where: { dono: id } })', 'where: {', "db.eq('dono', id)", 'x.eq(`dono`, id)', 'await sb.rpc("f")', 'db.rpc(f)']) {
+    'findMany({ where: { dono: id } })', 'where: {', "  .from('clientes')", '  .from("t")', 'where: eq(t.dono, id)', 'where: and(a, b)', 'where: or(a, b)', 'where: not(x)', 'where: inArray(t.id, ids)', "where: sql`id = 1`", "db.eq('dono', id)", 'x.eq(`dono`, id)', 'await sb.rpc("f")', 'db.rpc(f)']) {
     assert.ok(linha(l, 'banco'), l);
     assert.ok(chama([arq('src/x/dados.ts', [], [l])], 'revisor-seguranca', 'banco'), `removida: ${l}`);
   }
-  for (const l of ['const x = Array.from(y);', "const b = Buffer.from('abc');", 'Observable.from(xs)', 'this.from(x)', 'const where: Foo = {};', 'type Q = { where: Foo }', 'const where = 1;', 'return elsewhere(x);', 'const a = { from: 1 };', 'list.where()', 'lodash.where(x)', 'arr.eq(1)', 'const m = new Map(); m.from(x)']) {
+  for (const l of ['const x = Array.from(y);', "const b = Buffer.from('abc');", 'Observable.from(xs)', 'this.from(x)', 'const where: Foo = {};', 'type Q = { where: Foo }', 'const where = 1;', 'return elsewhere(x);', 'const a = { from: 1 };', 'list.where()', 'lodash.where(x)', '  .from(x)', 'where: Foo', 'where: opts.where', 'where: undefined', 'const where: Foo = {}', 'where: orderBy', 'arr.eq(1)', 'const m = new Map(); m.from(x)']) {
     assert.ok(!linha(l, 'banco'), `${l} não é consulta`);
   }
 });
@@ -96,7 +96,7 @@ test('banco: o filtro de consulta preso a quem chama (o receptor de .from( (clie
 
 test('dado_pessoal: o nome composto também chama (data_nascimento, cliente_cpf, email_hmac, rg, cnpj, documento, whatsapp, endereço, endereço de entrega, anonimizar, purgar, cep, phone)', () => {
   for (const l of ['data_nascimento date', 'cliente_cpf text', 'email_hmac text', 'const cpf = 1', 'const userEmail = 1', 'e_mail', 'celular', 'telefone', 'phoneNumber', 'send(whatsapp)', 'endereço', 'endereco', 'anonimizar(x)', 'purgarDados()', 'cnpj', 'cliente_cnpj', 'cnpjEmpresa', 'cep',
-    'rg', 'rg_numero', 'cliente_rg', 'const documento = 1', 'documentoFiscal', 'shipping_address', 'billingAddress', 'home_address text', 'postal_address', 'street_address', 'emailAddress', 'address_line2', 'addressLine1']) {
+    'rg', 'rg_numero', 'cliente_rg', 'const documento = 1', 'documentoFiscal', 'shipping_address', 'billingAddress', 'home_address text', 'postal_address', 'street_address', 'emailAddress', 'address_line2', 'addressLine1', 'cliente.address', 'user.address.street', 'const e = pessoa.address;']) {
     assert.ok(linha(l, 'dado_pessoal', 'revisor-lgpd'), l);
     assert.ok(linha(l, 'dado_pessoal', 'revisor-seguranca'), `segurança: ${l}`);
   }
@@ -131,8 +131,8 @@ test('ignorar_conteudo: .md, .test/.spec/.cy, __tests__, __mocks__ e tests/ não
 
 // ---------- documentação e lockfile ----------
 
-test('os gatilhos de caminho não valem para documentação (.md, docs/), menos o config_pipeline e o lgpd_regras, que cobrem os .md de .claude/ de propósito', () => {
-  for (const c of ['docs/login.md', 'docs/auth/x.md', 'docs/api/x.md', 'docs/servidor/x.txt', 'docs/migrations/001.sql', 'docs/schema.prisma', 'src/auth/README.md', 'src/api/LEIAME.md', 'src/routes/x.md', 'README.md', 'docs/guards/a.css', 'docs/ui/Tela.tsx']) {
+test('os gatilhos de caminho não valem para documentação (só por extensão: .md, .mdx, .txt, .rst), menos o config_pipeline e o lgpd_regras, que cobrem os .md de .claude/ de propósito', () => {
+  for (const c of ['docs/login.md', 'docs/auth/x.md', 'docs/api/x.md', 'docs/servidor/x.txt', 'src/auth/README.md', 'src/api/LEIAME.md', 'src/routes/x.md', 'README.md', 'docs/auth/x.mdx', 'docs/api/notas.rst', 'docs/db/migrations.txt', 'src/api/NOTAS.TXT']) {
     const r = escolher([arq(c, ['x'])], cfg);
     assert.ok(!r.obrigatorios.some((x) => x.motivos.some((m) => m.por === 'caminho')), `${c}: documentação não dispara gatilho de caminho`);
   }
@@ -143,6 +143,16 @@ test('os gatilhos de caminho não valem para documentação (.md, docs/), menos 
   assert.ok(chama([arq('.claude/agents/qa.md', ['x'])], 'revisor-seguranca', 'config_pipeline'), 'o config_pipeline cobre o .md');
   assert.ok(chama([arq('src/auth/x.ts', ['x'])], 'revisor-seguranca', 'permissao'), 'o código segue valendo');
   assert.ok(!chama([arq('docs/login.md', ['grant select'])], 'revisor-seguranca', 'permissao'), 'e o conteúdo do .md já não valia');
+});
+
+test('a isenção é por extensão, não por pasta: o código dentro de docs/ ou de apps/docs/ volta a disparar o gatilho de caminho', () => {
+  const caminhosDisparam = (c, gatilho) => chama([arq(c, ['x'])], 'revisor-seguranca', gatilho);
+  assert.ok(caminhosDisparam('docs/x.sql', 'banco'));
+  assert.ok(caminhosDisparam('docs/migrations/001.sql', 'banco'));
+  assert.ok(caminhosDisparam('docs/schema.prisma', 'banco'));
+  assert.ok(caminhosDisparam('apps/docs/app/api/x/route.ts', 'rede_rota'));
+  assert.ok(caminhosDisparam('docs/guards/a.css', 'permissao'));
+  assert.ok(caminhosDisparam('docs/login/index.ts', 'permissao'));
 });
 
 test('lockfile não é código: sozinho não chama o sempre, o qa nem gatilho nenhum de caminho', () => {
@@ -197,6 +207,14 @@ test('o binário roda só as regras de caminho e de binário do confere-lgpd: a 
   assert.deepEqual(escolher([binario('src/x/g.avif')], cfg).obrigatorios.map((x) => x.motivos.map((m) => m.por)), [['binario_desconhecido']]);
 });
 
+test('imagem removida ou renomeada sem mudar não chama o revisor-lgpd; a adicionada, a mudada e a renomeada com mudança chamam (cada imagem nova custa uma revisão de LGPD, de propósito)', () => {
+  const imagem = (status) => ({ caminho: 'docs/print.png', binario: true, ...(status === undefined ? {} : { status }), linhas: [], removidas: [] });
+  for (const status of ['D', 'R100']) assert.deepEqual(escolher([imagem(status)], cfg).obrigatorios, [], status);
+  for (const status of ['A', 'M', 'R090', 'R050', undefined]) {
+    assert.deepEqual(escolher([imagem(status)], cfg).obrigatorios.map((x) => [x.nome, x.motivos.map((m) => m.por)]), [['revisor-lgpd', ['imagem_no_repositorio']]], String(status));
+  }
+});
+
 test('o outro binário em pasta de trabalho continua disparando os gatilhos de conteúdo, e o do confere-lgpd (binário desconhecido) também', () => {
   const binario = (caminho) => ({ caminho, binario: true, linhas: [], removidas: [] });
   const r = escolher([binario('src/x/dados.dat')], cfg);
@@ -220,6 +238,6 @@ test('mexer no legadoAte (em qualquer arquivo) chama o revisor-lgpd pelo gatilho
   for (const c of ['.claude/pipeline.json', 'src/x/dados.ts']) {
     assert.ok(chama([arq(c, ['  "lgpd": { "legadoAte": "abc1234" }'])], 'revisor-lgpd', 'lgpd_regras'), c);
   }
-  assert.ok(chama([arq('.claude/pipeline.json', [], ['  "lgpd": { "legadoAte": "abc1234" }'])], 'revisor-lgpd', 'lgpd_regras') === false, 'a linha removida não conta (o gatilho não tem remocoes)');
+  assert.ok(chama([arq('.claude/pipeline.json', [], ['  "lgpd": { "legadoAte": "abc1234" }'])], 'revisor-lgpd', 'lgpd_regras'), 'tirar a chave também chama (remocoes): tirar e pôr de volta não passa batido');
   assert.ok(!chama([arq('docs/a.md', ['legadoAte'])], 'revisor-lgpd', 'lgpd_regras'), 'documentação não');
 });

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ARQUIVO, CONFIGURE, MARCADOR, ESCADA, PISOS, PISO_GATILHOS, conferirPisos, lerAgentes, lerAjuste, lerNiveis, lerPastas, lerPortao, lerRepositorio, lerRevisao, localizar, revisaoDeObjeto, urlDoRepositorio } from './config.mjs';
+import { ARQUIVO, CONFIGURE, MARCADOR, ESCADA, PISOS, PISO_GATILHOS, conferirPisos, lerAgentes, lerAjuste, lerLegadoAte, lerNiveis, lerPastas, lerPortao, lerRepositorio, lerRevisao, localizar, revisaoDeObjeto, urlDoRepositorio } from './config.mjs';
 
 /** Roda `fn(caminho)` com um pipeline.json temporário (objeto vira JSON; texto vai como está; undefined = sem arquivo). */
 function comArquivo(conteudo, fn) {
@@ -18,14 +18,33 @@ function comArquivo(conteudo, fn) {
   }
 }
 
-test('o pipeline.json do projeto é JSON válido e tem os sete campos; o repositorio é o marcador ou um dono/repo', () => {
+test('o pipeline.json do projeto é JSON válido e tem os sete campos, e só o lgpd é opcional; o repositorio é o marcador ou um dono/repo', () => {
   const dados = JSON.parse(readFileSync(ARQUIVO, 'utf8'));
-  assert.deepEqual(Object.keys(dados).sort(), ['agentes', 'ajuste', 'niveis', 'pastasDeTrabalho', 'portaoRapido', 'repositorio', 'revisao']);
+  const obrigatorios = ['agentes', 'ajuste', 'niveis', 'pastasDeTrabalho', 'portaoRapido', 'repositorio', 'revisao'];
+  const chaves = Object.keys(dados).sort();
+  for (const c of obrigatorios) assert.ok(chaves.includes(c), `falta ${c}`);
+  assert.deepEqual(chaves.filter((c) => !obrigatorios.includes(c)).filter((c) => c !== 'lgpd'), [], 'além dos sete, só o lgpd (opcional)');
   const repo = lerRepositorio();
   if (dados.repositorio === MARCADOR) assert.ok(repo.erro?.startsWith(CONFIGURE), 'o marcador falha fechado');
   else assert.deepEqual(repo, { valor: dados.repositorio, erro: null });
   assert.equal(lerPortao().erro, null);
   assert.equal(lerPastas().erro, null);
+});
+
+test('a chave lgpd é opcional: o pipeline.json lê igual com ela e sem ela, e o lgpd.legadoAte só vale bem formado', () => {
+  const dados = JSON.parse(readFileSync(ARQUIVO, 'utf8'));
+  const base = Object.fromEntries(Object.entries(dados).filter(([k]) => k !== 'lgpd'));
+  const lerTudo = (c) => [lerRepositorio(c).erro, lerPortao(c).erro, lerPastas(c).erro, lerAgentes(c).erro, lerNiveis(c).erro, lerRevisao(c).erro, lerAjuste(c).erro];
+  comArquivo(base, (c) => {
+    assert.deepEqual(lerTudo(c).filter((e) => e !== null && !e.startsWith(CONFIGURE)), [], 'sem a chave');
+    assert.deepEqual(lerLegadoAte(c), { valor: null, erro: null });
+  });
+  comArquivo({ ...base, lgpd: { legadoAte: 'abc1234' } }, (c) => {
+    assert.deepEqual(lerTudo(c).filter((e) => e !== null && !e.startsWith(CONFIGURE)), [], 'com a chave');
+    assert.deepEqual(lerLegadoAte(c), { valor: 'abc1234', erro: null });
+  });
+  comArquivo({ ...base, lgpd: {} }, (c) => assert.deepEqual(lerLegadoAte(c), { valor: null, erro: null }));
+  comArquivo({ ...base, lgpd: { legadoAte: 'main' } }, (c) => assert.match(lerLegadoAte(c).erro, /legadoAte/));
 });
 
 test('repositorio: dono/repo vale; marcador, ausente, inválido e arquivo ilegível falham com a mensagem de configurar', () => {

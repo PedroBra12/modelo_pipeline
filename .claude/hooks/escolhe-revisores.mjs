@@ -68,10 +68,10 @@ function naoRastreados(cwd) {
   };
   return git(['ls-files', '--others', '--exclude-standard', '-z'], cwd).split('\0').filter(Boolean).filter(ehArquivo).map((caminho) => {
     const bruto = readFileSync(join(cwd, caminho));
-    if (bruto.includes(0)) return { caminho, binario: true, linhas: [], removidas: [] };
+    if (bruto.includes(0)) return { caminho, binario: true, status: 'A', linhas: [], removidas: [] };
     const linhas = bruto.toString('utf8').split('\n');
     if (linhas.at(-1) === '') linhas.pop();
-    return { caminho, binario: false, linhas: linhas.map((texto, i) => ({ n: i + 1, texto })), removidas: [] };
+    return { caminho, binario: false, status: 'A', linhas: linhas.map((texto, i) => ({ n: i + 1, texto })), removidas: [] };
   });
 }
 
@@ -88,6 +88,23 @@ export function conferirReferencias(refs, cwd = process.cwd()) {
   }
 }
 
+/** O estado de cada caminho do diff (`A`, `M`, `D`, `R100`...): no renome, o novo leva o `R<similaridade>` e o antigo, `D`. */
+function estadosDoDiff(alvo, cwd) {
+  const campos = git([...FLAGS_DIFF.filter((x) => x !== '--no-renames'), '--name-status', '-M', '-z', ...alvo, '--'], cwd).split('\0');
+  const estados = new Map();
+  for (let i = 0; i < campos.length && campos[i] !== ''; ) {
+    if (/^[RC]/.test(campos[i])) {
+      if (campos[i].startsWith('R')) estados.set(campos[i + 1], 'D');
+      estados.set(campos[i + 2], campos[i]);
+      i += 3;
+    } else {
+      estados.set(campos[i + 1], campos[i]);
+      i += 2;
+    }
+  }
+  return estados;
+}
+
 /** O diff de `base...head`, ou do HEAD para a árvore (`trabalho`). */
 export function lerDiff({ base, head, trabalho = false, cwd = process.cwd() }) {
   let alvo = ['HEAD'];
@@ -96,7 +113,8 @@ export function lerDiff({ base, head, trabalho = false, cwd = process.cwd() }) {
     alvo = [`${base}...${head}`];
   }
   const nomes = git([...FLAGS_DIFF, '--name-only', '-z', ...alvo, '--'], cwd).split('\0').filter(Boolean);
-  const arquivos = interpretarDiff(git([...FLAGS_DIFF, ...alvo, '--'], cwd), nomes);
+  const estados = estadosDoDiff(alvo, cwd);
+  const arquivos = interpretarDiff(git([...FLAGS_DIFF, ...alvo, '--'], cwd), nomes).map((a) => ({ ...a, status: estados.get(a.caminho) }));
   return trabalho ? [...arquivos, ...naoRastreados(cwd)] : arquivos;
 }
 
@@ -182,9 +200,10 @@ const ehCodigo = (caminho) => ehArquivoDeCodigo(caminho);
 const binarioEmPasta = (caminho, pastas) => !/\.md$/i.test(caminho) && pastas.some((re) => re.test(caminho));
 // imagem, fonte, pdf e vídeo: binário esperado, sem texto a ler. Não contam como ilegíveis nem disparam gatilho de conteúdo.
 const MIDIA = /\.(png|jpe?g|gif|webp|ico|avif|woff2?|ttf|otf|pdf|mp4|webm)$/i;
-// documentação não dispara gatilho de caminho (docs/login.md não é o código de login), menos nestes dois: eles cobrem os .md de .claude/ de propósito
+// documentação não dispara gatilho de caminho (docs/login.md não é o código de login), menos nestes dois: eles cobrem os .md de .claude/ de propósito.
+// É só pela extensão: o código dentro de docs/ ou de apps/docs/ (docs/migrations/001.sql, apps/docs/app/api/x/route.ts) continua disparando.
 const COBRE_DOCUMENTACAO = new Set(['config_pipeline', 'lgpd_regras']);
-const ehDocumentacao = (caminho) => /\.md$/i.test(caminho) || /(^|\/)docs\//i.test(caminho);
+const ehDocumentacao = (caminho) => /\.(md|mdx|txt|rst)$/i.test(caminho);
 
 /** Os motivos pelos quais o gatilho dispara no diff (nunca repete o trecho achado: pode ser dado pessoal). */
 function motivosDoGatilho(g, arquivos, ignorar, pastas) {
@@ -217,6 +236,9 @@ function motivosDoConfereLgpd(arquivos) {
   const motivos = [];
   for (const a of arquivos) {
     if (!a.binario && a.linhas.length === 0) continue;
+    // a imagem (qualquer binário) removida ou renomeada sem mudar não tem o que revisar; a adicionada ou mudada custa uma revisão, de propósito:
+    // um print com dado real pode ter qualquer nome
+    if (a.binario && (a.status === 'D' || a.status === 'R100')) continue;
     // o binário não tem linha a ler: o "\0" faz o varrer aplicar só as regras de caminho e de binário (a imagem nova cai na de print)
     const achados = a.binario ? varrer('\0', a.caminho) : varrer(a.linhas.map((l) => l.texto).join('\n'), a.caminho);
     for (const achado of achados) {
