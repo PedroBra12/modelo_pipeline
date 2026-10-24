@@ -11,7 +11,7 @@
 // memória. As regras fortes (CPF, cartão, chave, chave privada) nunca viram legado. Trecho novo ou copiado bloqueia.
 // O relatório nunca repete o trecho achado: ele pode ser o próprio dado pessoal.
 // Falha fechado: regra que não carrega nega toda edição e recusa todo commit, até ser corrigida (pelo shell).
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -286,17 +286,21 @@ function legadoDoRepositorio(raiz, { config = 'HEAD', destino = 'HEAD' } = {}) {
     process.stderr.write(`confere-lgpd: sem legado, lgpd.legadoAte ${valor} não é ancestral de ${destino}\n`);
     return null;
   }
-  // preso à adoção: o legadoAte é a dívida de antes do pipeline, então tem de ser ancestral do commit que o trouxe (o mais antigo que adicionou o hook),
-  // ou ele mesmo. Sem isso, tirar a chave e pô-la de volta num commit mais novo adiantaria a âncora e perdoaria o que veio depois.
-  let adocao = null;
+  // preso à adoção: o legadoAte é a dívida de antes do pipeline, então tem de ser ancestral do commit que o trouxe, ou ele mesmo. A adoção é a adição do hook
+  // que é ancestral de todas as outras (pela ordem do histórico, não pela data: a data do commit se forja). Sem isso, tirar a chave e pô-la de volta num
+  // commit mais novo adiantaria a âncora e perdoaria o que veio depois.
+  let adicoes = [];
   try {
-    const adicoes = execFileSync('git', ['-C', raiz, 'log', '--diff-filter=A', '--format=%H', destino, '--', '.claude/hooks/confere-lgpd.mjs'], { ...calado, encoding: 'utf8' }).split('\n').filter(Boolean);
-    adocao = adicoes.at(-1) ?? null; // o log vai do mais novo ao mais antigo: o último da lista é a adoção
+    adicoes = execFileSync('git', ['-C', raiz, 'log', '--full-history', '--diff-filter=A', '--format=%H', destino, '--', '.claude/hooks/confere-lgpd.mjs'], { ...calado, encoding: 'utf8' }).split('\n').filter(Boolean);
   } catch {
-    adocao = null;
+    adicoes = [];
   }
+  const ehAncestral = (x, y) => spawnSync('git', ['-C', raiz, 'merge-base', '--is-ancestor', x, y], { stdio: 'ignore' }).status === 0;
+  const adocao = adicoes.find((candidata) => adicoes.every((outra) => outra === candidata || ehAncestral(candidata, outra))) ?? null;
   if (adocao === null) {
-    process.stderr.write(`confere-lgpd: sem legado, lgpd.legadoAte ${valor} não tem adoção a que se prender (.claude/hooks/confere-lgpd.mjs não está no histórico de ${destino})\n`);
+    process.stderr.write(adicoes.length === 0
+      ? `confere-lgpd: sem legado, lgpd.legadoAte ${valor} não tem adoção a que se prender (.claude/hooks/confere-lgpd.mjs não está no histórico de ${destino})\n`
+      : `confere-lgpd: sem legado, lgpd.legadoAte ${valor}: as ${adicoes.length} adições de .claude/hooks/confere-lgpd.mjs não têm uma que seja ancestral de todas as outras, e sem a adoção não há onde prender a âncora\n`);
     return null;
   }
   if (completo !== adocao) {

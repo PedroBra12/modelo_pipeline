@@ -202,8 +202,10 @@ const binarioEmPasta = (caminho, pastas) => !/\.md$/i.test(caminho) && pastas.so
 const MIDIA = /\.(png|jpe?g|gif|webp|ico|avif|woff2?|ttf|otf|pdf|mp4|webm)$/i;
 // documentação não dispara gatilho de caminho (docs/login.md não é o código de login), menos nestes dois: eles cobrem os .md de .claude/ de propósito.
 // É só pela extensão: o código dentro de docs/ ou de apps/docs/ (docs/migrations/001.sql, apps/docs/app/api/x/route.ts) continua disparando.
-const COBRE_DOCUMENTACAO = new Set(['config_pipeline', 'lgpd_regras']);
-const ehDocumentacao = (caminho) => /\.(md|mdx|txt|rst)$/i.test(caminho);
+// (a tela também fica de fora da isenção: o .html dela é arquivo de tela, não documentação).
+const COBRE_DOCUMENTACAO = new Set(['config_pipeline', 'lgpd_regras', 'tela']);
+// Texto (md, mdx, txt, rst) e o que se publica como documento (imagem, svg, pdf, html). A regra de print do confere-lgpd segue valendo para a imagem.
+const ehDocumentacao = (caminho) => /\.(md|mdx|txt|rst|png|jpe?g|gif|webp|svg|pdf|html)$/i.test(caminho);
 
 /** Os motivos pelos quais o gatilho dispara no diff (nunca repete o trecho achado: pode ser dado pessoal). */
 function motivosDoGatilho(g, arquivos, ignorar, pastas) {
@@ -236,9 +238,9 @@ function motivosDoConfereLgpd(arquivos) {
   const motivos = [];
   for (const a of arquivos) {
     if (!a.binario && a.linhas.length === 0) continue;
-    // a imagem (qualquer binário) removida ou renomeada sem mudar não tem o que revisar; a adicionada ou mudada custa uma revisão, de propósito:
+    // só a remoção (D) não tem o que revisar; a adicionada, a mudada e a renomeada (git mv publica o print em outro lugar) custam uma revisão, de propósito:
     // um print com dado real pode ter qualquer nome
-    if (a.binario && (a.status === 'D' || a.status === 'R100')) continue;
+    if (a.binario && a.status === 'D') continue;
     // o binário não tem linha a ler: o "\0" faz o varrer aplicar só as regras de caminho e de binário (a imagem nova cai na de print)
     const achados = a.binario ? varrer('\0', a.caminho) : varrer(a.linhas.map((l) => l.texto).join('\n'), a.caminho);
     for (const achado of achados) {

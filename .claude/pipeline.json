@@ -46,7 +46,7 @@
         "caminhos": [],
         "conteudo": [
           "cpf", "cnpj", "\\brg(\\b|_)|_rg\\b", "\\bcep\\b", "e_?mail", "celular", "telefone", "\\bphone", "whatsapp", "documento",
-          "nascimento", "endere[cç]o", "(e_?mail|street|shipping|billing|home|postal)_?address|\\baddress_?line", "\\.address\\b", "anonimiz", "\\bpurg"
+          "nascimento", "endere[cç]o", "(e_?mail|street|shipping|billing|home|postal)_?address|\\baddress_?line", "\\b(user|customer|client|person|contact|order|shipping|billing|cliente|pessoa|contato|pedido)\\.address\\b", "anonimiz", "\\bpurg"
         ],
         "ignorar": ["^\\.claude/"]
       },
@@ -58,7 +58,7 @@
         "conteudo": [
           "\\b(supabase|client|db|sb|knex|trx|tx|admin)\\.from\\(",
           "(^\\s*|\\)\\s*|\\b(db|knex|trx|tx|qb|q|query|builder|sb|supabase|client)\\s*)\\.where\\(\\s*['\"`{(\\w]",
-          "\\bwhere\\s*:\\s*(\\{|(eq|and|or|not|inArray|sql)\\b)", "^\\s*\\.from\\(\\s*['\"`]", "\\.eq\\(\\s*['\"`]", "\\.rpc\\("
+          "\\bwhere\\s*:\\s*(\\{|\\(|(eq|and|or|not|inArray|sql)\\b)", "^\\s*\\.from\\(\\s*['\"`]", "\\.eq\\(\\s*['\"`]", "\\.rpc\\("
         ]
       },
       {

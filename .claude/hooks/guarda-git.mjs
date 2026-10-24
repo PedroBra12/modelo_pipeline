@@ -34,18 +34,37 @@ const NPM_PROIBIDOS = new Set(['publish', 'unpublish', 'deprecate', 'dist-tag'])
 const PULA_CONFERENCIA = /^core\.hookspath/i; // o confere-docs, o confere-lgpd e o confere-push rodam como hooks do git: ninguém os desliga por aqui
 const DESVIA_REMOTO = /^(remote\.|url\.|alias\.|include(if)?\.|branch\..+\.(push)?remote(=|$))/i; // trocaria o destino do push, o esconderia num apelido, ou traria por um include uma configuração que desvia os hooks
 const MUDA_PASTA = /(^|[\s;&|(){}])(cd|chdir|pushd|popd|set-location|sl|push-location|pop-location)(?=[\s;&|)}]|$)/im;
-const AMBIENTE = /(^|\W)(GIT|GH)_\w*\s*=/i; // GIT_DIR, GIT_CONFIG_*, GH_REPO, GH_HOST… (no Windows, sem caixa)
-// Vale em qualquer comando, não só no que sobe: a configuração por ambiente (GIT_CONFIG*) desliga os hooks do git, e o NODE_OPTIONS muda o que o
-// node carrega dentro deles. Nega só quem MUDA o ambiente: a atribuição NOME=, export/set/setx NOME, Set-Item/New-Item env:NOME, $env:NOME = e
-// SetEnvironmentVariable(NOME. Ler (grep, echo, printenv, Get-Item, $env:NOME) e tirar (unset, env -u, Remove-Item env:) passam.
-const NOME_DO_AMBIENTE = String.raw`(?:GIT_CONFIG\w*|NODE_OPTIONS)`;
-const MUDA_AMBIENTE_DOS_HOOKS = [
-  new RegExp(String.raw`\b${NOME_DO_AMBIENTE}\s*=(?!=)`, 'i'),
-  new RegExp(String.raw`(^|[\s;&|(){])(export|set|setx)\s+(-\w+\s+)*${NOME_DO_AMBIENTE}\b`, 'i'),
-  new RegExp(String.raw`\b(Set|New)-Item(Property)?\b[^;|\n]*\benv:\s*${NOME_DO_AMBIENTE}\b`, 'i'),
-  new RegExp(String.raw`SetEnvironmentVariable\s*\(\s*['"]?${NOME_DO_AMBIENTE}\b`, 'i'),
-];
-const mudaAmbienteDosHooks = (texto) => MUDA_AMBIENTE_DOS_HOOKS.some((re) => re.test(texto));
+const AMBIENTE = /(^|\W)(GIT|GH)_\w*\s*\+?=/i; // GIT_DIR, GIT_CONFIG_*, GH_REPO, GH_HOST… (no Windows, sem caixa)
+// Regra invertida, em qualquer comando (não só no que sobe): a configuração por ambiente (GIT_CONFIG*) desliga os hooks do git, e o NODE_OPTIONS
+// muda o que o node carrega dentro deles. TODA menção do nome nega, menos no segmento cujo 1º programa só lê ou só tira a variável. Lista de formas
+// de escrever uma variável de ambiente nunca fecha (Set-Item Env:\NOME, $env:NOME+=, chaves do env:, Set-Content, Rename-Item, read NOME, declare -x...),
+// então a lista que fica é a das duas exceções, que é curta e fechada. Os segmentos se separam por ;, &&, ||, | e quebra de linha.
+const MENCAO_DO_AMBIENTE = /\b(?:GIT_CONFIG\w*|NODE_OPTIONS)\b/i;
+const SO_LE = new Set(['grep', 'rg', 'cat', 'echo', 'printenv', 'select-string', 'get-item', 'get-childitem', 'get-content', 'write-output', 'write-host']);
+const SO_TIRA = new Set(['unset', 'remove-item']);
+const SEGMENTO_DO_AMBIENTE = /\r?\n|&&|\|\||[;|]/;
+const SHELL_NA_PONTA = /(^|[\s;&|(])(sh|bash|zsh|dash|ksh|pwsh|powershell|cmd|iex|invoke-expression|eval|source|xargs)(\.exe)?(\s|$)/i;
+/** O 1º programa do segmento (sem caminho, sem .exe, em minúsculas), ou '' se começa por atribuição, substituição ou outra coisa que não é programa. */
+function primeiroPrograma(segmento) {
+  const token = segmento.trim().replace(/^[&!({\s]+/, '').split(/\s+/)[0] ?? '';
+  return /^[\w.\\/-]+(\.exe)?$/i.test(token) && !token.includes('=') ? nomeDoPrograma(token) : '';
+}
+/** O segmento só lê ou só tira (e não traz atribuição nem substituição de comando que faça outra coisa)? */
+function soLeOuTira(segmento) {
+  if (/\$\(|[\x60]/.test(segmento)) return false; // a substituição de comando executa o que está dentro
+  const programa = primeiroPrograma(segmento);
+  if (SO_LE.has(programa) || SO_TIRA.has(programa)) return true;
+  // env -u NOME ... sem nenhuma atribuição (env -u NODE_OPTIONS git status): só tira
+  return programa === 'env' && /\s(-u|--unset)\b/i.test(segmento) && !/(^|\s)[A-Za-z_]\w*\+?=/.test(segmento);
+}
+// `bruto` é o comando como veio; `semHeredoc` tira os heredocs mas mantém o que está entre aspas (o tirarAspas o esvaziaria: a mensagem de commit e o
+// "export NOME=x" entre aspas precisam ser vistos).
+function mudaAmbienteDosHooks(bruto, semHeredoc) {
+  if (!MENCAO_DO_AMBIENTE.test(bruto)) return false;
+  // o que a leitura imprime não pode virar ordem: nada de ... | sh / bash / pwsh / iex / eval / xargs, nem de heredoc para um shell, num comando que menciona o nome
+  if (SHELL_NA_PONTA.test(bruto)) return true;
+  return semHeredoc.split(SEGMENTO_DO_AMBIENTE).some((segmento) => MENCAO_DO_AMBIENTE.test(segmento) && !soLeOuTira(segmento));
+}
 // o comando entre aspas que vai para outro shell é lido também; o codificado não se lê, e se nega
 const SHELL_ANINHADO = /\b(?:bash|sh|zsh|cmd|pwsh|powershell)(?:\.exe)?\s+(?:-c|-command|\/c|\/k)\s+(["'])((?:(?!\1)[\s\S])*)\1/gi;
 const CODIFICADO = /\b(pwsh|powershell)(\.exe)?\s+(-\w+\s+)*-(e|ec|enc|encodedcommand)\b/i;
@@ -214,7 +233,7 @@ export function analisar(comando, repo = lerRepositorio()) {
     total.proibido ??= r.proibido;
     total.sobe ||= r.sobe;
   }
-  if (mudaAmbienteDosHooks(limpo)) total.proibido ??= 'mudar GIT_CONFIG_* ou NODE_OPTIONS no ambiente (desvia os hooks do git); ler ou tirar a variável passa';
+  if (mudaAmbienteDosHooks(comando, semHeredoc)) total.proibido ??= 'menção a GIT_CONFIG_* ou NODE_OPTIONS fora de um segmento que só lê (grep, rg, cat, echo, printenv, Select-String, Get-Item) ou só tira (unset, env -u, Remove-Item): desvia os hooks do git';
   if (total.sobe && MUDA_PASTA.test(limpo)) total.proibido ??= 'push ou PR com troca de pasta no comando';
   if (total.sobe && AMBIENTE.test(limpo)) total.proibido ??= 'push ou PR com variável GIT_ ou GH_ no comando';
   return total;
