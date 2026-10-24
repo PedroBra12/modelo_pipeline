@@ -1,5 +1,17 @@
 #!/bin/sh
-# Hook pre-commit do git: todo commit, do agente ou da pessoa, passa pelo confere-ramo (nada na main) e pelo confere-lgpd.
+# Hook pre-commit do git: todo commit, do agente ou da pessoa, passa pelo confere-ramo (nada na main), pelo confere-lgpd e,
+# quando o commit toca .claude/, pelos testes do pipeline (D2: o que muda a regra do pipeline tem de passar nos testes dela).
 # Ligado por: git config core.hooksPath .claude/hooks/git
 node "$(dirname "$0")/../confere-ramo.mjs" || exit 1
-exec node "$(dirname "$0")/../confere-lgpd.mjs" --indice
+node "$(dirname "$0")/../confere-lgpd.mjs" --indice || exit 1
+if git diff --cached --name-only | grep -q '^\.claude/'; then
+  unset $(git rev-parse --local-env-vars)  # o npm e os testes criam repositórios próprios: sem o GIT_INDEX_FILE deste commit
+  unset NODE_TEST_CONTEXT                  # num commit feito de dentro de um teste, o node --test se acharia recursivo e não rodaria nada
+  if grep -qs '"test:pipeline"' package.json; then
+    npm run -s test:pipeline >&2 || { echo "Commit recusado: o commit toca .claude/ e npm run test:pipeline falhou." >&2; exit 1; }
+  else
+    set -- .claude/hooks/*.test.mjs
+    [ -e "$1" ] || { echo "Commit recusado: o commit toca .claude/ e não há testes do pipeline em .claude/hooks/*.test.mjs." >&2; exit 1; }
+    node --test "$@" >&2 || { echo "Commit recusado: o commit toca .claude/ e os testes do pipeline (node --test) falharam." >&2; exit 1; }
+  fi
+fi

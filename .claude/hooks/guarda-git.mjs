@@ -7,7 +7,7 @@
 // publicar ficam com o usuário. O repositório é o `repositorio` de .claude/pipeline.json: enquanto for o marcador,
 // faltar ou for inválido, push, remote add/set-url e escrita em PR são negados (falha fechado).
 // Modo em PIPELINE_GUARDA_GIT: "negar" (padrão), "perguntar" ou "desligado".
-import { existsSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURE, lerRepositorio, urlDoRepositorio } from './config.mjs';
@@ -208,14 +208,14 @@ export function analisar(comando, repo = lerRepositorio()) {
   return total;
 }
 
-// O 1º .git acima do cwd tem de ser a pasta .git do projeto: um clone ou um worktree dentro dele não serve
+// O 1º .git acima do cwd tem de ser o do projeto: um clone ou um worktree dentro dele não serve. O projeto pode ser
+// ele mesmo um worktree (com o .git em arquivo): vale, porque os hooks que rodam são os dele.
 function foraDoProjeto(cwd) {
   if (typeof cwd !== 'string') return 'push ou PR sem a pasta do comando';
   if (/[\\/]\.claude[\\/]worktrees([\\/]|$)/i.test(cwd)) return 'push ou PR de dentro de um worktree de agente (só o orquestrador sobe)';
   for (let pasta = resolve(cwd); ; pasta = dirname(pasta)) {
-    const git = join(pasta, '.git');
-    if (existsSync(git)) {
-      return relative(PROJETO, pasta) === '' && statSync(git).isDirectory() ? null : 'push ou PR fora do repositório do projeto';
+    if (existsSync(join(pasta, '.git'))) {
+      return relative(PROJETO, pasta) === '' ? null : 'push ou PR fora do repositório do projeto';
     }
     if (dirname(pasta) === pasta) return 'push ou PR fora de um repositório git';
   }

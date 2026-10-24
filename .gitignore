@@ -11,3 +11,6 @@ coverage/
 .claude/settings.local.json
 # worktrees dos agentes de uma fase (orquestrador)
 .claude/worktrees/
+
+# capturas de tela do revisor-tela (podem mostrar dado de teste; nunca no git)
+capturas-*/

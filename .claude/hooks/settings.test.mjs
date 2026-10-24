@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FIXOS } from './config.mjs';
 
 const SETTINGS = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'settings.json'), 'utf8'));
 
@@ -40,4 +41,13 @@ test('todo hook do settings.json aponta para um script que existe, e o PostToolU
   assert.ok(comandos.some((c) => c.includes('/hooks/confere-lgpd.mjs')), 'falta o confere-lgpd');
   assert.ok(comandos.some((c) => c.includes('/hooks/marca-alterado.mjs')), 'falta o marca-alterado');
   assert.ok(comandos.some((c) => c.includes('/hooks/portao.mjs')), 'falta o portao');
+});
+
+test('toda sessão abre como o agente orquestrador, em xhigh (D3), e o esforço é o do nível orquestracao do config.mjs', () => {
+  assert.equal(SETTINGS.agent, 'orquestrador');
+  assert.equal(SETTINGS.effortLevel, FIXOS.niveis.orquestracao.split(':')[1]);
+  assert.equal(SETTINGS.effortLevel, 'xhigh');
+  assert.equal(SETTINGS.model, FIXOS.niveis.orquestracao.split(':')[0], 'o model do projeto vence o do usuário (que pode ser haiku)');
+  assert.equal(SETTINGS.model, 'opus');
+  assert.ok(existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'agents', `${SETTINGS.agent}.md`)), 'o agente existe em .claude/agents');
 });

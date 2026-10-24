@@ -128,3 +128,14 @@ for (const [rotulo, config] of [['JSON quebrado', '{ lixo'], ['sem o arquivo', n
 comProjeto('pipeline.json ilegível mas sem código alterado: não faz nada', { codigoDoPortao: 1, config: '{ lixo' }, (raiz) => {
   assert.equal(rodar(raiz), null);
 });
+
+test('marca-alterado: anota o código do produto (tela .jsx inclusive), não o .claude, o docs nem o que não é código', async () => {
+  const { relevante } = await import('./marca-alterado.mjs');
+  const raiz = join(tmpdir(), 'projeto');
+  assert.equal(relevante(raiz, join(raiz, 'src', 'tela', 'Tela.jsx')), 'src/tela/Tela.jsx');
+  assert.equal(relevante(raiz, join(raiz, 'src', 'lib', 'util.js')), 'src/lib/util.js');
+  assert.equal(relevante(raiz, join(raiz, 'db', 'migrations', '1_a.sql')), 'db/migrations/1_a.sql');
+  assert.equal(relevante(raiz, join(raiz, 'src', 'estilo.css')), null);
+  assert.equal(relevante(raiz, join(raiz, 'docs', 'schema.sql')), null);
+  assert.equal(relevante(raiz, join(raiz, '.claude', 'hooks', 'portao.mjs')), null);
+});

@@ -3,22 +3,24 @@
 //   Não vê o que o shell escreve: isso só o pre-commit pega.
 // - Hook pre-commit do git (`--indice`, de git/pre-commit): confere o conteúdo em preparo de cada arquivo do commit,
 //   inclusive o que foi escrito pelo shell; recusa com achado crítico ou alto e mostra os avisos e as supressões.
-// - À mão: `node .claude/hooks/confere-lgpd.mjs <arquivo ou pasta>...` lista tudo, avisos e supressões inclusive.
+// - À mão: `node .claude/hooks/confere-lgpd.mjs [--todos] <arquivo ou pasta>...` lista os arquivos do git (os
+//   ignorados ficam de fora), avisos e supressões inclusive.
+// Legado: o achado numa linha que já estava igual antes (no HEAD, ou no MERGE_HEAD durante um merge; no Edit, no arquivo
+// em disco) não bloqueia, só é contado (`--todos` o lista). Mexeu na linha, ele bloqueia: a dívida sai quando se toca nela.
 // O relatório nunca repete o trecho achado: ele pode ser o próprio dado pessoal.
 // Falha fechado: regra que não carrega nega toda edição e recusa todo commit, até ser corrigida (pelo shell).
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const NIVEIS = { critico: 'crítico', alto: 'alto', medio: 'médio' };
 const ORDEM = { critico: 0, alto: 1, medio: 2 };
-const bloqueia = (a) => !a.suprimido && a.regra.nivel !== 'medio';
+const bloqueia = (a) => !a.suprimido && a.legado !== true && a.regra.nivel !== 'medio';
 const IGNORADO = /(^|\/)(\.git|node_modules|dist|coverage|\.next)(\/|$)|^\.claude\/estado(\/|$)|^\.claude\/hooks\/lgpd-regras\.mjs$/;
 const CODIGO = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|sql|json|ya?ml)$/i;
 const CONFIG = /(^|\/)\.env(\.[\w.-]+)?$|(^|\/)dockerfile$|\.(ya?ml|toml|sh|ps1|http|ini|conf|properties)$/i;
 const TESTE = /(^|\/)(testes?|tests|__tests__|fixtures)\/|\.(test|spec)\.\w+$/i;
-const SUPRESSAO = /lgpd-ignora:\s*([\w ,]+?)\s*--\s*\S.{9,}/;
 const SO_COMENTARIO = /^\s*(\/\/|--|#|\/?\*|<!--)/; // a supressão na linha de cima só vale se a linha é só comentário
 const DDD = new Set(
   ('11 12 13 14 15 16 17 18 19 21 22 24 27 28 31 32 33 34 35 37 38 41 42 43 44 45 46 47 48 49 51 53 54 55 ' +
@@ -63,10 +65,12 @@ const compilar = (r) => ({
   foraRe: r.fora === undefined ? null : new RegExp(r.fora, 'i'),
 });
 
-// dentro do try: uma regra quebrada não pode deixar o hook sair sem negar
+// dentro do try: uma regra quebrada, ou um config.mjs quebrado (conflito de merge), não pode deixar o hook sair sem negar
 export let regras = [];
+let SUPRESSAO = /(?!)/; // a regex da supressão vem do config.mjs; sem ela nada se suprime
 let falhaDasRegras = null;
 try {
+  ({ SUPRESSAO } = await import('./config.mjs'));
   regras = (await import('./lgpd-regras.mjs')).REGRAS.map(compilar);
 } catch (erro) {
   falhaDasRegras = erro;
@@ -121,8 +125,44 @@ export function varrer(texto, rel, lista = regras) {
   return achados.sort((a, b) => ORDEM[a.regra.nivel] - ORDEM[b.regra.nivel] || a.arquivo.localeCompare(b.arquivo) || a.linha - b.linha);
 }
 
-export function relatorio(achados) {
-  const ativos = achados.filter((a) => !a.suprimido);
+// as linhas como o varrer as vê: binário não tem linha
+const linhasDe = (texto) => (texto.includes('\0') ? [''] : texto.replace(/\r\n?/g, '\n').split('\n'));
+// a regra e o texto da linha: o mesmo achado na mesma linha, mesmo que ela tenha mudado de lugar (nunca vai para a saída)
+const chave = (a, linhas) => `${a.regra.id}\0${(linhas[a.linha - 1] ?? '').trim()}`;
+
+/**
+ * Marca `legado: true` no achado cuja regra já achava a mesma linha num texto de antes (`antes`: os textos de antes do
+ * mesmo arquivo; vazio = arquivo novo; `relAntes`: o caminho de antes, que decide as regras que valiam). O legado não
+ * bloqueia: quem mexe na linha a corrige.
+ * - Cada linha vale quantas vezes aparecia antes: a cópia, ou a chamada nova cuja última linha repete a de uma antiga, bloqueia.
+ * - A regra de caminho e de binário não tem linha: só é legado com o arquivo igual.
+ */
+export function marcarLegado(achados, texto, antes, relAntes) {
+  if (antes.length === 0) return achados;
+  const vezes = new Map(); // chave → quantas vezes o texto de antes que mais a tinha
+  for (const t of antes) {
+    const aqui = new Map();
+    const linhasAntes = linhasDe(t);
+    for (const a of varrer(t, relAntes)) {
+      const k = chave(a, linhasAntes);
+      aqui.set(k, (aqui.get(k) ?? 0) + 1);
+    }
+    for (const [k, n] of aqui) vezes.set(k, Math.max(vezes.get(k) ?? 0, n));
+  }
+  const linhas = linhasDe(texto);
+  return achados.map((a) => {
+    if (a.regra.binario === true || a.regra.caminhoRe !== null) return antes.includes(texto) ? { ...a, legado: true } : a;
+    const k = chave(a, linhas);
+    const n = vezes.get(k) ?? 0;
+    if (n === 0) return a;
+    vezes.set(k, n - 1);
+    return { ...a, legado: true };
+  });
+}
+
+export function relatorio(achados, { todos = false } = {}) {
+  const legado = achados.filter((a) => a.legado === true && !a.suprimido);
+  const ativos = achados.filter((a) => !a.suprimido && a.legado !== true);
   const suprimidos = achados.filter((a) => a.suprimido);
   const bloqueiam = ativos.filter(bloqueia).length;
   const item = (a) =>
@@ -131,6 +171,10 @@ export function relatorio(achados) {
   return [
     `confere-lgpd: ${bloqueiam} achado(s) que bloqueiam, ${ativos.length - bloqueiam} aviso(s) e ${suprimidos.length} supressão(ões).`,
     ...ativos.map(item),
+    ...(legado.length === 0 ? [] : [
+      `Legado: ${legado.length} achado(s) em linhas que já estavam assim antes; não bloqueiam, e a linha mexida tem de sair limpa${todos ? ':' : ' (--todos lista).'}`,
+      ...(todos ? legado.map(item) : []),
+    ]),
     ...(suprimidos.length === 0 ? [] : ['Suprimidos (o revisor-lgpd confere o motivo de cada um):', ...suprimidos.map((a) => `- ${a.arquivo}:${a.linha} ${a.regra.id}`)]),
     'Falso positivo: na linha (ou num comentário na linha de cima), "lgpd-ignora: <regra> -- <motivo>". O revisor-lgpd confere cada supressão.',
   ].join('\n');
@@ -176,11 +220,13 @@ async function comoHook() {
   if (raiz === null || !dentro(raiz, absoluto)) return; // fora de um repositório: nada vai para o commit
   const rel = relative(raiz, absoluto).replaceAll('\\', '/');
   if (falhaDasRegras !== null) {
-    if (rel === '.claude/hooks/lgpd-regras.mjs') return; // deixa consertar a regra quebrada
+    if (rel === '.claude/hooks/lgpd-regras.mjs' || rel === '.claude/hooks/config.mjs') return; // deixa consertar a regra ou o config quebrado
     throw falhaDasRegras;
   }
   const novos = [ti.content, ti.new_string, ti.new_source, ...(Array.isArray(ti.edits) ? ti.edits.map((e) => e?.new_string) : [])];
-  const achados = varrer(novos.filter((t) => typeof t === 'string').join('\n'), rel).filter(bloqueia);
+  const texto = novos.filter((t) => typeof t === 'string').join('\n');
+  const antes = existsSync(absoluto) && statSync(absoluto).isFile() ? [decodificar(readFileSync(absoluto))] : [];
+  const achados = marcarLegado(varrer(texto, rel), texto, antes, rel).filter(bloqueia);
   if (achados.length > 0) negar(`${relatorio(achados)}\nNo Edit, a linha é a do trecho editado, não a do arquivo.`);
 }
 
@@ -192,32 +238,66 @@ function dentro(pasta, caminho) {
 const git = (raiz, ...args) => execFileSync('git', ['-C', raiz, ...args], { maxBuffer: 256 * 1024 * 1024 });
 const raizDoGit = () => execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
 
-function terminar(achados, saida) {
-  saida.write(achados.length === 0 ? 'confere-lgpd: nada achado.\n' : `${relatorio(achados)}\n`);
+function terminar(achados, saida, opcoes) {
+  saida.write(achados.length === 0 ? 'confere-lgpd: nada achado.\n' : `${relatorio(achados, opcoes)}\n`);
   return achados.some(bloqueia) ? 1 : 0;
+}
+
+const calado = { maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] };
+const existeRef = (raiz, ref) => {
+  try {
+    execFileSync('git', ['-C', raiz, 'rev-parse', '-q', '--verify', ref], calado);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Os commits de antes: o HEAD, e o MERGE_HEAD no meio de um merge (o que veio do outro lado já está no remoto: trazê-lo não é dado novo). */
+const refsDeAntes = (raiz) => ['HEAD', 'MERGE_HEAD'].filter((ref) => existeRef(raiz, ref));
+
+/** Confere o texto de cada arquivo contra o de antes. `pares`: [rel de agora, rel de antes (o nome antigo, se mudou)]. */
+function conferirPares(raiz, pares, lerAgora) {
+  const refs = refsDeAntes(raiz);
+  return pares.filter(([rel]) => !IGNORADO.test(rel)).flatMap(([rel, relAntes]) => {
+    const texto = decodificar(lerAgora(rel));
+    const antes = refs.flatMap((ref) => {
+      try {
+        return [decodificar(execFileSync('git', ['-C', raiz, 'show', `${ref}:${relAntes}`], calado))];
+      } catch {
+        return []; // o arquivo não existia nesse commit
+      }
+    });
+    return marcarLegado(varrer(texto, rel), texto, antes, relAntes);
+  });
 }
 
 function comoPreCommit() {
   const raiz = raizDoGit();
-  const nomes = git(raiz, '-c', 'core.quotepath=false', 'diff', '--cached', '--name-only', '--diff-filter=ACMRT', '-z')
-    .toString('utf8').split('\0').filter(Boolean);
-  const achados = nomes.filter((rel) => !IGNORADO.test(rel)).flatMap((rel) => varrer(decodificar(git(raiz, 'show', `:${rel}`)), rel));
+  // com -z: "R100\0velho\0novo\0" no renomeado, "M\0nome\0" no resto
+  const campos = git(raiz, '-c', 'core.quotepath=false', 'diff', '--cached', '--name-status', '-M', '--diff-filter=ACMRT', '-z')
+    .toString('utf8').split('\0');
+  const pares = [];
+  for (let i = 0; i < campos.length && campos[i] !== ''; ) {
+    const estado = campos[i];
+    if (/^[RC]/.test(estado)) { pares.push([campos[i + 2], campos[i + 1]]); i += 3; }
+    else { pares.push([campos[i + 1], campos[i + 1]]); i += 2; }
+  }
+  const achados = conferirPares(raiz, pares, (rel) => git(raiz, 'show', `:${rel}`));
   if (achados.length === 0) return 0;
   if (achados.some(bloqueia)) process.stderr.write('Commit recusado pelo confere-lgpd.\n');
   return terminar(achados, process.stderr);
 }
 
-function* arquivos(raiz, abs) {
-  const rel = relative(raiz, abs).replaceAll('\\', '/');
-  if (IGNORADO.test(rel)) return;
-  if (statSync(abs).isDirectory()) for (const nome of readdirSync(abs)) yield* arquivos(raiz, join(abs, nome));
-  else yield rel;
-}
-
-function aMao(alvos) {
+function aMao(args) {
+  const todos = args.includes('--todos');
+  const alvos = args.filter((a) => a !== '--todos');
   const raiz = raizDoGit();
-  const achados = alvos.flatMap((alvo) => [...arquivos(raiz, resolve(alvo))]).flatMap((rel) => varrer(decodificar(readFileSync(join(raiz, rel))), rel));
-  return terminar(achados, process.stdout);
+  // os arquivos do git sob os alvos, guardados ou novos; os ignorados (.env, o banco local) ficam de fora
+  const nomes = git(raiz, '-c', 'core.quotepath=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', ...alvos.map((a) => resolve(a)))
+    .toString('utf8').split('\0').filter((rel) => rel !== '' && existsSync(join(raiz, rel)));
+  const achados = conferirPares(raiz, [...new Set(nomes)].map((rel) => [rel, rel]), (rel) => readFileSync(join(raiz, rel)));
+  return terminar(achados, process.stdout, { todos });
 }
 
 const mensagem = (erro) => (erro instanceof Error ? erro.message : String(erro));

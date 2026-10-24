@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -235,6 +235,26 @@ test('o push e o PR não saem de outro repositório dentro da pasta do projeto (
     assert.notEqual(avaliarEntrada('gh pr create --draft --fill', join(clone, '.git')), null);
   } finally {
     rmSync(clone, { recursive: true, force: true });
+  }
+});
+
+test('o projeto que é ele mesmo um worktree (.git em arquivo) sobe; um worktree dentro dele não', async () => {
+  const arvore = realpathSync(mkdtempSync(join(tmpdir(), 'guarda-git-wt-')));
+  try {
+    const hooks = copiarHooks(arvore, CONFIG_PADRAO);
+    writeFileSync(join(arvore, '.git'), 'gitdir: C:/repo/.git/worktrees/wt\n');
+    const guarda = await import(pathToFileURL(join(hooks, 'guarda-git.mjs')).href);
+    for (const c of ['git push -u origin pr/x', 'gh pr create --draft --fill']) {
+      assert.equal(guarda.avaliarEntrada(c, arvore), null);
+      assert.equal(guarda.avaliarEntrada(c, join(arvore, 'src', 'api')), null);
+    }
+    const dentro = join(arvore, 'outro');
+    mkdirSync(dentro);
+    writeFileSync(join(dentro, '.git'), 'gitdir: C:/repo/.git/worktrees/outro\n');
+    assert.notEqual(guarda.avaliarEntrada('git push origin main', dentro), null);
+    assert.notEqual(guarda.avaliarEntrada('git push origin main', join(arvore, '.claude', 'worktrees', 'agent-x')), null);
+  } finally {
+    rmSync(arvore, { recursive: true, force: true });
   }
 });
 

@@ -1,5 +1,92 @@
 {
   "repositorio": "<dono>/<repo>",
   "portaoRapido": "checar:rapido",
-  "pastasDeTrabalho": ["^(apps|packages|src)/[^/]+(?=/)", "^\\.claude/hooks(?=/)"]
+  "pastasDeTrabalho": ["^(apps|packages|src)/[^/]+(?=/)", "^\\.claude/hooks(?=/)"],
+  "agentes": {
+    "revisor-seguranca": { "model": "opus", "effort": "xhigh", "tools": "Read, Grep, Glob", "tarefa": "revisão de risco: banco, permissão, dado pessoal, rede, segredo, isolamento entre donos de dado" },
+    "revisor-arquitetura": { "model": "opus", "effort": "high", "tools": "Read, Grep, Glob", "tarefa": "revisão de arquitetura: fronteiras entre pastas, contrato, AGENTS.md, decisão registrada" },
+    "revisor-lgpd": { "model": "opus", "effort": "high", "tools": "Read, Grep, Glob", "tarefa": "revisão de LGPD: finalidade, caminho do dado pessoal, retenção, supressões" },
+    "qa": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "tarefa": "rodar a coisa de verdade e tentar quebrar" },
+    "revisor-tela": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "tarefa": "ver a tela tocada rodando a 320 px e a 1280 px no ambiente local, com a skill de tela do projeto, contra o PRODUCT.md (portão 5)" },
+    "leitor-docs": { "model": "haiku", "effort": "low", "tools": "Read, Grep, Glob", "tarefa": "ler `docs/` e os `AGENTS.md` e apontar os arquivos e linhas onde focar" }
+  },
+  "niveis": {
+    "leve": { "model": "sonnet", "effort": "low", "tarefa": "renomear, buscar (`Explore`), conferir um fato ou um arquivo, mudança trivial, `ponytail-debt`" },
+    "medio": { "model": "sonnet", "effort": "medium", "tarefa": "código: feature, bug ou refactor dentro de uma pasta" },
+    "codigo-seguranca": { "model": "sonnet", "effort": "high", "tarefa": "código que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`) e a integração de fase" },
+    "revisao-ponytail": { "model": "sonnet", "effort": "high", "revisor": "ponytail-review", "tarefa": "`ponytail-review` e `ponytail-audit` (em `general-purpose`)" },
+    "orquestracao": { "model": "opus", "effort": "xhigh", "tarefa": "`orquestrador` (`.claude/agents/orquestrador.md`), só como agente do chat principal" },
+    "forte": { "model": "opus", "effort": "high", "tarefa": "as propostas `Plan` de uma decisão de arquitetura (`decisao.md`)" }
+  },
+  "revisao": {
+    "sempre": ["revisor-arquitetura", "ponytail-review"],
+    "comportamento": ["qa"],
+    "comportamento_caminhos": ["^(apps|packages|src)/"],
+    "gatilhos": [
+      {
+        "nome": "permissao",
+        "revisores": ["revisor-seguranca"],
+        "remocoes": true,
+        "caminhos": ["(^|/)(auth|permiss[^/]*|papeis|sessao|middleware)(/|\\.)"],
+        "conteudo": [
+          "create\\s+policy", "alter\\s+policy", "row\\s+level\\s+security", "\\bpolicy\\b",
+          "security\\s+definer", "\\bgrant\\b", "\\brevoke\\b",
+          "\\bauth\\.(uid|jwt|role|users)", "\\bauthenticated\\b",
+          "autoriz", "\\bforbidden\\b", "\\bunauthorized\\b", "\\b40[13]\\b",
+          "\\brole\\b"
+        ]
+      },
+      {
+        "nome": "dado_pessoal",
+        "revisores": ["revisor-lgpd", "revisor-seguranca"],
+        "caminhos": [],
+        "conteudo": ["\\bcpf\\b", "\\bcelular\\b", "\\btelefone\\b", "\\bnascimento\\b", "\\bhmac\\b"],
+        "ignorar": ["^\\.claude/"]
+      },
+      {
+        "nome": "banco",
+        "revisores": ["revisor-seguranca"],
+        "remocoes": true,
+        "caminhos": ["\\.sql$", "(^|/)migrations?/"],
+        "conteudo": []
+      },
+      {
+        "nome": "config_pipeline",
+        "revisores": ["revisor-seguranca", "revisor-arquitetura"],
+        "caminhos": ["^\\.claude/(pipeline\\.json|agents/|hooks/|settings(\\.local)?\\.json|skills/pipeline/|skills/adjust-pipeline/)"],
+        "conteudo": []
+      },
+      {
+        "nome": "rede_rota",
+        "revisores": ["revisor-seguranca"],
+        "remocoes": true,
+        "caminhos": ["(^|/)api/", "(^|/)(server|servidor|routes?)/"],
+        "conteudo": ["fetch\\(", "process\\.env", "Deno\\.env", "service_role", "Cache-Control"]
+      },
+      {
+        "nome": "lgpd_ignora",
+        "revisores": ["revisor-lgpd"],
+        "todo_arquivo": true,
+        "caminhos": [],
+        "conteudo": ["lgpd-ignora:\\s*([\\w ,]+?)\\s*--\\s*\\S.{9,}"]
+      },
+      {
+        "nome": "lgpd_regras",
+        "revisores": ["revisor-lgpd"],
+        "caminhos": ["^\\.claude/hooks/(lgpd-regras|confere-lgpd)", "^\\.claude/hooks/config\\.mjs$", "^\\.claude/agents/revisor-lgpd\\.md$"],
+        "conteudo": []
+      },
+      {
+        "nome": "tela",
+        "revisores": ["revisor-tela"],
+        "caminhos": ["^(apps|packages|src)/.+\\.(jsx|tsx|vue|svelte|css|scss|html)$"],
+        "conteudo": []
+      }
+    ],
+    "ignorar_conteudo": ["\\.md$", "\\.test\\.m?[jt]s$", "(^|/)__tests__/"]
+  },
+  "ajuste": {
+    "janela": 3,
+    "rodadas_altas": 2
+  }
 }

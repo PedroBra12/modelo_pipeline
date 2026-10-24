@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const CODIGO = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs', '.sql', '.json']);
+const CODIGO = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.sql', '.json']);
 const FORA = /^(\.claude|docs|node_modules|\.git|dist|coverage|\.next)(\/|$)/;
 
 /** Caminho relativo à raiz se o arquivo é código do produto; senão, null. */

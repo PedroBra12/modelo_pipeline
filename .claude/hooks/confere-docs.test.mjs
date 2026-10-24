@@ -112,3 +112,10 @@ caso('gerado novo, que o AGENTS.md não cita, continua pedindo', { ...GERADO_OK,
 caso('gerado em pasta sem AGENTS.md continua recusado', { 'packages/novo/gerado/x.ts': '' }, ['packages/novo/gerado/x.ts'], 'm', 'packages/novo não tem AGENTS.md');
 caso('AGENTS.md que cita arquivo sumido continua recusado com gerado no commit', { ...GERADO_OK, 'packages/banco/AGENTS.md': 'Faz: banco\nNão faz: x\nComo testar: y\n`fila.ts`\n' },
   ['packages/banco/gerado/tipos.ts'], 'm', 'cita `fila.ts`');
+caso('.jsx é código: mudou, pede Docs-conferidos', { ...PASTA_OK, 'packages/contatos/tela.jsx': 'export {}' }, ['packages/contatos/tela.jsx'], 'contatos: tela',
+  'Docs-conferidos: packages/contatos/AGENTS.md');
+caso('arquivo da raiz citado sem caminho passa; o que não existe em lugar nenhum, não',
+  { ...PASTA_OK, 'DESIGN.md': '# design', 'packages/contatos/AGENTS.md': `${AGENTS}Tela: \`DESIGN.md\`, \`proxy.js\`\n` },
+  Object.keys(PASTA_OK), 'm', 'cita `proxy.js`');
+caso('arquivo da raiz citado sem caminho passa', { ...PASTA_OK, 'DESIGN.md': '# design', 'packages/contatos/AGENTS.md': `${AGENTS}Tela: \`DESIGN.md\`\n` },
+  Object.keys(PASTA_OK), 'm', null);

@@ -4,7 +4,7 @@ Faz:          o mapa do repositório. As regras que não se negociam estão no `
               `docs/arquitetura.md`; as decisões, em `docs/decisoes.md`.
 Não faz:      regra própria: onde este mapa e o `CLAUDE.md` divergirem, vale o `CLAUDE.md`.
 Pastas:       <pasta>/        <o que mora nela, numa linha>
-              docs/           plano, arquitetura, decisões e fases
+              docs/           plano, arquitetura, decisões, fases e a autoanálise do pipeline (docs/pipeline/)
               .claude/        o pipeline (skill), os agentes e os hooks
 Regras daqui: antes de mexer numa pasta, leia o AGENTS.md dela e os das pastas acima.
               Toda tarefa que muda o repositório segue a skill `pipeline`.

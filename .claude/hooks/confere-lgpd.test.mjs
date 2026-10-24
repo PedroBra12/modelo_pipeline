@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VALIDADORES, cpfValido, digitosCpf, regras, relatorio, varrer } from './confere-lgpd.mjs';
+import { VALIDADORES, cpfValido, digitosCpf, marcarLegado, regras, relatorio, varrer } from './confere-lgpd.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const RAIZ = join(AQUI, '..', '..');
@@ -137,6 +137,28 @@ test('o relatório não repete o trecho achado', () => {
   assert.ok(!texto.includes(CPF) && !texto.includes(CPF.replace(/\D/g, '')));
 });
 
+test('o config.mjs quebrado nega toda edição no confere-lgpd, menos a do próprio config.mjs (para consertar)', () => {
+  const raiz = mkdtempSync(join(tmpdir(), 'confere-lgpd-cfg-'));
+  try {
+    mkdirSync(join(raiz, '.claude', 'hooks'), { recursive: true });
+    for (const f of ['confere-lgpd.mjs', 'lgpd-regras.mjs']) cpSync(join(AQUI, f), join(raiz, '.claude', 'hooks', f));
+    writeFileSync(join(raiz, '.claude', 'hooks', 'config.mjs'), '<<<<<<< HEAD\n=======\n>>>>>>> outro\n');
+    const roda = (arquivo) => {
+      const r = spawnSync(process.execPath, [join(raiz, '.claude', 'hooks', 'confere-lgpd.mjs')], {
+        input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: join(raiz, arquivo), new_string: 'const a = 1;' } }),
+        encoding: 'utf8',
+        env: { ...process.env, CLAUDE_PROJECT_DIR: raiz },
+      });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput;
+    };
+    assert.equal(roda('lib/x.js')?.permissionDecision, 'deny');
+    assert.equal(roda('.claude/hooks/config.mjs'), null, 'o config.mjs se conserta pelo Edit');
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
+});
+
 function hook(entrada, ambiente = {}) {
   const r = spawnSync(process.execPath, [join(AQUI, 'confere-lgpd.mjs')], {
     input: JSON.stringify(entrada),
@@ -182,6 +204,150 @@ test('pre-commit recusa o commit com dado pessoal, num git de verdade', () => {
     git('add', '-A');
     const aceito = git('commit', '-q', '-m', 'docs: contato');
     assert.equal(aceito.ok, true, aceito.saida);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('legado: o achado numa linha que já estava igual antes não bloqueia; linha nova ou mexida, sim', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const antes = `const a = 1;\n${tel}\n`;
+  const depois = `const b = 2;\nconst a = 1;\n${tel}\n// ${tel}\n`; // a linha de antes desceu, e uma nova entrou
+  const achados = marcarLegado(varrer(depois, CAMINHO.todos), depois, [antes], CAMINHO.todos);
+  assert.deepEqual(achados.map((a) => [a.linha, a.legado === true]), [[3, true], [4, false]]);
+  assert.deepEqual(marcarLegado(varrer(depois, CAMINHO.todos), depois, [], CAMINHO.todos).filter((a) => a.legado).length, 0, 'arquivo novo não tem legado');
+  const texto = relatorio(achados);
+  assert.match(texto, /1 achado\(s\) que bloqueiam/);
+  assert.match(texto, /Legado: 1 achado/);
+});
+
+test('legado: a linha vale quantas vezes aparecia antes; a ocorrência a mais bloqueia', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const antes = `${tel}\n`;
+  const depois = `${tel}\nconst a = 1;\n${tel}\n`; // a mesma linha, copiada
+  const achados = marcarLegado(varrer(depois, CAMINHO.todos), depois, [antes], CAMINHO.todos);
+  assert.deepEqual(achados.map((a) => [a.linha, a.legado === true]), [[1, true], [3, false]]);
+  // vários textos de antes (HEAD e MERGE_HEAD): vale o que mais a tinha, sem somar
+  const dois = marcarLegado(varrer(depois, CAMINHO.todos), depois, [antes, antes], CAMINHO.todos);
+  assert.equal(dois.filter((a) => a.legado).length, 1);
+});
+
+test('legado: o binário e a regra de caminho só são legado com o arquivo igual', () => {
+  const binario = regras.find((r) => r.binario === true);
+  assert.ok(binario, 'regra de binário');
+  const rel = 'docs/base.bin';
+  const igual = marcarLegado(varrer('PK\0velho', rel, [binario]), 'PK\0velho', ['PK\0velho'], rel);
+  assert.equal(igual.every((a) => a.legado), true);
+  const trocado = marcarLegado(varrer('PK\0novo', rel, [binario]), 'PK\0novo', ['PK\0velho'], rel);
+  assert.equal(trocado.some((a) => !a.legado), true, 'conteúdo novo no mesmo caminho bloqueia');
+});
+
+test('legado: o texto de antes é varrido pelo caminho de antes (git mv de teste para código bloqueia)', () => {
+  const r = regras.find((x) => x.arquivos === 'codigo' && x.nivel !== 'medio' && x.regex !== undefined);
+  assert.ok(r, 'regra de código que bloqueia');
+  const texto = preencher(r.pega[0]);
+  assert.ok(varrer(texto, CAMINHO.codigo, [r]).length > 0);
+  assert.equal(varrer(texto, CAMINHO.todos, [r]).length, 0, 'regra de código não vale em teste');
+  const movido = marcarLegado(varrer(texto, CAMINHO.codigo, [r]), texto, [texto], CAMINHO.todos);
+  assert.equal(movido.some((a) => !a.legado), true, 'do teste para o código não é legado');
+  const ficou = marcarLegado(varrer(texto, CAMINHO.codigo, [r]), texto, [texto], CAMINHO.codigo);
+  assert.equal(ficou.every((a) => a.legado), true);
+});
+
+// um repositório de verdade numa pasta temporária, com os hooks do git deste projeto
+function repositorio() {
+  const base = mkdtempSync(join(tmpdir(), 'confere-lgpd-legado-'));
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: base, encoding: 'utf8' });
+    return { ok: r.status === 0, saida: `${r.stdout}${r.stderr}` };
+  };
+  git('init', '-q', '-b', 'pr/teste');
+  for (const [k, v] of [['user.name', 'teste'], ['user.email', 'teste@example.com'], ['core.autocrlf', 'false'], ['core.hooksPath', join(AQUI, 'git')]]) git('config', k, v);
+  writeFileSync(join(base, 'README.md'), '# repo\n');
+  mkdirSync(join(base, 'docs'));
+  return { base, git };
+}
+
+test('legado no pre-commit: a linha antiga passa (também renomeada); mexer nela ou trazer outra, não', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const { base, git } = repositorio();
+  try {
+    writeFileSync(join(base, 'docs', 'contato.md'), `# contato\n${tel}\n`);
+    git('add', '-A');
+    assert.equal(git('-c', 'core.hooksPath=', 'commit', '-q', '-m', 'docs: antes do pipeline').ok, true); // a dívida de antes
+
+    writeFileSync(join(base, 'docs', 'contato.md'), `# contato da loja\n${tel}\n`);
+    git('add', '-A');
+    const outraLinha = git('commit', '-q', '-m', 'docs: título');
+    assert.equal(outraLinha.ok, true, outraLinha.saida);
+    assert.match(outraLinha.saida, /Legado: 1 achado/);
+
+    git('mv', 'docs/contato.md', 'docs/loja.md');
+    const renomeado = git('commit', '-q', '-m', 'docs: renomeia');
+    assert.equal(renomeado.ok, true, renomeado.saida);
+
+    writeFileSync(join(base, 'docs', 'loja.md'), `# contato da loja\n${tel} (ramal)\n`);
+    git('add', '-A');
+    const mexida = git('commit', '-q', '-m', 'docs: ramal');
+    assert.equal(mexida.ok, false, 'a linha mexida tem de sair limpa');
+    assert.match(mexida.saida, /telefone_literal/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('legado no Edit e no Write: o que já está no arquivo passa; o novo, não', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const { base } = repositorio();
+  try {
+    const arquivo = join(base, 'docs', 'contato.md');
+    writeFileSync(arquivo, `# contato\n${tel}\n`);
+    assert.equal(hook({ tool_name: 'Write', tool_input: { file_path: arquivo, content: `# contato da loja\n${tel}\n` } }), null);
+    assert.equal(hook({ tool_name: 'Edit', tool_input: { file_path: arquivo, old_string: '# contato', new_string: `# contato\n${tel}` } }), null);
+    assert.equal(hook({ tool_name: 'Edit', tool_input: { file_path: arquivo, old_string: 'x', new_string: `${tel} (ramal)` } })?.permissionDecision, 'deny');
+    assert.equal(hook({ tool_name: 'Write', tool_input: { file_path: join(base, 'docs', 'novo.md'), content: `${tel}\n` } })?.permissionDecision, 'deny');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('à mão: só os arquivos do git (o ignorado fica de fora) e o legado contado; --todos o lista', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const { base, git } = repositorio();
+  const aMao = (...args) => spawnSync(process.execPath, [join(AQUI, 'confere-lgpd.mjs'), ...args], { cwd: base, encoding: 'utf8' });
+  try {
+    writeFileSync(join(base, '.gitignore'), 'dados/\n');
+    mkdirSync(join(base, 'dados'));
+    writeFileSync(join(base, 'dados', 'banco.md'), `${tel}\n`);
+    writeFileSync(join(base, 'docs', 'contato.md'), `${tel}\n`);
+    git('add', '-A');
+    git('-c', 'core.hooksPath=', 'commit', '-q', '-m', 'antes');
+    const limpo = aMao('.');
+    assert.equal(limpo.status, 0, limpo.stdout);
+    assert.match(limpo.stdout, /Legado: 1 achado/);
+    assert.doesNotMatch(limpo.stdout, /dados\/banco\.md/);
+    assert.match(aMao('--todos', 'docs').stdout, /docs\/contato\.md:1 .*telefone_literal/);
+    writeFileSync(join(base, 'docs', 'novo.md'), `${tel}\n`);
+    const novo = aMao('docs');
+    assert.equal(novo.status, 1, 'o arquivo novo, ainda fora do git, também conta');
+    assert.match(novo.stdout, /docs\/novo\.md:1 .*telefone_literal/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('legado no pre-commit: git mv de teste para código leva a regra de código junto e bloqueia', () => {
+  const r = regras.find((x) => x.arquivos === 'codigo' && x.nivel !== 'medio' && x.regex !== undefined);
+  const { base, git } = repositorio();
+  try {
+    mkdirSync(join(base, 'src', 'contatos'), { recursive: true });
+    writeFileSync(join(base, CAMINHO.todos), `${preencher(r.pega[0])}\n`);
+    git('add', '-A');
+    assert.equal(git('-c', 'core.hooksPath=', 'commit', '-q', '-m', 'teste antes do pipeline').ok, true);
+    git('mv', CAMINHO.todos, CAMINHO.codigo);
+    const movido = git('commit', '-q', '-m', 'move o teste para o código');
+    assert.equal(movido.ok, false, 'no código, a regra vale e o achado é novo');
+    assert.match(movido.saida, new RegExp(r.id));
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
