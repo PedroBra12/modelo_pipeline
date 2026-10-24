@@ -55,6 +55,7 @@ node .claude/hooks/escolhe-revisores.mjs --trabalho      # antes do commit: o HE
 `<base>` é a `main` ou o commit de onde o branch saiu, e `<head>` o commit da tarefa (a comparação parte do merge-base). O script aplica a seção `revisao` de `.claude/pipeline.json` ao diff e imprime os revisores com modelo, esforço e o motivo (gatilho, arquivo e linha):
 - `sempre`: `revisor-arquitetura` e `ponytail-review`, para todo código;
 - gatilhos por caminho ou por linha do diff, inclusive linha removida onde removê-la enfraquece uma proteção: `permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`, `lgpd_ignora`, `lgpd_regras` e `tela`;
+- `revisor-lgpd`, também quando o `confere-lgpd` acha um aviso nas linhas novas do diff (campo sensível, telemetria de fora);
 - `qa`, obrigatório quando o diff toca um caminho de `comportamento_caminhos` (no modelo, `apps/`, `packages/` e `src/`). `--sem-comportamento "<motivo>"` o tira (CSS, texto, renome) e o motivo vai para o relatório; `--comportamento` o exige em qualquer outro código.
 
 Lance numa mensagem só, em paralelo, todos os que o script imprime. O orquestrador pode somar um revisor por julgamento e põe o motivo no relatório; o que o script lista, nunca tira. O que o script não lista foi decidido pelo `pipeline.json`, e mudar isso é a skill `adjust-pipeline`.
@@ -77,6 +78,7 @@ Como lançar cada nome:
 
 Com os portões verdes, a revisão feita e o `qa` aprovado, num branch `pr/<assunto-em-kebab>`, nunca na `main` (o pre-commit recusa):
 - `git add` só dos arquivos da tarefa;
+- o commit que toca `.claude/` roda os testes do pipeline no `pre-commit` (uns 2 min): no Bash, passe `timeout: 600000` ao `git commit`;
 - mensagem em português: `<pasta>: <o que mudou>` na 1ª linha; no corpo, o porquê; para cada pasta cujo código mudou sem o `AGENTS.md` mudar, releia o arquivo e, se ele ainda diz o que a pasta é, ponha a linha `Docs-conferidos: <pasta>/AGENTS.md` (arquivo de `gerado/` que o `AGENTS.md` da pasta cita não conta como código); por último, a linha de coautoria que o Claude Code pedir;
 - o hook `pre-commit` do git (`confere-lgpd`) recusa o commit com dado pessoal exposto: corrija o arquivo, ou suprima com o motivo, que o `revisor-lgpd` confere;
 - o hook `commit-msg` do git (`confere-docs`) recusa o commit quando a documentação não bate com o código: corrija o `AGENTS.md`, nunca só a mensagem. `--no-verify` não existe aqui (a guarda nega);
@@ -103,7 +105,7 @@ O relatório, curto, em português:
 
 ## 7. Agentes: modelo e esforço
 
-**A regra do par (D3):** o papel dá o modelo, que não se ajusta: julgar lendo é `opus`, escrever ou rodar é `sonnet`, só apontar é `haiku`. O custo do erro dá o esforço de partida, do mais alto ao mais baixo: quem orquestra e o revisor cujo erro vaza dado entre donos ou abre a guarda; quem revisa ou testa e o código que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`); o resto do código; o trivial. Depois, só a conta da D2 mexe, um degrau. O par vigente de cada um é o da tabela abaixo.
+**A regra do par (D3):** o papel dá o modelo, que não se ajusta: julgar lendo é `opus`, escrever ou rodar é `sonnet`, só apontar é `haiku`. O custo do erro dá o esforço de partida, do mais alto ao mais baixo: quem orquestra e o revisor cujo erro vaza dado entre donos ou abre a guarda; quem revisa ou testa e o código que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`); o resto do código; o trivial. Depois, só a conta da D2 mexe, um degrau de esforço, sem trocar o modelo. O par vigente de cada um é o da tabela abaixo.
 
 O orquestrador é `opus xhigh`, sempre: a `guarda-agentes` nega delegar com o chat principal em outro par.
 

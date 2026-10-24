@@ -5,8 +5,10 @@
 //   inclusive o que foi escrito pelo shell; recusa com achado crítico ou alto e mostra os avisos e as supressões.
 // - À mão: `node .claude/hooks/confere-lgpd.mjs [--todos] <arquivo ou pasta>...` lista os arquivos do git (os
 //   ignorados ficam de fora), avisos e supressões inclusive.
-// Legado: o achado numa linha que já estava igual antes (no HEAD, ou no MERGE_HEAD durante um merge; no Edit, no arquivo
-// em disco) não bloqueia, só é contado (`--todos` o lista). Mexeu na linha, ele bloqueia: a dívida sai quando se toca nela.
+// Legado, opcional e ancorado: só existe com "lgpd": { "legadoAte": "<sha>" } no pipeline.json do HEAD (sem a chave não há
+// legado nenhum). Com ela, o achado de um trecho que o arquivo já tinha naquele commit (seguido pelos renomes até o HEAD) não
+// bloqueia, só é contado (`--todos` o lista). A chave do legado é o trecho achado inteiro, com os espaços normalizados, só em
+// memória. As regras fortes (CPF, cartão, chave, chave privada) nunca viram legado. Trecho novo ou copiado bloqueia.
 // O relatório nunca repete o trecho achado: ele pode ser o próprio dado pessoal.
 // Falha fechado: regra que não carrega nega toda edição e recusa todo commit, até ser corrigida (pelo shell).
 import { execFileSync } from 'node:child_process';
@@ -22,6 +24,8 @@ const CODIGO = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|sql|json|ya?ml)$/i;
 const CONFIG = /(^|\/)\.env(\.[\w.-]+)?$|(^|\/)dockerfile$|\.(ya?ml|toml|sh|ps1|http|ini|conf|properties)$/i;
 const TESTE = /(^|\/)(testes?|tests|__tests__|fixtures)\/|\.(test|spec)\.\w+$/i;
 const SO_COMENTARIO = /^\s*(\/\/|--|#|\/?\*|<!--)/; // a supressão na linha de cima só vale se a linha é só comentário
+// o que nunca vira legado: CPF, cartão e chave (as regras sem supressão); um teste confere que são estas
+export const FORTES = new Set(['cpf_literal', 'cartao_literal', 'chave_conhecida', 'chave_privada']);
 const DDD = new Set(
   ('11 12 13 14 15 16 17 18 19 21 22 24 27 28 31 32 33 34 35 37 38 41 42 43 44 45 46 47 48 49 51 53 54 55 ' +
     '61 62 63 64 65 66 67 68 69 71 73 74 75 77 79 81 82 83 84 85 86 87 88 89 91 92 93 94 95 96 97 98 99').split(' '),
@@ -68,13 +72,17 @@ const compilar = (r) => ({
 // dentro do try: uma regra quebrada, ou um config.mjs quebrado (conflito de merge), não pode deixar o hook sair sem negar
 export let regras = [];
 let SUPRESSAO = /(?!)/; // a regex da supressão vem do config.mjs; sem ela nada se suprime
+let legadoAteDoTexto = () => ({ valor: null, erro: null });
 let falhaDasRegras = null;
 try {
-  ({ SUPRESSAO } = await import('./config.mjs'));
+  ({ SUPRESSAO, legadoAteDoTexto } = await import('./config.mjs'));
   regras = (await import('./lgpd-regras.mjs')).REGRAS.map(compilar);
 } catch (erro) {
   falhaDasRegras = erro;
 }
+
+/** As regras carregaram? (O escolhe-revisores falha fechado se não: sem elas a revisão de LGPD não vale.) */
+export const regrasCarregaram = () => falhaDasRegras === null;
 
 function vale(regra, rel) {
   if (IGNORADO.test(rel) || regra.foraRe?.test(rel)) return false;
@@ -104,7 +112,7 @@ export function varrer(texto, rel, lista = regras) {
   for (const regra of lista) {
     if (!vale(regra, rel)) continue;
     if (regra.binario === true || regra.caminhoRe !== null) {
-      if (regra.binario === true ? binario : regra.caminhoRe.test(rel)) achados.push({ regra, arquivo: rel, linha: 1, suprimido: false });
+      if (regra.binario === true ? binario : regra.caminhoRe.test(rel)) achados.push({ regra, arquivo: rel, linha: 1, suprimido: false, trecho: null });
       continue;
     }
     const alvo = regra.arquivos === 'sql' ? semComentario : conteudo;
@@ -119,43 +127,39 @@ export function varrer(texto, rel, lista = regras) {
       for (const fim = m.index + trecho.length - 1; pos < fim; pos++) if (alvo.charCodeAt(pos) === 10) linha++;
       if (vistas.has(linha)) continue;
       vistas.add(linha);
-      achados.push({ regra, arquivo: rel, linha, suprimido: suprimida(linhas, linha, regra) });
+      achados.push({ regra, arquivo: rel, linha, suprimido: suprimida(linhas, linha, regra), trecho: m[0].replace(/\s+/g, ' ').trim() });
     }
   }
   return achados.sort((a, b) => ORDEM[a.regra.nivel] - ORDEM[b.regra.nivel] || a.arquivo.localeCompare(b.arquivo) || a.linha - b.linha);
 }
 
-// as linhas como o varrer as vê: binário não tem linha
-const linhasDe = (texto) => (texto.includes('\0') ? [''] : texto.replace(/\r\n?/g, '\n').split('\n'));
-// a regra e o texto da linha: o mesmo achado na mesma linha, mesmo que ela tenha mudado de lugar (nunca vai para a saída)
-const chave = (a, linhas) => `${a.regra.id}\0${(linhas[a.linha - 1] ?? '').trim()}`;
+// a regra e o trecho achado, com os espaços normalizados: o mesmo achado, onde quer que a linha esteja (só em memória; nunca vai para a saída)
+const chave = (a) => `${a.regra.id}\0${a.trecho}`;
+const contar = (texto, rel) => {
+  const vezes = new Map();
+  for (const a of varrer(texto, rel)) if (a.trecho !== null) vezes.set(chave(a), (vezes.get(chave(a)) ?? 0) + 1);
+  return vezes;
+};
 
 /**
- * Marca `legado: true` no achado cuja regra já achava a mesma linha num texto de antes (`antes`: os textos de antes do
- * mesmo arquivo; vazio = arquivo novo; `relAntes`: o caminho de antes, que decide as regras que valiam). O legado não
- * bloqueia: quem mexe na linha a corrige.
- * - Cada linha vale quantas vezes aparecia antes: a cópia, ou a chamada nova cuja última linha repete a de uma antiga, bloqueia.
- * - A regra de caminho e de binário não tem linha: só é legado com o arquivo igual.
+ * Marca `legado: true` no achado cujo trecho já estava no texto âncora (`ancora`: o texto do arquivo no commit de
+ * `legadoAte`; null = arquivo novo ou sem legado: nada é legado; `relAncora`: o caminho dele naquele commit, que decide as
+ * regras que valiam). O legado não bloqueia: quem mexe no trecho o corrige.
+ * - Cada trecho vale quantas vezes aparecia na âncora: a cópia bloqueia. Com `resto` (o Edit: o arquivo em disco sem o
+ *   trecho que a edição troca), o que ainda fica no arquivo gasta o orçamento antes de a edição receber a sua parte.
+ * - As regras fortes (FORTES) nunca são legado. A regra de caminho e de binário não tem trecho: só é legado com o arquivo igual.
  */
-export function marcarLegado(achados, texto, antes, relAntes) {
-  if (antes.length === 0) return achados;
-  const vezes = new Map(); // chave → quantas vezes o texto de antes que mais a tinha
-  for (const t of antes) {
-    const aqui = new Map();
-    const linhasAntes = linhasDe(t);
-    for (const a of varrer(t, relAntes)) {
-      const k = chave(a, linhasAntes);
-      aqui.set(k, (aqui.get(k) ?? 0) + 1);
-    }
-    for (const [k, n] of aqui) vezes.set(k, Math.max(vezes.get(k) ?? 0, n));
-  }
-  const linhas = linhasDe(texto);
+export function marcarLegado(achados, texto, ancora, relAncora, { resto = '', relAgora = relAncora } = {}) {
+  if (ancora === null || ancora === undefined) return achados;
+  const orcamento = contar(ancora, relAncora);
+  if (resto !== '') for (const [k, n] of contar(resto, relAgora)) orcamento.set(k, Math.max(0, (orcamento.get(k) ?? 0) - n));
   return achados.map((a) => {
-    if (a.regra.binario === true || a.regra.caminhoRe !== null) return antes.includes(texto) ? { ...a, legado: true } : a;
-    const k = chave(a, linhas);
-    const n = vezes.get(k) ?? 0;
+    if (FORTES.has(a.regra.id)) return a;
+    if (a.regra.binario === true || a.regra.caminhoRe !== null) return ancora === texto ? { ...a, legado: true } : a;
+    const k = chave(a);
+    const n = orcamento.get(k) ?? 0;
     if (n === 0) return a;
-    vezes.set(k, n - 1);
+    orcamento.set(k, n - 1);
     return { ...a, legado: true };
   });
 }
@@ -172,7 +176,7 @@ export function relatorio(achados, { todos = false } = {}) {
     `confere-lgpd: ${bloqueiam} achado(s) que bloqueiam, ${ativos.length - bloqueiam} aviso(s) e ${suprimidos.length} supressão(ões).`,
     ...ativos.map(item),
     ...(legado.length === 0 ? [] : [
-      `Legado: ${legado.length} achado(s) em linhas que já estavam assim antes; não bloqueiam, e a linha mexida tem de sair limpa${todos ? ':' : ' (--todos lista).'}`,
+      `Legado: ${legado.length} achado(s) em trechos que já estavam assim em legadoAte; não bloqueiam, e o trecho mexido tem de sair limpo${todos ? ':' : ' (--todos lista).'}`,
       ...(todos ? legado.map(item) : []),
     ]),
     ...(suprimidos.length === 0 ? [] : ['Suprimidos (o revisor-lgpd confere o motivo de cada um):', ...suprimidos.map((a) => `- ${a.arquivo}:${a.linha} ${a.regra.id}`)]),
@@ -225,8 +229,16 @@ async function comoHook() {
   }
   const novos = [ti.content, ti.new_string, ti.new_source, ...(Array.isArray(ti.edits) ? ti.edits.map((e) => e?.new_string) : [])];
   const texto = novos.filter((t) => typeof t === 'string').join('\n');
-  const antes = existsSync(absoluto) && statSync(absoluto).isFile() ? [decodificar(readFileSync(absoluto))] : [];
-  const achados = marcarLegado(varrer(texto, rel), texto, antes, rel).filter(bloqueia);
+  const disco = existsSync(absoluto) && statSync(absoluto).isFile() ? decodificar(readFileSync(absoluto)) : null;
+  const { ancora, relAncora } = ancoraDe(raiz, rel);
+  // o que a edição troca sai do arquivo: o que fica no resto gasta o orçamento do legado (a cópia de uma linha antiga bloqueia)
+  const edicoes = typeof ti.old_string === 'string' ? [ti] : Array.isArray(ti.edits) ? ti.edits : [];
+  let resto = '';
+  if (edicoes.length > 0 && disco !== null) {
+    resto = disco;
+    for (const e of edicoes) if (typeof e?.old_string === 'string' && e.old_string !== '') resto = e.replace_all === true ? resto.split(e.old_string).join('') : resto.replace(e.old_string, () => '');
+  } else if (typeof ti.content !== 'string') resto = disco ?? ''; // NotebookEdit: o resto é o arquivo todo (menos legado, nunca mais)
+  const achados = marcarLegado(varrer(texto, rel), texto, ancora, relAncora, { resto, relAgora: rel }).filter(bloqueia);
   if (achados.length > 0) negar(`${relatorio(achados)}\nNo Edit, a linha é a do trecho editado, não a do arquivo.`);
 }
 
@@ -244,31 +256,60 @@ function terminar(achados, saida, opcoes) {
 }
 
 const calado = { maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] };
-const existeRef = (raiz, ref) => {
+
+/** O sha completo de `lgpd.legadoAte`, lido do pipeline.json do HEAD (um commit que muda a chave não perdoa a si mesmo); null = sem legado. */
+function legadoDoRepositorio(raiz) {
+  let texto;
   try {
-    execFileSync('git', ['-C', raiz, 'rev-parse', '-q', '--verify', ref], calado);
-    return true;
+    texto = execFileSync('git', ['-C', raiz, 'show', 'HEAD:.claude/pipeline.json'], { ...calado, encoding: 'utf8' });
   } catch {
-    return false;
+    return null; // sem HEAD ou sem pipeline.json commitado: sem legado
   }
-};
+  const { valor, erro } = legadoAteDoTexto(texto);
+  if (erro !== null) process.stderr.write(`confere-lgpd: sem legado, ${erro}\n`);
+  if (valor === null) return null;
+  try {
+    return execFileSync('git', ['-C', raiz, 'rev-parse', '-q', '--verify', `${valor}^{commit}`], { ...calado, encoding: 'utf8' }).trim();
+  } catch {
+    process.stderr.write(`confere-lgpd: sem legado, lgpd.legadoAte ${valor} não é um commit deste repositório\n`);
+    return null;
+  }
+}
 
-/** Os commits de antes: o HEAD, e o MERGE_HEAD no meio de um merge (o que veio do outro lado já está no remoto: trazê-lo não é dado novo). */
-const refsDeAntes = (raiz) => ['HEAD', 'MERGE_HEAD'].filter((ref) => existeRef(raiz, ref));
+/** Nome de agora (no HEAD) → nome no commit da âncora, para os renomes feitos depois dela. */
+function renomesDesde(raiz, sha) {
+  const campos = execFileSync('git', ['-C', raiz, '-c', 'core.quotepath=false', 'diff', '--name-status', '-M', '-z', sha, 'HEAD'], calado).toString('utf8').split('\0');
+  const mapa = new Map();
+  for (let i = 0; i < campos.length && campos[i] !== ''; ) {
+    if (/^[RC]/.test(campos[i])) { if (campos[i].startsWith('R')) mapa.set(campos[i + 2], campos[i + 1]); i += 3; }
+    else i += 2;
+  }
+  return mapa;
+}
 
-/** Confere o texto de cada arquivo contra o de antes. `pares`: [rel de agora, rel de antes (o nome antigo, se mudou)]. */
+const ancorasDoRepositorio = new Map();
+/** O texto de `rel` (o nome no HEAD) no commit da âncora e o nome que ele tinha lá; { ancora: null } sem legado ou se o arquivo não existia. */
+function ancoraDe(raiz, rel) {
+  if (!ancorasDoRepositorio.has(raiz)) {
+    const sha = legadoDoRepositorio(raiz);
+    ancorasDoRepositorio.set(raiz, sha === null ? null : { sha, renomes: renomesDesde(raiz, sha) });
+  }
+  const dados = ancorasDoRepositorio.get(raiz);
+  if (dados === null) return { ancora: null, relAncora: rel };
+  const relAncora = dados.renomes.get(rel) ?? rel;
+  try {
+    return { ancora: decodificar(execFileSync('git', ['-C', raiz, 'show', `${dados.sha}:${relAncora}`], calado)), relAncora };
+  } catch {
+    return { ancora: null, relAncora }; // o arquivo não existia na âncora
+  }
+}
+
+/** Confere o texto de cada arquivo contra a âncora. `pares`: [rel de agora, rel no HEAD (o nome antigo, se mudou neste commit)]. */
 function conferirPares(raiz, pares, lerAgora) {
-  const refs = refsDeAntes(raiz);
   return pares.filter(([rel]) => !IGNORADO.test(rel)).flatMap(([rel, relAntes]) => {
     const texto = decodificar(lerAgora(rel));
-    const antes = refs.flatMap((ref) => {
-      try {
-        return [decodificar(execFileSync('git', ['-C', raiz, 'show', `${ref}:${relAntes}`], calado))];
-      } catch {
-        return []; // o arquivo não existia nesse commit
-      }
-    });
-    return marcarLegado(varrer(texto, rel), texto, antes, relAntes);
+    const { ancora, relAncora } = ancoraDe(raiz, relAntes);
+    return marcarLegado(varrer(texto, rel), texto, ancora, relAncora, { relAgora: rel });
   });
 }
 

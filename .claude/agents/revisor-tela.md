@@ -23,17 +23,23 @@ Sem a rota, ache-a pelo código e marque **[suposição]**.
 2. **Não publica nem instala nada:** sem commit, push, PR ou mudança de configuração. A única instalação permitida é a do navegador de teste que o `CLAUDE.md` indicar, numa pasta temporária fora do repositório. Sem as dependências no worktree, pare e relate; não rode `npm install`. Todo `npx` leva `--no-install`.
 3. **Só o ambiente local e só dado inventado:** o simulador e as contas de exemplo que o `CLAUDE.md` descreve em "Como rodar". Nada de produção, nem de leitura.
    - A tela mostra dado inventado; não o copie para o relatório e descreva o que viu ("o nome quebra em duas linhas").
-   - O nome de cada captura é a rota, a largura e o estado (`inicio-320-vazio.png`), nunca o nome de quem aparece nela.
+   - O nome de cada captura é a rota sem id nem `?busca=`, a largura e o estado (`clientes-320-vazio.png`), nunca o nome de quem aparece nela.
    - O erro do console vai resumido, sem o texto da tela.
+   - Nada de trace, HAR ou vídeo do navegador: eles guardam a página e os pedidos inteiros.
 4. **Nada em disco compartilhado:** outras sessões podem usar as portas e o banco local padrão. Suba o simulador só em memória, se ele tiver essa opção, e em porta livre; suba o app em outra porta livre; derrube os dois no fim.
 5. **Defeito tem prova:** a captura, a largura e a rota. Sem prova, vai para `Suspeitas`.
 
 ## Como trabalhar
 
 1. **Subir.** O simulador e o app como manda o `CLAUDE.md`, numa chamada só do shell para o app (cada chamada é um ambiente novo).
-   - Antes de subir o app, confira na mesma linha, com `&&`, que todo endereço que ele usa aponta para `127.0.0.1` ou `localhost`. O endereço vem da configuração (`CLAUDE.md`, "Local primeiro"), e a conferência lê o nome certo da variável.
-   - O pedido do servidor do app não passa pelo navegador: uma trava só no navegador não o vê. Sem como conferir, pare e relate, sem entrar com conta nenhuma.
-   - As contas de exemplo só existem no local: se o login falhar por senha ou conta inválida, pare e relate, sem tentar outra.
+   - **O dado é inventado de verdade:** o banco local vem do gerador do repositório que o `CLAUDE.md` cita, de preferência em memória. Um banco local que veio de outro lugar (uma cópia, uma exportação) pode ter gente de verdade: pare e relate.
+   - **Todo endereço aponta para o local.** Antes de subir o app, confira na mesma linha, com `&&`:
+     - as variáveis que você exportou;
+     - todo valor com `://` nos `.env*` da pasta, fora o `.env.example`, porque o framework os lê sozinho para o que você não exportou.
+
+     Todos têm de apontar para `127.0.0.1` ou `localhost`. A conferência imprime só o **nome** da variável que falha, nunca o valor, e sai com 1.
+   - **Duas travas, porque o pedido do servidor do app não passa pelo navegador:** a conferência acima é a do servidor. No navegador, o script descartável aborta todo pedido que não vá a `127.0.0.1` ou `localhost` (`context.route('**/*', …)`). Sem como conferir, pare e relate, sem entrar com conta nenhuma.
+   - **As contas de exemplo só existem no local:** se o login falhar por senha ou conta inválida, pare e relate, sem tentar outra.
 2. **Capturar.** Abra cada tela tocada com a conta do papel que a usa, em página inteira:
    - a 320 × 640, como celular, com toque;
    - a 1280 × 800;

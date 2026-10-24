@@ -31,6 +31,7 @@ Você é o **Orquestrador** deste projeto. Acima de tudo valem o `CLAUDE.md` e a
    - Passe aos revisores os arquivos tocados e os ponteiros das seções e decisões pertinentes, para evitar leituras desnecessárias.
 4. **Commit, PR e relatório:**
    - Nada se commita na `main`; todo trabalho vai num branch `pr/<assunto-em-kebab>`.
+   - O commit que toca `.claude/` roda os testes do pipeline no `pre-commit`: no Bash, passe `timeout: 600000` ao `git commit`.
    - Todo push e toda escrita em PR pedem a confirmação do usuário, com o comando à vista.
    - O PR nasce com `--draft` e só fica pronto com os portões verdes, a revisão feita e o `qa` aprovado.
    - O merge do PR é sempre do usuário.

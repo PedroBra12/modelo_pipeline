@@ -119,3 +119,10 @@ caso('arquivo da raiz citado sem caminho passa; o que não existe em lugar nenhu
   Object.keys(PASTA_OK), 'm', 'cita `proxy.js`');
 caso('arquivo da raiz citado sem caminho passa', { ...PASTA_OK, 'DESIGN.md': '# design', 'packages/contatos/AGENTS.md': `${AGENTS}Tela: \`DESIGN.md\`\n` },
   Object.keys(PASTA_OK), 'm', null);
+for (const extensao of ['py', 'go', 'rb', 'vue', 'svelte', 'css', 'scss', 'html', 'sh', 'yml', 'yaml', 'toml', 'prisma']) {
+  caso(`.${extensao} é código (a lista única do config.mjs): mudou, pede Docs-conferidos`, { ...PASTA_OK, [`packages/contatos/x.${extensao}`]: 'x' }, [`packages/contatos/x.${extensao}`], 'contatos: muda',
+    'Docs-conferidos: packages/contatos/AGENTS.md');
+}
+caso('.txt e .png não são código: não pedem Docs-conferidos', { ...PASTA_OK, 'packages/contatos/lista.txt': 'x', 'packages/contatos/logo.png': 'x' }, ['packages/contatos/lista.txt', 'packages/contatos/logo.png'], 'contatos: muda', null);
+caso('AGENTS.md que cita um .py ou .yml que não existe é recusado, e o que existe passa',
+  { ...PASTA_OK, 'packages/contatos/job.py': 'x', 'packages/contatos/AGENTS.md': `${AGENTS}Rotina: \`job.py\` e \`ci.yml\`\n` }, Object.keys(PASTA_OK), 'm', 'cita `ci.yml`');

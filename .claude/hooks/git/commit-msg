@@ -1,4 +1,5 @@
 #!/bin/sh
+unset NODE_OPTIONS  # o ambiente do comando não escolhe o que o node carrega dentro do hook
 # Hook commit-msg do git: todo commit, do agente ou da pessoa, passa pelo confere-docs.
 # Ligado por: git config core.hooksPath .claude/hooks/git
 exec node "$(dirname "$0")/../confere-docs.mjs" "$1"

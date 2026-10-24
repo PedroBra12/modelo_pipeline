@@ -7,7 +7,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ARQUIVO, FIXOS, lerAgentes, lerNiveis, par } from './config.mjs';
+import { ARQUIVO, FIXOS, PISOS, lerAgentes, lerNiveis, par } from './config.mjs';
 import { analisar, aplicar, comTabela, formatar, lerAjustes, lerConfig, lerSessao, lerSessoes, tabela, validarSessao } from './ajusta-pipeline.mjs';
 import { lerCabecalhoDoArquivo } from './guarda-agentes.mjs';
 import { EXEMPLO, fixarExemplo } from './teste-apoio.mjs';
@@ -76,7 +76,7 @@ test('para menos, passo a passo: segurança, depois arquitetura (opus), depois q
   }
   assert.deepEqual(vistas, [
     'revisor-seguranca opus:xhigh->opus:high',
-    'revisor-arquitetura opus:high->sonnet:high',
+    'revisor-arquitetura opus:high->opus:medium',
     'qa sonnet:high->sonnet:medium',
     'revisao-ponytail sonnet:high->sonnet:medium',
   ]);
@@ -132,14 +132,14 @@ test('adiar: o orquestrador adia uma descida com motivo, o script respeita e rel
 
 test('a janela incompleta não deixa nada descer, mas escape e gatilho que falta viram proposta na hora; rodadas altas esperam a janela', () => {
   const cfg = config();
-  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], model: 'sonnet', effort: 'high' };
+  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], model: 'opus', effort: 'medium' };
   const sessoes = quietas(cfg, 2);
   sessoes[0].achados.push(achado('qa', { severidade: 'alto', escapou_de: ['revisor-arquitetura', 'revisor-seguranca'], nao_rodou: ['revisor-seguranca'] }));
   sessoes[0].agentes.push(codigo('medio', 3, 'medium'), codigo('medio', 3, 'medium'));
   const r = analisar(sessoes, [], cfg);
   assert.equal(r.completa, false);
   assert.deepEqual(r.descer, [], 'nada desce com a janela incompleta');
-  assert.deepEqual([acha(r, 'subir', 'agentes.revisor-arquitetura').de, acha(r, 'subir', 'agentes.revisor-arquitetura').para], ['sonnet:high', 'opus:high']);
+  assert.deepEqual([acha(r, 'subir', 'agentes.revisor-arquitetura').de, acha(r, 'subir', 'agentes.revisor-arquitetura').para], ['opus:medium', 'opus:high']);
   assert.match(acha(r, 'gatilhos', 'agentes.revisor-seguranca').motivo, /nem rodou/);
   assert.equal(acha(r, 'subir', 'niveis.medio'), undefined, 'a média de rodadas espera a janela');
   assert.match(r.relatos.find((i) => i.id === 'niveis.medio').relato, /janela incompleta \(2 de 3 sessões/);
@@ -155,13 +155,13 @@ test('três sessões sem achado nenhum não derrubam ninguém, nem a segurança 
 
 test('escape logo depois de uma descida vira proposta de subida na hora, com uma sessão só', () => {
   const cfg = config();
-  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], model: 'sonnet', effort: 'high' };
+  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], model: 'opus', effort: 'medium' };
   const antes = quietas(cfg, 3);
   const depois = quietas(cfg, 1, 4);
   depois[0].achados.push(achado('qa', { severidade: 'defeito', escapou_de: ['revisor-arquitetura'] }));
   const r = analisar([...antes, ...depois], [ajuste('revisor-arquitetura', arq(antes))], cfg);
   assert.equal(r.alvos.find((a) => a.id === 'agentes.revisor-arquitetura').sessoes, 1);
-  assert.deepEqual([acha(r, 'subir', 'agentes.revisor-arquitetura').de, acha(r, 'subir', 'agentes.revisor-arquitetura').para], ['sonnet:high', 'opus:high']);
+  assert.deepEqual([acha(r, 'subir', 'agentes.revisor-arquitetura').de, acha(r, 'subir', 'agentes.revisor-arquitetura').para], ['opus:medium', 'opus:high']);
 });
 
 test('a LGPD é fixa: não desce nem sobe, e um escape dela vira travado; o gatilho que falta continua sendo proposto', () => {
@@ -215,25 +215,25 @@ test('histerese: depois de uma subida o alvo não desce por 3 sessões; depois d
   assert.ok([...r.descer, ...r.pendentes].some((d) => d.id === 'agentes.revisor-arquitetura'), 'com 3 sessões novas já pode');
   const poucas = analisar(sessoes.slice(0, 4), subida, cfg);
   assert.ok(![...poucas.descer, ...poucas.pendentes].some((d) => d.id === 'agentes.revisor-arquitetura'), 'com 2 sessões novas não desce');
-  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], model: 'sonnet', effort: 'high' };
+  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], model: 'opus', effort: 'medium' };
   const depois = quietas(cfg, 3, 6);
   const descida = [ajuste('revisor-arquitetura', arq(sessoes))];
   assert.equal(acha(analisar(depois, descida, cfg), 'subir', 'agentes.revisor-arquitetura'), undefined, 'sem escape não sobe');
   depois[1].achados.push(achado('qa', { severidade: 'alto', escapou_de: ['revisor-arquitetura'] }));
   const sobe = acha(analisar(depois, descida, cfg), 'subir', 'agentes.revisor-arquitetura');
-  assert.deepEqual([sobe.de, sobe.para], ['sonnet:high', 'opus:high']);
+  assert.deepEqual([sobe.de, sobe.para], ['opus:medium', 'opus:high']);
 });
 
 // ---------- subir ----------
 
 test('para mais: escape de nível médio ou mais no domínio do revisor propõe um degrau; baixo não conta; o teto da guarda trava', () => {
   const cfg = config();
-  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], model: 'sonnet', effort: 'high' };
+  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], model: 'opus', effort: 'medium' };
   const sessoes = quietas(cfg);
   sessoes[1].achados.push(achado('qa', { severidade: 'alto', escapou_de: ['revisor-arquitetura'], resumo: 'a arquitetura deixou passar' }), achado('qa', { severidade: 'baixo', escapou_de: ['revisor-lgpd'] }));
   const r = analisar(sessoes, [], cfg);
   const sobe = acha(r, 'subir', 'agentes.revisor-arquitetura');
-  assert.deepEqual([sobe.de, sobe.para], ['sonnet:high', 'opus:high']);
+  assert.deepEqual([sobe.de, sobe.para], ['opus:medium', 'opus:high']);
   assert.match(sobe.provas[0], /a arquitetura deixou passar/);
   assert.equal(acha(r, 'subir', 'agentes.revisor-lgpd'), undefined, 'escape baixo não conta');
   const noTeto = config();
@@ -313,7 +313,7 @@ test('o MODELO.md tem um bloco que passa na validação (com a data trocada) e a
   const texto = readFileSync(join(RAIZ, 'docs', 'pipeline', 'sessoes', 'MODELO.md'), 'utf8');
   const s = lerSessao(texto.replace('"data": "AAAA-MM-DD"', '"data": "2026-01-01"'), 'MODELO.md', config());
   assert.equal(s.sessao.data, '2026-01-01');
-  assert.match(texto, /sem nome de cliente, código de cliente, celular, e-mail, CPF ou cidade/i);
+  assert.match(texto, /sem nome de pessoa.*id de pessoa, celular, e-mail, CPF ou cidade/i);
   assert.match(texto, /\bconsulta\b/, 'o modelo cita o papel consulta');
 });
 
@@ -431,7 +431,7 @@ test('--aplicar-menos desce um alvo, edita só a linha dele, o cabeçalho e a ta
 test('--aplicar-menos em sequência: cada execução tira um alvo (o mais caro), sem sobrar cópia do par antigo; o mesmo alvo só desce com sessões novas', () => {
   const real = readFileSync(ARQUIVO, 'utf8');
   comProjeto(quietas(), (raiz) => {
-    const velho = { 'revisor-seguranca': 'xhigh', 'revisor-arquitetura': 'opus', qa: 'high', 'revisao-ponytail': 'high' };
+    const velho = { 'revisor-seguranca': 'xhigh', 'revisor-arquitetura': 'high', qa: 'high', 'revisao-ponytail': 'high' };
     const feitos = [];
     for (let i = 0; i < 5; i += 1) {
       const r = cli(raiz, '--aplicar-menos', '--data', '2026-11-04');
@@ -441,7 +441,7 @@ test('--aplicar-menos em sequência: cada execução tira um alvo (o mais caro),
       feitos.push(`${m[1]} ${m[2]}->${m[3]}`);
       assert.deepEqual(paresAntigos(raiz, m[1], [velho[m[1]]]), [], `${m[1]}: sobrou o par antigo`);
     }
-    assert.deepEqual(feitos, ['revisor-seguranca opus:xhigh->opus:high', 'revisor-arquitetura opus:high->sonnet:high', 'qa sonnet:high->sonnet:medium', 'revisao-ponytail sonnet:high->sonnet:medium']);
+    assert.deepEqual(feitos, ['revisor-seguranca opus:xhigh->opus:high', 'revisor-arquitetura opus:high->opus:medium', 'qa sonnet:high->sonnet:medium', 'revisao-ponytail sonnet:high->sonnet:medium']);
     assert.match(cli(raiz, '--aplicar-menos', '--data', '2026-11-04').stdout, /Nenhum ajuste para menos aplicado/, 'sem sessões novas depois dos ajustes ninguém desce de novo');
     assert.equal(lerAjustes(join(raiz, 'docs', 'pipeline', 'ajustes')).length, 4);
     const novas = quietas(lerConfig(join(raiz, '.claude', 'pipeline.json')), 3, 5);
@@ -456,21 +456,21 @@ test('--aplicar-menos em sequência: cada execução tira um alvo (o mais caro),
 test('--aplicar-mais só com proposta: grava o ajuste e sobe um degrau; sem proposta ou sem alvo é erro e não grava', () => {
   const descida = (raiz) => {
     const p = join(raiz, '.claude', 'pipeline.json');
-    writeFileSync(p, readFileSync(p, 'utf8').replace(/("revisor-arquitetura": \{ "model": ")opus(", "effort": "high")/, '$1sonnet$2'));
+    writeFileSync(p, readFileSync(p, 'utf8').replace(/("revisor-arquitetura": \{ "model": "opus", "effort": ")high(")/, '$1medium$2'));
     const a = join(raiz, '.claude', 'agents', 'revisor-arquitetura.md');
-    writeFileSync(a, readFileSync(a, 'utf8').replace(/^model: opus$/m, 'model: sonnet'));
+    writeFileSync(a, readFileSync(a, 'utf8').replace(/^effort: high$/m, 'effort: medium'));
   };
   const cfg = config();
-  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], model: 'sonnet' };
+  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], effort: 'medium' };
   const sessoes = quietas(cfg);
   sessoes[1].achados.push(achado('qa', { severidade: 'alto', escapou_de: ['revisor-arquitetura'], resumo: 'passou pela arquitetura' }));
   comProjeto(sessoes, (raiz) => {
-    assert.match(cli(raiz, '--relatorio').stdout, /Para MAIS[\s\S]*revisor-arquitetura: sonnet:high -> opus:high/);
+    assert.match(cli(raiz, '--relatorio').stdout, /Para MAIS[\s\S]*revisor-arquitetura: opus:medium -> opus:high/);
     const r = cli(raiz, '--aplicar-mais', 'revisor-arquitetura', '--data', '2026-11-04');
     assert.equal(r.status, 0, r.stderr);
     assert.equal(par(lerConfig(join(raiz, '.claude', 'pipeline.json')).agentes['revisor-arquitetura']), 'opus:high');
     const [a] = lerAjustes(join(raiz, 'docs', 'pipeline', 'ajustes'));
-    assert.deepEqual([a.tipo, a.de, a.para], ['mais', 'sonnet:high', 'opus:high']);
+    assert.deepEqual([a.tipo, a.de, a.para], ['mais', 'opus:medium', 'opus:high']);
     assert.equal(cli(raiz, '--aplicar-mais', 'revisor-arquitetura').status, 2, 'já subiu: não há mais proposta');
     assert.equal(cli(raiz, '--aplicar-mais', 'qa').status, 2);
     assert.equal(cli(raiz, '--aplicar-mais').status, 2, 'sem o alvo');
@@ -614,4 +614,128 @@ test('o --relatorio e o --json trazem a sessão fora da conta, e a conta segue s
     assert.deepEqual(json.foraDaConta, [{ arquivo: '2026-11-04-s4.md', orquestrador: 'sonnet:low' }]);
     assert.equal(json.completa, true);
   });
+});
+
+// ---------- o ajuste só mexe no esforço, dentro do mesmo modelo (D3) ----------
+
+const modeloDe = (p) => p.split(':')[0];
+
+test('a descida do revisor-arquitetura vai de opus:high para opus:medium e para aí: o piso é opus:medium, não um sonnet', () => {
+  const cfg = config();
+  assert.equal(PISOS.agentes['revisor-arquitetura'], 'opus:medium');
+  cfg.agentes['revisor-seguranca'] = { ...cfg.agentes['revisor-seguranca'], effort: 'high' }; // no piso dela: o arquitetura é o mais caro que ainda desce
+  const sessoes = quietas(cfg, 3);
+  const [d] = analisar(sessoes, [], cfg).descer;
+  assert.deepEqual([d.id, d.de, d.para], ['agentes.revisor-arquitetura', 'opus:high', 'opus:medium']);
+  cfg.agentes['revisor-arquitetura'] = { ...cfg.agentes['revisor-arquitetura'], effort: 'medium' };
+  const r = analisar(quietas(cfg, 3), [], cfg);
+  assert.equal(acha(r, 'descer', 'agentes.revisor-arquitetura'), undefined);
+  assert.match(r.bloqueios.find((b) => b.id === 'agentes.revisor-arquitetura').motivo, /já está no piso \(opus:medium\)/);
+});
+
+test('nenhum ajuste troca o modelo de ninguém: toda descida e toda subida propostas ficam no modelo do alvo, em qualquer par de partida', () => {
+  const esforcos = { opus: ['medium', 'high', 'xhigh'], sonnet: ['low', 'medium', 'high'] };
+  for (const [secao, chave] of [['agentes', 'revisor-seguranca'], ['agentes', 'revisor-arquitetura'], ['agentes', 'qa'], ['agentes', 'revisor-tela'], ['niveis', 'medio'], ['niveis', 'codigo-seguranca'], ['niveis', 'revisao-ponytail']]) {
+    const modelo = lerConfig(ARQUIVO)[secao][chave].model;
+    for (const effort of esforcos[modelo]) {
+      const cfg = config();
+      cfg[secao][chave] = { ...cfg[secao][chave], model: modelo, effort };
+      const sessoes = quietas(cfg, 3);
+      const nome = secao === 'agentes' ? chave : 'ponytail-review';
+      sessoes[1].achados.push(achado('qa', { severidade: 'alto', escapou_de: [nome] }));
+      const limpas = quietas(cfg, 3);
+      for (const r of [analisar(sessoes, [], cfg), analisar(limpas, [], cfg)]) {
+        for (const p of [...r.subir, ...r.descer, ...r.pendentes.map((x) => ({ id: x.id, de: x.motivo.split(' ')[0], para: x.motivo.split(' ')[2] }))]) {
+          assert.equal(modeloDe(p.para), modeloDe(p.de), `${p.id}: ${p.de} -> ${p.para} trocou o modelo`);
+        }
+      }
+    }
+  }
+  // o topo e o começo de cada modelo bloqueiam em vez de saltar para o outro
+  const cfg = config();
+  cfg.agentes.qa = { ...cfg.agentes.qa, model: 'sonnet', effort: 'high' };
+  const s = quietas(cfg, 3);
+  s[1].achados.push(achado('qa', { severidade: 'alto', escapou_de: ['qa'] }));
+  assert.equal(acha(analisar(s, [], cfg), 'subir', 'agentes.qa'), undefined);
+});
+
+// ---------- o fim de linha do SKILL.md (CRLF ou LF) é mantido ----------
+
+const emCRLF = (texto) => texto.replace(/\r?\n/g, '\r\n');
+const temLFsolto = (texto) => /(^|[^\r])\n/.test(texto);
+
+test('a tabela mantém o fim de linha que o SKILL.md já usa: comTabela, --sincronizar-tabela e --aplicar-menos, em CRLF e em LF', () => {
+  const cfg = lerConfig(ARQUIVO);
+  const skill = readFileSync(join(CLAUDE, 'skills', 'pipeline', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+  const lf = comTabela(skill, cfg);
+  const crlf = comTabela(emCRLF(skill), cfg);
+  assert.equal(temLFsolto(crlf), false, 'a tabela gerada em um SKILL.md CRLF não deixa LF solto');
+  assert.equal(crlf, emCRLF(lf), 'o mesmo texto, só com outro fim de linha');
+  assert.equal(/\r/.test(lf), false, 'em LF continua LF');
+  assert.equal(comTabela(crlf, cfg), crlf, 'idempotente');
+  for (const converter of [emCRLF, (t) => t.replace(/\r\n/g, '\n')]) {
+    comProjeto(quietas(), (raiz) => {
+      const arquivoSkill = join(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md');
+      const eol = (t) => (/\r\n/.test(t) ? 'crlf' : 'lf');
+      const esperado = eol(converter('a\nb'));
+      assert.equal(eol(lerArquivo(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md')), esperado, 'prepara');
+      assert.equal(cli(raiz, '--sincronizar-tabela').status, 0);
+      const depoisSync = lerArquivo(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md');
+      assert.equal(eol(depoisSync), esperado);
+      assert.equal(esperado === 'crlf' ? temLFsolto(depoisSync) : /\r/.test(depoisSync), false, '--sincronizar-tabela: um fim de linha só');
+      const r = cli(raiz, '--aplicar-menos', '--data', '2026-11-04');
+      assert.equal(r.status, 0, r.stderr);
+      const depoisAplicar = readFileSync(arquivoSkill, 'utf8');
+      assert.equal(esperado === 'crlf' ? temLFsolto(depoisAplicar) : /\r/.test(depoisAplicar), false, '--aplicar-menos: um fim de linha só');
+      assert.equal(comTabela(depoisAplicar, lerConfig(join(raiz, '.claude', 'pipeline.json'))), depoisAplicar, 'a tabela ficou em sincronia');
+    }, (raiz) => {
+      const arquivoSkill = join(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md');
+      writeFileSync(arquivoSkill, converter(readFileSync(arquivoSkill, 'utf8')));
+    });
+  }
+});
+
+// ---------- id de pessoa e nome do arquivo ----------
+
+test('validarSessao recusa id de pessoa (cliente, lead, contato, titular + número de 3 dígitos ou mais) em qualquer texto do bloco', () => {
+  const cfg = config();
+  const ok = sessao(1, [roda('qa', cfg)], [achado('qa')]);
+  const com = (muda) => { const c = structuredClone(ok); muda(c); return () => validarSessao(c, 'x.md', cfg); };
+  for (const texto of ['o cliente 12345 reclamou', 'Cliente #9876', 'lead4567', 'LEAD  000', 'contato 123', 'titular#1234', 'do titular   9999']) {
+    assert.throws(com((c) => { c.achados[0].resumo = texto; }), /id de pessoa/, texto);
+    assert.throws(com((c) => { c.licoes = [texto]; }), /id de pessoa/, `licoes: ${texto}`);
+    assert.throws(com((c) => { c.sessao.assunto = texto; }), /id de pessoa/, `assunto: ${texto}`);
+    assert.throws(com((c) => { c.erros_orquestrador = [{ resumo: texto, custo: 'x' }]; }), /id de pessoa/, `erros: ${texto}`);
+    assert.throws(com((c) => { c.adiar = [{ alvo: 'qa', motivo: texto }]; }), /id de pessoa/, `adiar: ${texto}`);
+  }
+  for (const texto of ['cliente 12', 'contatos 3000', 'o cliente chegou', 'cliente-novo', 'leads de 2026', 'client 1234', 'titulares 123']) {
+    assert.doesNotThrow(com((c) => { c.achados[0].resumo = texto; }), texto);
+  }
+});
+
+test('o arquivo de sessão: depois da data o nome é kebab de até 60 caracteres e sem id de pessoa; o MODELO.md e o que não começa com a data ficam de fora', () => {
+  const cfg = config();
+  const pasta = mkdtempSync(join(tmpdir(), 'sessoes-'));
+  try {
+    const bloco = (s) => `# s\n\n\`\`\`json\n${JSON.stringify({ sessao: s.sessao, agentes: s.agentes, achados: s.achados, erros_orquestrador: [], licoes: [] })}\n\`\`\`\n`;
+    const grava = (nome) => writeFileSync(join(pasta, nome), bloco(sessao(1, [roda('qa', cfg)], [achado('qa')])));
+    grava('2026-11-01-um-assunto-bom.md');
+    grava('2026-11-02-a1-b2.md');
+    grava(`2026-11-03-${'a'.repeat(60)}.md`);
+    writeFileSync(join(pasta, 'MODELO.md'), 'sem bloco');
+    writeFileSync(join(pasta, 'LEIAME.md'), 'sem bloco');
+    assert.equal(lerSessoes(pasta, cfg).length, 3);
+    for (const [nome, motivo] of [
+      ['2026-11-04-Assunto-Maiúsculo.md', /kebab/], ['2026-11-04-com espaço.md', /kebab/], ['2026-11-04-com_underscore.md', /kebab/], ['2026-11-04-acentuação-é.md', /kebab/],
+      ['2026-11-04--duplo.md', /kebab/], ['2026-11-04-termina-.md', /kebab/], [`2026-11-04-${'a'.repeat(61)}.md`, /60 caracteres/],
+      ['2026-11-04-cliente-12345.md', /id de pessoa/], ['2026-11-04-lead-9876-reclamou.md', /id de pessoa/],
+    ]) {
+      grava(nome);
+      assert.throws(() => lerSessoes(pasta, cfg), motivo, nome);
+      rmSync(join(pasta, nome));
+    }
+    assert.equal(lerSessoes(pasta, cfg).length, 3, 'sem os ruins volta ao normal');
+  } finally {
+    rmSync(pasta, { recursive: true, force: true });
+  }
 });

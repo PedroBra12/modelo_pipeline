@@ -23,6 +23,11 @@ const PAPEIS = new Set(['codigo', 'revisor', 'qa', 'bug', 'integracao', 'consult
 const COM_CODIGO = new Set(['codigo', 'bug', 'integracao']);
 const ACIONADO = new Set(['sempre', 'gatilho', 'julgamento']);
 const MAX_TEXTO = 600;
+// id de pessoa (cliente 12345, lead #987, contato123, titular 0042): não é nome, mas leva a uma pessoa; nenhum texto da sessão o tem
+const ID_DE_PESSOA = /(cliente|lead|contato|titular)\s*#?\d{3,}/i;
+const ID_DE_PESSOA_NO_NOME = /(cliente|lead|contato|titular)[-_\s]*#?\d{3,}/i;
+const ASSUNTO_KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const MAX_ASSUNTO = 60;
 const INICIO = '<!-- tabela-agentes:inicio (gerada por ajusta-pipeline.mjs --sincronizar-tabela; não edite) -->';
 const FIM = '<!-- tabela-agentes:fim -->';
 const DATA = /^\d{4}-\d{2}-\d{2}$/;
@@ -97,6 +102,7 @@ export function validarSessao(dados, nome, cfg) {
   for (const l of dados.licoes ?? []) if (typeof l !== 'string' || l.length > MAX_TEXTO) falta(`licoes[]: texto de até ${MAX_TEXTO} caracteres`);
   for (const e of dados.erros_orquestrador ?? []) if ([e?.resumo, e?.custo].some((t) => typeof t !== 'string' || t.length > MAX_TEXTO)) falta(`erros_orquestrador[]: resumo e custo são texto de até ${MAX_TEXTO} caracteres`);
   for (const d of dados.adiar ?? []) if (typeof d?.alvo !== 'string' || typeof d.motivo !== 'string' || d.motivo === '') falta('adiar[] precisa de alvo e motivo');
+  if (ID_DE_PESSOA.test(JSON.stringify(dados))) falta('id de pessoa no bloco (cliente, lead, contato ou titular com número): a sessão só leva módulo, pasta, arquivo e o achado técnico');
   if (SUPRESSAO.test(JSON.stringify(dados))) falta('o bloco tem uma supressão lgpd-ignora: a sessão não leva dado que precise de supressão');
   if (cfg !== undefined) {
     const nomes = [
@@ -117,7 +123,13 @@ export const lerSessao = (texto, nome, cfg) => ({ ...validarSessao(blocoJson(tex
 /** As sessões de uma pasta (arquivos `AAAA-MM-DD-assunto.md`; o modelo da pasta fica de fora), em ordem pelo nome do arquivo. */
 export function lerSessoes(pasta, cfg) {
   if (!existsSync(pasta)) return [];
-  return readdirSync(pasta).filter((f) => /^\d{4}-\d{2}-\d{2}-.+\.md$/.test(f)).sort().map((f) => lerSessao(readFileSync(join(pasta, f), 'utf8'), f, cfg));
+  return readdirSync(pasta).filter((f) => /^\d{4}-\d{2}-\d{2}-.+\.md$/.test(f)).sort().map((f) => {
+    const assunto = f.slice(11, -3);
+    if (assunto.length > MAX_ASSUNTO) throw new Error(`${f}: depois da data o nome do arquivo tem até ${MAX_ASSUNTO} caracteres`);
+    if (!ASSUNTO_KEBAB.test(assunto)) throw new Error(`${f}: depois da data o nome do arquivo é kebab (a-z, 0-9 e hífen entre as palavras), sem nome de pessoa`);
+    if (ID_DE_PESSOA_NO_NOME.test(assunto)) throw new Error(`${f}: id de pessoa no nome do arquivo (cliente, lead, contato ou titular com número)`);
+    return lerSessao(readFileSync(join(pasta, f), 'utf8'), f, cfg);
+  });
 }
 
 /** Os ajustes gravados (`AAAA-MM-DD-alvo.md`), do mais antigo ao mais novo (data, depois `ordem`). */
@@ -152,7 +164,11 @@ const alvosDe = (cfg) => ['agentes', 'niveis'].flatMap((secao) => Object.entries
   secao, chave, entrada, id: `${secao}.${chave}`, revisor: secao === 'agentes' || entrada.revisor !== undefined, fixo: Object.hasOwn(FIXOS[secao], chave),
 })));
 
-/** Um degrau da escada: `{ de, para }` ou `{ erro }`. Para cima: agente fixo até o teto da guarda; código e ponytail só em sonnet. Para baixo: até o piso. */
+/**
+ * Um degrau da escada: `{ de, para }` ou `{ erro }`. O ajuste só mexe no esforço, dentro do mesmo modelo (D3: o modelo vem do papel):
+ * o próximo par de outro modelo é topo ou começo do modelo, não um degrau. Para cima: agente fixo até o teto da guarda; código e
+ * ponytail só em sonnet. Para baixo: até o piso.
+ */
 function degrau(alvo, delta) {
   const atual = par(alvo.entrada);
   if (alvo.fixo) return { erro: `${alvo.chave} é fixo em ${atual}: o par dele não se ajusta` };
@@ -161,11 +177,13 @@ function degrau(alvo, delta) {
   const proximo = ESCADA[i + delta];
   if (proximo === undefined) return { erro: `${atual} já é o ${delta > 0 ? 'topo' : 'começo'} da escada` };
   if (delta > 0) {
-    if (alvo.secao === 'niveis' && !proximo.startsWith('sonnet:')) return { erro: `o nível ${alvo.chave} não passa de sonnet: o opus só entra no Plan de uma decisão` };
     if (alvo.secao === 'agentes' && ESCADA.indexOf(proximo) > ESCADA.indexOf(par(TETO[alvo.chave]))) return { erro: `${alvo.chave} já está no teto da guarda (${par(TETO[alvo.chave])})` };
   } else if (ESCADA.indexOf(proximo) < ESCADA.indexOf(PISOS[alvo.secao][alvo.chave])) {
     return { erro: `${atual} já está no piso (${PISOS[alvo.secao][alvo.chave]})` };
   }
+  if (delta > 0 && alvo.secao === 'niveis' && !proximo.startsWith('sonnet:')) return { erro: `o nível ${alvo.chave} não passa de sonnet: o opus só entra no Plan de uma decisão` };
+  const modelo = atual.split(':')[0];
+  if (proximo.split(':')[0] !== modelo) return { erro: `${atual} já é o ${delta > 0 ? 'topo' : 'começo'} do ${modelo}: o ajuste só mexe no esforço, o modelo vem do papel` };
   return { de: atual, para: proximo };
 }
 
@@ -311,7 +329,10 @@ export function comTabela(skill, cfg) {
   const a = skill.indexOf(INICIO);
   const b = skill.indexOf(FIM);
   if (a === -1 || b === -1 || b < a) throw new Error('SKILL.md sem as marcas da tabela (tabela-agentes:inicio e tabela-agentes:fim)');
-  return skill.slice(0, a) + tabela(cfg) + skill.slice(b + FIM.length);
+  // o fim de linha é o que a skill já usa (CRLF ou LF): a tabela é gerada em LF e convertida, para o arquivo não ficar misturado
+  const nl = skill.indexOf('\n', a);
+  const eol = nl > 0 ? (skill[nl - 1] === '\r' ? '\r\n' : '\n') : (skill.includes('\r\n') ? '\r\n' : '\n');
+  return skill.slice(0, a) + tabela(cfg).replace(/\n/g, eol) + skill.slice(b + FIM.length);
 }
 
 // ---------- aplicar um ajuste ----------

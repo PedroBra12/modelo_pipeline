@@ -11,11 +11,11 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lerPastas } from './config.mjs';
+import { EXTENSOES_DE_CODIGO, ehArquivoDeCodigo, lerPastas } from './config.mjs';
 
-const CODIGO = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|sql|json)$/i;
+const CODIGO = { test: ehArquivoDeCodigo }; // a lista única de extensões de código mora no config.mjs
 const GERADO = /(^|\/)gerado\//; // arquivo gerado e citado no AGENTS.md não conta como código que mudou (as demais regras valem)
-const ARQUIVO_CITAVEL = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|sql|json|md|sh)$/i;
+const ARQUIVO_CITAVEL = new RegExp(`\\.(${[...EXTENSOES_DE_CODIGO, 'md'].join('|')})$`, 'i');
 const PARTES = ['Faz:', 'Não faz:', 'Como testar:'];
 const CITADOS_DE_FORA = new Set(['package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.base.json', 'README.md', 'CLAUDE.md', 'AGENTS.md', 'PRODUCT.md', 'SKILL.md', 'pipeline.json']);
 const SEM_CONFERIR_LINKS = /^\.claude\/skills\//; // skills de terceiros: os links de exemplo são deles

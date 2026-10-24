@@ -25,13 +25,13 @@ A tabela mostra, por alvo e desde o último ajuste dele: sessões em que rodou, 
 
 ## 3. Para menos: o script aplica sozinho
 
-Um revisor desce um degrau da escada quando a `janela` de sessões limpas se completa: ele rodou no par atual com código no diff, sem achado de nível médio ou mais dele (único ou visto por mais de um) e sem escape. A sessão só conta como limpa se alguém achou nível médio ou mais nela; sessão vazia, mesmo com o gatilho do revisor ativo, não prova nada. Um alvo por execução, o mais caro primeiro. O `revisor-lgpd` e o `leitor-docs` são fixos: o par deles nunca se mexe.
+Um revisor desce um degrau de esforço, dentro do mesmo modelo (a escada nunca troca o modelo: D3), quando a `janela` de sessões limpas se completa: ele rodou no par atual com código no diff, sem achado de nível médio ou mais dele (único ou visto por mais de um) e sem escape. A sessão só conta como limpa se alguém achou nível médio ou mais nela; sessão vazia, mesmo com o gatilho do revisor ativo, não prova nada. Um alvo por execução, o mais caro primeiro. O `revisor-lgpd` e o `leitor-docs` são fixos: o par deles nunca se mexe.
 
 ```
 node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos
 ```
 
-Ele edita a linha do alvo em `pipeline.json`, o cabeçalho do agente e a tabela da skill `pipeline`, e grava `docs/pipeline/ajustes/<data>-<alvo>.md`, com a lista das sessões já contadas (`vistas`), que é o que impede contá-las de novo. Avise o usuário no relatório, com a linha. Para adiar uma descida, ponha `adiar: [{ alvo, motivo }]` na sessão. Rode `npm run test:pipeline` depois.
+Ele edita a linha do alvo em `pipeline.json`, o cabeçalho do agente e a tabela da skill `pipeline`, e grava `docs/pipeline/ajustes/<data>-<alvo>.md`, com a lista das sessões já contadas (`vistas`), que é o que impede contá-las de novo. Avise o usuário no relatório, com a linha. Para adiar uma descida, ponha `adiar: [{ alvo, motivo }]` na sessão. Rode `node --test ".claude/hooks/*.test.mjs"` depois.
 
 ## 4. Para mais: proponha e espere o "sim"
 
@@ -45,11 +45,11 @@ Gatilho novo e gatilho estreitado entram por edição de `revisao.gatilhos` no `
 
 ## 5. Limites
 
-- Um degrau por vez, nunca abaixo do piso nem acima do teto; o piso e o teto estão no código.
+- Um degrau de esforço por vez, sem trocar o modelo, nunca abaixo do piso nem acima do teto; o piso e o teto estão no código.
 - O nível de código só sobe, com o "sim".
 - Um gatilho só cresce. Os gatilhos de `PISO_GATILHOS` (`config.mjs`) e o `qa` por caminho ficam; descer é o nível do revisor, não a cobertura.
 - Regra do `CLAUDE.md` não muda por aqui.
 - Achado em dúvida conta: a dúvida cai do lado de manter o revisor. Só o falso positivo comprovado leva `"confirmado": false`.
 - O ciclo de subir e descer entre sessões é um risco aceito (D2): cada degrau pede a `janela` inteira de sessões limpas, e a subida de revisor pede um escape; a de código, a janela de rodadas altas.
 
-**Pronto quando:** o relatório da sessão traz a saída do `--relatorio`, as propostas esperando o "sim" e os ajustes aplicados, e `npm run test:pipeline` está verde.
+**Pronto quando:** o relatório da sessão traz a saída do `--relatorio`, as propostas esperando o "sim" e os ajustes aplicados, e `node --test ".claude/hooks/*.test.mjs"` está verde.

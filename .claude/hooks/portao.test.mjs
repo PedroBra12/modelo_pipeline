@@ -135,7 +135,12 @@ test('marca-alterado: anota o código do produto (tela .jsx inclusive), não o .
   assert.equal(relevante(raiz, join(raiz, 'src', 'tela', 'Tela.jsx')), 'src/tela/Tela.jsx');
   assert.equal(relevante(raiz, join(raiz, 'src', 'lib', 'util.js')), 'src/lib/util.js');
   assert.equal(relevante(raiz, join(raiz, 'db', 'migrations', '1_a.sql')), 'db/migrations/1_a.sql');
-  assert.equal(relevante(raiz, join(raiz, 'src', 'estilo.css')), null);
+  assert.equal(relevante(raiz, join(raiz, 'src', 'estilo.css')), 'src/estilo.css', 'css é código (a lista única do config.mjs)');
+  assert.equal(relevante(raiz, join(raiz, 'scripts', 'job.py')), 'scripts/job.py');
+  assert.equal(relevante(raiz, join(raiz, 'deploy', 'ci.yml')), 'deploy/ci.yml');
+  assert.equal(relevante(raiz, join(raiz, 'package.json')), 'package.json');
+  assert.equal(relevante(raiz, join(raiz, 'src', 'logo.png')), null);
+  assert.equal(relevante(raiz, join(raiz, 'README.md')), null);
   assert.equal(relevante(raiz, join(raiz, 'docs', 'schema.sql')), null);
   assert.equal(relevante(raiz, join(raiz, '.claude', 'hooks', 'portao.mjs')), null);
 });

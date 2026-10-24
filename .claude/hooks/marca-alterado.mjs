@@ -1,17 +1,17 @@
 // Hook PostToolUse (Edit, Write, MultiEdit, NotebookEdit): anota o arquivo de código alterado,
 // para o portão do Stop (portao.mjs) saber que há o que conferir. Nunca bloqueia.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { extname, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ehArquivoDeCodigo } from './config.mjs';
 
-const CODIGO = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.sql', '.json']);
 const FORA = /^(\.claude|docs|node_modules|\.git|dist|coverage|\.next)(\/|$)/;
 
 /** Caminho relativo à raiz se o arquivo é código do produto; senão, null. */
 export function relevante(raiz, caminho) {
   const rel = relative(raiz, resolve(raiz, caminho)).replaceAll('\\', '/');
   if (rel === '' || rel.startsWith('..') || FORA.test(rel)) return null;
-  return CODIGO.has(extname(rel).toLowerCase()) ? rel : null;
+  return ehArquivoDeCodigo(rel) ? rel : null;
 }
 
 async function principal() {

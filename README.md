@@ -29,11 +29,12 @@ Toda alteração no repositório passa pelas mesmas etapas, na mesma ordem:
 O modelo separa quem **planeja e julga** (`opus`) de quem **localiza documentação** (`haiku`) e de quem **escreve código e roda as coisas** (`sonnet`), mantendo o contexto do chat principal enxuto. A **regra do par** (D3) diz de onde vem cada escolha:
 
 - **O papel dá o modelo, que não se ajusta:** quem julga lendo é `opus`; quem escreve ou roda é `sonnet`; quem só aponta é `haiku`.
-- **O custo do erro dá o esforço de partida:**
-  - o mais alto vai para quem orquestra e para o revisor cujo erro vaza dado entre donos ou abre a guarda;
-  - o do meio, para quem revisa ou testa e para o código que toca um gatilho de risco;
-  - o de baixo, para o resto do código e o trivial.
-- **Depois, só a conta do autoajuste mexe no esforço**, um degrau por vez (seção 4).
+- **O custo do erro dá o esforço de partida, em quatro faixas:**
+  - a mais alta, para quem orquestra e para o revisor cujo erro vaza dado entre donos ou abre a guarda;
+  - a segunda, para quem revisa ou testa e para o código que toca um gatilho de risco;
+  - a terceira, para o resto do código;
+  - a mais baixa, para o trivial.
+- **Depois, só a conta do autoajuste mexe no esforço**, um degrau por vez e sem trocar o modelo (seção 4).
 - **O orquestrador é `opus xhigh`, sempre.** O `settings.json` abre toda sessão assim e vence o `settings.json` do usuário. A `guarda-agentes` nega delegar se o chat for trocado para outro par.
 
 | Agente | Modelo | Papel |
@@ -57,6 +58,7 @@ As regras inegociáveis não dependem só da memória do LLM; elas são fiscaliz
 - **No Claude Code ([`.claude/settings.json`](.claude/settings.json)):**
   - [`guarda-git.mjs`](.claude/hooks/guarda-git.mjs) (`PreToolUse` em `Bash`/`PowerShell`):
     - bloqueia `push --force`, exclusão de branch remoto, `commit --no-verify`, `gh pr merge` (o merge é sempre humano), PR que não nasça como rascunho (`--draft`), leitura de tokens e envio para fora do repositório configurado;
+    - nega desligar os hooks do Git pelo ambiente (`GIT_CONFIG_*`, `NODE_OPTIONS`, `-c include.path`);
     - pede confirmação explícita do usuário em todo `git push` e escrita em PR.
   - [`guarda-agentes.mjs`](.claude/hooks/guarda-agentes.mjs) (`PreToolUse` em `Agent`):
     - nega delegar quando o chat principal não está em `opus xhigh`;
@@ -66,20 +68,22 @@ As regras inegociáveis não dependem só da memória do LLM; elas são fiscaliz
     - pede confirmação acima do teto do código ou quando um subagente comum pede `opus`.
   - [`confere-lgpd.mjs`](.claude/hooks/confere-lgpd.mjs) (`PreToolUse` em edições de arquivo e `pre-commit` no Git):
     - barra dado pessoal literal (CPF válido, cartão com Luhn, telefone com DDD real, e-mail fora de domínios de teste), chaves e segredos, `select *` em tabela pessoal, SQL concatenado e PII em logs e URLs (regras em [`lgpd-regras.mjs`](.claude/hooks/lgpd-regras.mjs));
-    - no projeto que adota o modelo com dívida antiga, o achado numa linha que já estava igual no `HEAD` não bloqueia, só é contado (o "legado"). A linha mexida tem de sair limpa.
+    - o "legado" é opcional, para o projeto que adota o modelo com dívida antiga: com `"lgpd": { "legadoAte": "<sha>" }` no `pipeline.json`, o achado numa linha que já estava igual naquele commit não bloqueia, só é contado (`--todos` o lista). A linha mexida tem de sair limpa, e CPF, cartão e chave nunca viram legado. Sem a chave, não há legado.
   - [`marca-alterado.mjs`](.claude/hooks/marca-alterado.mjs) (`PostToolUse`) + [`portao.mjs`](.claude/hooks/portao.mjs) (`Stop`):
     - quando código é editado no turno, roda `npm run <portaoRapido>` antes de a IA encerrar;
     - se falhar, bloqueia a parada com as últimas 60 linhas do erro;
     - quando passa, lembra uma vez de disparar a revisão do pipeline.
 - **No Git (`.claude/hooks/git/`):**
   - [`confere-ramo.mjs`](.claude/hooks/confere-ramo.mjs) (`pre-commit` e `pre-merge-commit`) e [`confere-main.mjs`](.claude/hooks/confere-main.mjs) (`reference-transaction`): impedem commits, merges ou reescritas locais direto na `main`. Todo trabalho vai num branch `pr/<assunto-em-kebab>`, e a `main` só avança por `git pull --ff-only`.
-  - `pre-commit`: além do `confere-ramo` e do `confere-lgpd`, roda os testes do pipeline quando o commit toca `.claude/`. Quem muda a regra tem de passar nos testes dela.
-  - [`confere-docs.mjs`](.claude/hooks/confere-docs.mjs) (`commit-msg`): recusa o commit se uma pasta de trabalho não tiver `AGENTS.md` com `Faz:`, `Não faz:` e `Como testar:`. Recusa também quando o `AGENTS.md` cita arquivo inexistente, quando há link relativo quebrado em `.md`, e quando o código da pasta mudou sem atualizar o `AGENTS.md` nem declarar `Docs-conferidos: <pasta>/AGENTS.md` na mensagem.
+  - `pre-commit`: além do `confere-ramo` e do `confere-lgpd`, roda os testes do pipeline (`node --test`) quando o commit toca `.claude/`. Quem muda a regra tem de passar nos testes dela. O `pre-merge-commit` também roda o `confere-lgpd`.
+  - [`confere-docs.mjs`](.claude/hooks/confere-docs.mjs) (`commit-msg`): recusa o commit se uma pasta de trabalho não tiver `AGENTS.md` com `Faz:`, `Não faz:` e `Como testar:`. Recusa também quando o `AGENTS.md` cita arquivo inexistente (o nome simples entre crases), quando há link relativo quebrado em `.md`, e quando o código da pasta mudou sem atualizar o `AGENTS.md` nem declarar `Docs-conferidos: <pasta>/AGENTS.md` na mensagem.
   - [`confere-push.mjs`](.claude/hooks/confere-push.mjs) (`pre-push`): trava push direto na `main`, push forçado ou push para URL diferente de [`.claude/pipeline.json`](.claude/pipeline.json).
 - **Scripts que o orquestrador roda:**
   - [`escolhe-revisores.mjs`](.claude/hooks/escolhe-revisores.mjs) `<base> <head>` (ou `--trabalho`, antes do commit): lê o diff e os gatilhos de `revisao` no `pipeline.json` e imprime o **mínimo obrigatório** de revisores, com modelo, esforço e o motivo de cada um (gatilho, arquivo e linha).
+    - Conta como código todo arquivo com extensão de código, em qualquer pasta (a lista mora no `config.mjs`).
+    - O aviso do `confere-lgpd` nas linhas novas também chama o `revisor-lgpd`.
     - O orquestrador soma um revisor por julgamento, com o motivo no relatório, mas nunca tira.
-    - `--sem-comportamento "<motivo>"` dispensa o `qa`, e `--sem-tela "<motivo>"` dispensa o `revisor-tela`, só na troca de texto, CSS ou renome.
+    - `--sem-comportamento "<motivo>"` dispensa o `qa` na troca de CSS, texto ou renome. `--sem-tela "<motivo>"` dispensa o `revisor-tela` só na troca de texto, cópia ou renome.
   - [`ajusta-pipeline.mjs`](.claude/hooks/ajusta-pipeline.mjs): a conta do autoajuste (seção 4).
 
 ### 4. O autoajuste (skill `adjust-pipeline`)
@@ -106,7 +110,7 @@ Não entram na conta:
 - a sessão marcada `baseline` (só comparação);
 - a sessão orquestrada fora de `opus xhigh` (D3): as escolhas dela foram de outro modelo, e o relatório a lista à parte.
 
-**3. Para menos: sozinho.** Um revisor desce **um degrau** da escada `sonnet:low → sonnet:medium → sonnet:high → opus:high → opus:xhigh` quando a `janela` (3 sessões) se completa limpa. Limpa quer dizer:
+**3. Para menos: sozinho.** Um revisor desce **um degrau de esforço, dentro do mesmo modelo**, quando a `janela` (3 sessões) se completa limpa. A escada é `sonnet:low → sonnet:medium → sonnet:high` e `opus:medium → opus:high → opus:xhigh`: o ajuste nunca troca o modelo, que vem do papel (D3). Limpa quer dizer:
 - ele rodou no par atual, com código no diff;
 - não achou nada de nível médio ou mais, nem sozinho nem junto com outro;
 - nada escapou dele.
@@ -140,21 +144,30 @@ Risco aceito: o ciclo de subir e descer entre sessões. Cada degrau para baixo p
 
 ### 1. Iniciar um projeto novo com este modelo
 
-1. Copie os arquivos para a raiz do seu projeto (no Git Bash: `cp -r modelo_pipeline/. <projeto>/`) e substitua este `README.md` pelo do seu projeto (o [`confere-docs.mjs`](.claude/hooks/confere-docs.mjs) exige um `README.md` na raiz). Se o projeto já tiver `.gitignore`, junte as linhas.
-2. Configure [`.claude/pipeline.json`](.claude/pipeline.json):
+**Antes:** Node 24, Git, o Claude Code (`claude`) e o GitHub CLI (`gh`).
+
+1. **Crie o repositório no GitHub com um README inicial e clone-o.** É assim que a `main` nasce: as guardas não deixam criá-la nem commitar nela localmente, e ela só anda por `git pull --ff-only`.
+2. **Copie o modelo sem o `.git` dele** (no Git Bash, de dentro do clone):
+   ```bash
+   git -C <caminho>/modelo_pipeline archive HEAD | tar -x
+   ```
+   Troque este `README.md` pelo do seu projeto (o [`confere-docs.mjs`](.claude/hooks/confere-docs.mjs) exige um `README.md` na raiz). Se o projeto já tiver `.gitignore`, junte as linhas.
+3. **Ligue os hooks e abra o primeiro branch** (uma vez por clone):
+   ```bash
+   git config core.hooksPath .claude/hooks/git
+   git switch -c pr/inicio
+   ```
+4. **Configure o [`.claude/pipeline.json`](.claude/pipeline.json):**
    - `repositorio`: `dono/repo` no GitHub (enquanto estiver `<dono>/<repo>`, todo push e PR é bloqueado por segurança);
    - `portaoRapido`: nome do script no `package.json` que roda checagem de tipos, lint e testes rápidos no fim de cada turno (padrão: `checar:rapido`);
    - `pastasDeTrabalho`: lista de regex das pastas que exigem `AGENTS.md` próprio;
-   - `revisao`: os caminhos e conteúdos dos gatilhos do seu projeto (onde mora a permissão, o dado pessoal, o banco, a rede e a tela), somados aos do modelo.
-3. Preencha os marcadores `<...>` em [`CLAUDE.md`](CLAUDE.md), [`AGENTS.md`](AGENTS.md), [`PRODUCT.md`](PRODUCT.md), [`docs/plano.md`](docs/plano.md), [`docs/arquitetura.md`](docs/arquitetura.md) e [`docs/decisoes.md`](docs/decisoes.md). As suas decisões começam na D4.
-4. Ative os hooks do Git no repositório (uma vez por clone):
-   ```bash
-   git config core.hooksPath .claude/hooks/git
-   ```
-5. Valide a suíte de testes dos hooks:
+   - `revisao`: os caminhos e conteúdos dos gatilhos do seu projeto (onde mora a permissão, o dado pessoal, o banco, a rede e a tela), somados aos do modelo (ver "O que adaptar").
+5. **Preencha os marcadores `<...>`** em [`CLAUDE.md`](CLAUDE.md), [`AGENTS.md`](AGENTS.md), [`PRODUCT.md`](PRODUCT.md), [`docs/plano.md`](docs/plano.md), [`docs/arquitetura.md`](docs/arquitetura.md) e [`docs/decisoes.md`](docs/decisoes.md). As suas decisões começam na D4.
+6. **Valide a suíte de testes dos hooks:**
    ```bash
    node --test ".claude/hooks/*.test.mjs"
    ```
+7. **Faça o primeiro commit e o PR pelo próprio pipeline.** O `pre-commit` roda os testes, então dê tempo ao comando (uns 2 min). Depois, `git push -u origin pr/inicio` e `gh pr create --draft --base main`. O merge é seu.
 
 ### 2. Abrir o terminal com o agente Orquestrador (e criar alias)
 
@@ -184,23 +197,32 @@ Para abrir direto com um alias (`nome_alias`), adicione ao seu terminal:
 
 ## O que adaptar
 
+- **Caminhos dos gatilhos e o que é código:**
+  - `pastasDeTrabalho` decide onde se exige um `AGENTS.md`. Para a revisão, código é todo arquivo com extensão de código, em qualquer pasta.
+  - Os gatilhos do modelo usam caminhos genéricos (`apps/`, `packages/`, `src/`, `api/`, `route.*`, `migrations/`, `*.sql`) e conteúdos fortes (`security definer`, `grant`, `where:`, `cpf`, `e_mail`, `fetch(`, `use server`).
+  - Some as pastas do seu projeto em `revisao.gatilhos`, em `comportamento_caminhos` (o `qa`) e no gatilho `tela` do `pipeline.json`. Para que não possam ser tirados sem revisão, some-os também no `PISO_GATILHOS` e no `PISO_REVISAO` do [`config.mjs`](.claude/hooks/config.mjs).
+  - Exemplo para Supabase: some ao gatilho `permissao` os conteúdos `\bauth\.(uid|jwt|role|users)` e `\bauthenticated\b`, e ao `rede_rota` os conteúdos `service_role` e `Deno\.env`.
+  - Rode `node .claude/hooks/escolhe-revisores.mjs main HEAD` num diff real que toque cada pasta: o gatilho escrito de memória costuma não casar com nenhum arquivo.
+- **Projeto que já tem dado pessoal no histórico:** ponha `"lgpd": { "legadoAte": "<sha do commit em que adotou o modelo>" }` no `pipeline.json`. O que já estava naquele commit fica como dívida contada (`node .claude/hooks/confere-lgpd.mjs --todos <pastas>`) e sai quando alguém toca na linha. Avalie com o jurídico se o dado real no histórico é um incidente.
 - **Projeto sem dados pessoais (sem LGPD):**
-  1. Remova o bloco do matcher `Edit|Write|MultiEdit|NotebookEdit` em `PreToolUse` no [`.claude/settings.json`](.claude/settings.json).
-  2. Remova a chamada do `confere-lgpd.mjs` em [`.claude/hooks/git/pre-commit`](.claude/hooks/git/pre-commit).
-  3. Tire o `revisor-lgpd` dos gatilhos `dado_pessoal`, `lgpd_ignora` e `lgpd_regras` no [`.claude/pipeline.json`](.claude/pipeline.json) e no `PISO_GATILHOS` de [`config.mjs`](.claude/hooks/config.mjs).
-  4. Tire o `revisor-lgpd` também dos `FIXOS` do `config.mjs`, do `TETO` da [`guarda-agentes.mjs`](.claude/hooks/guarda-agentes.mjs) e de `agentes` no `pipeline.json`, e apague `.claude/agents/revisor-lgpd.md`.
+  1. Remova o bloco do matcher `Edit|Write|MultiEdit|NotebookEdit` em `PreToolUse` no [`.claude/settings.json`](.claude/settings.json), e a chamada do `confere-lgpd.mjs` em [`.claude/hooks/git/pre-commit`](.claude/hooks/git/pre-commit) e no `git/pre-merge-commit`.
+  2. Apague os gatilhos `lgpd_ignora` e `lgpd_regras` inteiros, e tire o `revisor-lgpd` do `dado_pessoal`, no `pipeline.json` e no `PISO_GATILHOS`.
+  3. Tire o `revisor-lgpd` dos `FIXOS` do `config.mjs`, do `TETO` da [`guarda-agentes.mjs`](.claude/hooks/guarda-agentes.mjs) e de `agentes` no `pipeline.json`, e apague `.claude/agents/revisor-lgpd.md`.
+  4. Tire-o dos testes que o citam (comece por `teste-apoio.mjs` e `guarda-agentes.test.mjs`) e dos documentos: `CLAUDE.md`, os portões 5 e 6 e a seção 4 da skill `pipeline`, o `orquestrador.md` e o `decisao.md`.
   5. Rode os testes do pipeline: eles apontam o que sobrou.
-- **Projeto sem tela:** faça o mesmo com o `revisor-tela`: tire-o do gatilho `tela`, do `PISO_GATILHOS`, dos `PISOS`, do `TETO`, de `agentes` e apague `.claude/agents/revisor-tela.md`.
-- **Criar ou alterar um agente fixo:** um agente fixo precisa de cinco coisas, ou a guarda bloqueia a execução e os testes falham:
+- **Projeto sem tela:**
+  1. Apague o gatilho `tela` inteiro, no `pipeline.json` e no `PISO_GATILHOS`.
+  2. Tire o `revisor-tela` dos `PISOS`, do `TETO` e de `agentes`, e apague `.claude/agents/revisor-tela.md`.
+  3. Desligue o plugin `frontend-design` no `settings.json`.
+  4. Faça a mesma limpeza nos testes e nos documentos: o portão 5 e a seção 4 da skill `pipeline`, o `feature.md` e o `orquestrador.md`.
+- **Criar ou alterar um agente fixo:** um agente fixo precisa de seis coisas, ou a guarda bloqueia a execução e os testes falham:
   - o arquivo `.claude/agents/<nome>.md`, com `name`, `model`, `effort` e `tools` no cabeçalho;
   - a entrada em `agentes` no `pipeline.json`, com o mesmo par e as mesmas ferramentas;
   - o teto em `TETO`, na `guarda-agentes.mjs`;
   - o piso em `PISOS`, ou o par exato em `FIXOS`, no `config.mjs`;
+  - quem o chama: o nome em `revisao.sempre` ou num gatilho (e no `PISO_GATILHOS`, para travar);
   - a tabela da skill `pipeline` regerada com `node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela`.
 
   Pela D3, o modelo vem do papel e o esforço de partida, do custo do erro.
-- **Caminhos dos gatilhos:** os gatilhos do modelo usam caminhos genéricos (`apps/`, `packages/`, `src/`, `*.sql`, `api/`) e conteúdos fortes (`security definer`, `grant`, `cpf`, `fetch(`).
-  - Some os caminhos do seu projeto em `revisao.gatilhos` no `pipeline.json`. Para que não possam ser tirados sem revisão, some-os também no `PISO_GATILHOS` do `config.mjs`.
-  - Rode `node .claude/hooks/escolhe-revisores.mjs main HEAD` num diff real logo depois: o gatilho escrito de memória costuma não casar com nenhum arquivo.
 - **Regras específicas do domínio do projeto:** escreva as invariantes de negócio, isolamento de dados, autenticação e integrações no item 8 de [`CLAUDE.md`](CLAUDE.md) e detalhe em [`docs/arquitetura.md`](docs/arquitetura.md). Os agentes [`revisor-arquitetura`](.claude/agents/revisor-arquitetura.md), [`revisor-seguranca`](.claude/agents/revisor-seguranca.md) e [`revisor-lgpd`](.claude/agents/revisor-lgpd.md) leem diretamente desses dois arquivos.
 - **Layout de pastas (`monorepo` ou pacote único):** ajuste o array `pastasDeTrabalho` em [`.claude/pipeline.json`](.claude/pipeline.json). Mantenha o sufixo `(?=/)` nas regex, para que pastas agrupadoras como `apps/` ou `src/` não sejam cobradas como pastas de trabalho folha.

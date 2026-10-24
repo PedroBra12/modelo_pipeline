@@ -1,4 +1,5 @@
 #!/bin/sh
+unset NODE_OPTIONS  # o ambiente do comando não escolhe o que o node carrega dentro do hook
 # Hook reference-transaction do git: a main local só anda pelo pull --ff-only; o confere-main confere.
 # Só o estado prepared, e só quando a transação toca a main (para não pesar em todo comando do git).
 # Ligado por: git config core.hooksPath .claude/hooks/git

@@ -209,49 +209,98 @@ test('pre-commit recusa o commit com dado pessoal, num git de verdade', () => {
   }
 });
 
-test('legado: o achado numa linha que já estava igual antes não bloqueia; linha nova ou mexida, sim', () => {
+
+// ---------- legado: opcional e ancorado (pipeline.json: "lgpd": { "legadoAte": "<sha>" }) ----------
+
+const FORTES = ['cpf_literal', 'cartao_literal', 'chave_conhecida', 'chave_privada'];
+
+test('as regras fortes (cpf, cartão, chave) são as sem supressão, existem, e nunca viram legado', () => {
+  for (const id of FORTES) assert.equal(regra(id).semSupressao, true, id);
+  assert.deepEqual(regras.filter((r) => r.semSupressao === true).map((r) => r.id).sort(), [...FORTES].sort());
+  for (const id of FORTES) {
+    const r = regra(id);
+    const texto = preencher(r.pega[0]);
+    const rel = CAMINHO[r.arquivos] ?? CAMINHO.codigo;
+    const achados = marcarLegado(varrer(texto, rel, [r]), texto, texto, rel);
+    assert.ok(achados.length > 0, `${id}: achou`);
+    assert.equal(achados.some((a) => a.legado === true), false, `${id}: o texto de antes era igual e mesmo assim bloqueia`);
+  }
+});
+
+test('legado: o achado de um trecho que já estava no texto âncora não bloqueia; trecho novo, sim; sem âncora não há legado', () => {
   const tel = regra('telefone_literal').pega[0];
-  const antes = `const a = 1;\n${tel}\n`;
-  const depois = `const b = 2;\nconst a = 1;\n${tel}\n// ${tel}\n`; // a linha de antes desceu, e uma nova entrou
-  const achados = marcarLegado(varrer(depois, CAMINHO.todos), depois, [antes], CAMINHO.todos);
+  const ancora = `const a = 1;\n${tel}\n`;
+  const depois = `const b = 2;\nconst a = 1;\n${tel}\n// ${tel}\n`;
+  const achados = marcarLegado(varrer(depois, CAMINHO.todos), depois, ancora, CAMINHO.todos);
   assert.deepEqual(achados.map((a) => [a.linha, a.legado === true]), [[3, true], [4, false]]);
-  assert.deepEqual(marcarLegado(varrer(depois, CAMINHO.todos), depois, [], CAMINHO.todos).filter((a) => a.legado).length, 0, 'arquivo novo não tem legado');
+  assert.equal(marcarLegado(varrer(depois, CAMINHO.todos), depois, null, CAMINHO.todos).filter((a) => a.legado).length, 0, 'arquivo novo ou sem âncora: nenhum legado');
   const texto = relatorio(achados);
   assert.match(texto, /1 achado\(s\) que bloqueiam/);
   assert.match(texto, /Legado: 1 achado/);
 });
 
-test('legado: a linha vale quantas vezes aparecia antes; a ocorrência a mais bloqueia', () => {
+test('legado: a chave é o trecho achado inteiro com os espaços normalizados, não a última linha', () => {
+  const r = regra('pii_para_ia');
+  const base = r.pega.find((p) => !p.includes('\n')) ?? r.pega[0];
+  const ancora = `${base}\n`;
+  // o mesmo trecho com outro recuo e mais código na linha: continua o mesmo achado
+  const mexida = `   ${base}   // comentário novo\n`;
+  assert.equal(marcarLegado(varrer(mexida, CAMINHO.codigo, [r]), mexida, ancora, CAMINHO.codigo).every((a) => a.legado === true), true);
+  const tel = regra('telefone_literal');
+  const a2 = `x = "${tel.pega[0]}";\n`;
+  const d2 = `y = "${tel.pega[0]}"; // ok\n`;
+  assert.equal(marcarLegado(varrer(d2, CAMINHO.todos, [tel]), d2, a2, CAMINHO.todos).every((a) => a.legado === true), true, 'a linha mudou ao redor, o trecho é o mesmo');
+  const outro = `y = "${tel.pega[0].replace('90000', '91111')}";\n`;
+  assert.equal(marcarLegado(varrer(outro, CAMINHO.todos, [tel]), outro, a2, CAMINHO.todos).some((a) => a.legado === true), false, 'outro número é outro trecho');
+  const achado = varrer(d2, CAMINHO.todos, [tel])[0];
+  assert.equal(typeof achado.trecho, 'string');
+  assert.doesNotMatch(relatorio([achado]), new RegExp(achado.trecho.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'o trecho fica só em memória: nunca vai para a saída');
+});
+
+test('legado: o trecho vale quantas vezes aparecia na âncora; a cópia bloqueia', () => {
   const tel = regra('telefone_literal').pega[0];
-  const antes = `${tel}\n`;
-  const depois = `${tel}\nconst a = 1;\n${tel}\n`; // a mesma linha, copiada
-  const achados = marcarLegado(varrer(depois, CAMINHO.todos), depois, [antes], CAMINHO.todos);
+  const ancora = `${tel}\n`;
+  const depois = `${tel}\nconst a = 1;\n${tel}\n`;
+  const achados = marcarLegado(varrer(depois, CAMINHO.todos), depois, ancora, CAMINHO.todos);
   assert.deepEqual(achados.map((a) => [a.linha, a.legado === true]), [[1, true], [3, false]]);
-  // vários textos de antes (HEAD e MERGE_HEAD): vale o que mais a tinha, sem somar
-  const dois = marcarLegado(varrer(depois, CAMINHO.todos), depois, [antes, antes], CAMINHO.todos);
-  assert.equal(dois.filter((a) => a.legado).length, 1);
+});
+
+test('legado no Edit: o orçamento é o da âncora menos o que fica no arquivo fora do trecho trocado', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const novo = `${tel}\n`;
+  const rel = CAMINHO.todos;
+  assert.equal(marcarLegado(varrer(novo, rel), novo, `${tel}\n`, rel, { resto: '# fora\n' }).every((a) => a.legado), true, 'o old_string tinha a linha: trocá-la mantém o legado');
+  assert.equal(marcarLegado(varrer(novo, rel), novo, `${tel}\n`, rel, { resto: `# fora\n${tel}\n` }).some((a) => a.legado), false, 'a linha ainda está fora do old_string: a cópia bloqueia');
 });
 
 test('legado: o binário e a regra de caminho só são legado com o arquivo igual', () => {
   const binario = regras.find((r) => r.binario === true);
   assert.ok(binario, 'regra de binário');
   const rel = 'docs/base.bin';
-  const igual = marcarLegado(varrer('PK\0velho', rel, [binario]), 'PK\0velho', ['PK\0velho'], rel);
-  assert.equal(igual.every((a) => a.legado), true);
-  const trocado = marcarLegado(varrer('PK\0novo', rel, [binario]), 'PK\0novo', ['PK\0velho'], rel);
-  assert.equal(trocado.some((a) => !a.legado), true, 'conteúdo novo no mesmo caminho bloqueia');
+  assert.equal(marcarLegado(varrer('PK\0velho', rel, [binario]), 'PK\0velho', 'PK\0velho', rel).every((a) => a.legado), true);
+  assert.equal(marcarLegado(varrer('PK\0novo', rel, [binario]), 'PK\0novo', 'PK\0velho', rel).some((a) => !a.legado), true, 'conteúdo novo no mesmo caminho bloqueia');
 });
 
-test('legado: o texto de antes é varrido pelo caminho de antes (git mv de teste para código bloqueia)', () => {
-  const r = regras.find((x) => x.arquivos === 'codigo' && x.nivel !== 'medio' && x.regex !== undefined);
+test('legado: o texto âncora é varrido pelo caminho dele (do teste para o código não é legado)', () => {
+  const r = regras.find((x) => x.arquivos === 'codigo' && x.nivel !== 'medio' && x.regex !== undefined && !FORTES.includes(x.id));
   assert.ok(r, 'regra de código que bloqueia');
   const texto = preencher(r.pega[0]);
   assert.ok(varrer(texto, CAMINHO.codigo, [r]).length > 0);
   assert.equal(varrer(texto, CAMINHO.todos, [r]).length, 0, 'regra de código não vale em teste');
-  const movido = marcarLegado(varrer(texto, CAMINHO.codigo, [r]), texto, [texto], CAMINHO.todos);
-  assert.equal(movido.some((a) => !a.legado), true, 'do teste para o código não é legado');
-  const ficou = marcarLegado(varrer(texto, CAMINHO.codigo, [r]), texto, [texto], CAMINHO.codigo);
-  assert.equal(ficou.every((a) => a.legado), true);
+  assert.equal(marcarLegado(varrer(texto, CAMINHO.codigo, [r]), texto, texto, CAMINHO.todos).some((a) => !a.legado), true);
+  assert.equal(marcarLegado(varrer(texto, CAMINHO.codigo, [r]), texto, texto, CAMINHO.codigo).every((a) => a.legado), true);
+});
+
+test('config: legadoAteDoTexto aceita a chave ausente, o sha curto ou inteiro; recusa o resto', async () => {
+  const { legadoAteDoTexto } = await import('./config.mjs');
+  assert.deepEqual(legadoAteDoTexto('{}'), { valor: null, erro: null });
+  assert.deepEqual(legadoAteDoTexto('{ "lgpd": {} }'), { valor: null, erro: null });
+  assert.deepEqual(legadoAteDoTexto('{ "lgpd": { "legadoAte": "abc1234" } }'), { valor: 'abc1234', erro: null });
+  assert.equal(legadoAteDoTexto(`﻿{ "lgpd": { "legadoAte": "${'a'.repeat(40)}" } }`).erro, null, 'BOM');
+  for (const ruim of ['"lgpd": 3', '"lgpd": { "legadoAte": 5 }', '"lgpd": { "legadoAte": "HEAD" }', '"lgpd": { "legadoAte": "abc" }', '"lgpd": { "legadoAte": "main" }']) {
+    assert.match(legadoAteDoTexto(`{ ${ruim} }`).erro, /lgpd/, ruim);
+  }
+  assert.match(legadoAteDoTexto('{ quebrado').erro, /lgpd|JSON|json/);
 });
 
 // um repositório de verdade numa pasta temporária, com os hooks do git deste projeto
@@ -267,14 +316,43 @@ function repositorio() {
   mkdirSync(join(base, 'docs'));
   return { base, git };
 }
+const semHooks = ['-c', 'core.hooksPath='];
+/** Commita a dívida de antes e ancora o legado nesse commit (o pipeline.json com a chave entra no commit seguinte). */
+function ancorar(base, git) {
+  git('add', '-A');
+  assert.equal(git(...semHooks, 'commit', '-q', '-m', 'docs: antes do pipeline').ok, true);
+  const sha = git('rev-parse', 'HEAD').saida.trim();
+  mkdirSync(join(base, '.claude'), { recursive: true });
+  writeFileSync(join(base, '.claude', 'pipeline.json'), JSON.stringify({ lgpd: { legadoAte: sha } }));
+  git('add', '-A');
+  assert.equal(git(...semHooks, 'commit', '-q', '-m', 'ancora o legado').ok, true);
+  return sha;
+}
 
-test('legado no pre-commit: a linha antiga passa (também renomeada); mexer nela ou trazer outra, não', () => {
+test('sem a chave lgpd.legadoAte não há legado nenhum: a linha antiga também bloqueia (o caso do modelo)', () => {
   const tel = regra('telefone_literal').pega[0];
   const { base, git } = repositorio();
   try {
     writeFileSync(join(base, 'docs', 'contato.md'), `# contato\n${tel}\n`);
     git('add', '-A');
-    assert.equal(git('-c', 'core.hooksPath=', 'commit', '-q', '-m', 'docs: antes do pipeline').ok, true); // a dívida de antes
+    assert.equal(git(...semHooks, 'commit', '-q', '-m', 'docs: antes').ok, true);
+    writeFileSync(join(base, 'docs', 'contato.md'), `# contato da loja\n${tel}\n`);
+    git('add', '-A');
+    const r = git('commit', '-q', '-m', 'docs: título');
+    assert.equal(r.ok, false, r.saida);
+    assert.match(r.saida, /telefone_literal/);
+    assert.doesNotMatch(r.saida, /Legado/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('com a chave, o legado é o texto naquele commit: a linha antiga passa (também renomeada, também depois de outro commit); mexer nela ou trazer outra, não', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const { base, git } = repositorio();
+  try {
+    writeFileSync(join(base, 'docs', 'contato.md'), `# contato\n${tel}\n`);
+    ancorar(base, git);
 
     writeFileSync(join(base, 'docs', 'contato.md'), `# contato da loja\n${tel}\n`);
     git('add', '-A');
@@ -286,32 +364,111 @@ test('legado no pre-commit: a linha antiga passa (também renomeada); mexer nela
     const renomeado = git('commit', '-q', '-m', 'docs: renomeia');
     assert.equal(renomeado.ok, true, renomeado.saida);
 
-    writeFileSync(join(base, 'docs', 'loja.md'), `# contato da loja\n${tel} (ramal)\n`);
+    writeFileSync(join(base, 'docs', 'loja.md'), `# contato da loja\n${tel}\n${tel}\n`);
     git('add', '-A');
-    const mexida = git('commit', '-q', '-m', 'docs: ramal');
-    assert.equal(mexida.ok, false, 'a linha mexida tem de sair limpa');
+    const copia = git('commit', '-q', '-m', 'docs: copia');
+    assert.equal(copia.ok, false, 'a cópia da linha bloqueia');
+
+    writeFileSync(join(base, 'docs', 'loja.md'), `# contato da loja\n${tel.replace('90000', '91111')}\n`);
+    git('add', '-A');
+    const mexida = git('commit', '-q', '-m', 'docs: outro número');
+    assert.equal(mexida.ok, false, 'o trecho mexido tem de sair limpo');
     assert.match(mexida.saida, /telefone_literal/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test('legado no Edit e no Write: o que já está no arquivo passa; o novo, não', () => {
+test('o legado lê a chave do HEAD: o commit que a põe (ou a muda) no próprio pipeline.json não perdoa nada', () => {
   const tel = regra('telefone_literal').pega[0];
-  const { base } = repositorio();
+  const { base, git } = repositorio();
   try {
-    const arquivo = join(base, 'docs', 'contato.md');
-    writeFileSync(arquivo, `# contato\n${tel}\n`);
-    assert.equal(hook({ tool_name: 'Write', tool_input: { file_path: arquivo, content: `# contato da loja\n${tel}\n` } }), null);
-    assert.equal(hook({ tool_name: 'Edit', tool_input: { file_path: arquivo, old_string: '# contato', new_string: `# contato\n${tel}` } }), null);
-    assert.equal(hook({ tool_name: 'Edit', tool_input: { file_path: arquivo, old_string: 'x', new_string: `${tel} (ramal)` } })?.permissionDecision, 'deny');
-    assert.equal(hook({ tool_name: 'Write', tool_input: { file_path: join(base, 'docs', 'novo.md'), content: `${tel}\n` } })?.permissionDecision, 'deny');
+    writeFileSync(join(base, 'docs', 'contato.md'), `${tel}\n`);
+    git('add', '-A');
+    assert.equal(git(...semHooks, 'commit', '-q', '-m', 'docs: antes').ok, true);
+    const sha = git('rev-parse', 'HEAD').saida.trim();
+    mkdirSync(join(base, '.claude'), { recursive: true });
+    writeFileSync(join(base, '.claude', 'pipeline.json'), JSON.stringify({ lgpd: { legadoAte: sha } }));
+    writeFileSync(join(base, 'docs', 'contato.md'), `${tel} (ramal)\n`);
+    git('add', '-A');
+    const r = git('commit', '-q', '-m', 'ancora e mexe junto');
+    assert.equal(r.ok, false, 'a chave ainda não está no HEAD: o que muda no mesmo commit bloqueia');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test('à mão: só os arquivos do git (o ignorado fica de fora) e o legado contado; --todos o lista', () => {
+test('chave inválida ou de um commit que não existe: sem legado (e um aviso), nunca mais permissivo', () => {
+  const tel = regra('telefone_literal').pega[0];
+  for (const chave of [{ legadoAte: 'HEAD' }, { legadoAte: 'abcdef1234' }]) {
+    const { base, git } = repositorio();
+    try {
+      writeFileSync(join(base, 'docs', 'contato.md'), `${tel}\n`);
+      mkdirSync(join(base, '.claude'), { recursive: true });
+      writeFileSync(join(base, '.claude', 'pipeline.json'), JSON.stringify({ lgpd: chave }));
+      git('add', '-A');
+      assert.equal(git(...semHooks, 'commit', '-q', '-m', 'antes').ok, true);
+      writeFileSync(join(base, 'docs', 'contato.md'), `${tel}\n# a mais\n`);
+      git('add', '-A');
+      const r = git('commit', '-q', '-m', 'docs: mexe');
+      assert.equal(r.ok, false, JSON.stringify(chave));
+      assert.match(r.saida, /legadoAte/);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  }
+});
+
+test('o git/pre-merge-commit também roda o confere-lgpd: o merge que traz dado pessoal é recusado', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const { base, git } = repositorio();
+  try {
+    git('add', '-A');
+    assert.equal(git(...semHooks, 'commit', '-q', '-m', 'base').ok, true);
+    git('switch', '-q', '-c', 'pr/outra');
+    writeFileSync(join(base, 'docs', 'contato.md'), `${tel}\n`);
+    git('add', '-A');
+    assert.equal(git(...semHooks, 'commit', '-q', '-m', 'dado pessoal').ok, true);
+    git('switch', '-q', 'pr/teste');
+    mkdirSync(join(base, 'docs'), { recursive: true });
+    writeFileSync(join(base, 'docs', 'outro.md'), '# outro\n');
+    git('add', '-A');
+    assert.equal(git('commit', '-q', '-m', 'outro').ok, true);
+    const merge = git('merge', '--no-ff', '-m', 'junta', 'pr/outra');
+    assert.equal(merge.ok, false, merge.saida);
+    assert.match(merge.saida, /telefone_literal/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('legado no Edit e no Write: com a chave, o que já está na âncora passa; a cópia e o novo, não; sem a chave nada passa', () => {
+  const tel = regra('telefone_literal').pega[0];
+  const { base, git } = repositorio();
+  const sem = repositorio();
+  try {
+    const arquivo = join(base, 'docs', 'contato.md');
+    writeFileSync(arquivo, `# contato\n${tel}\n`);
+    ancorar(base, git);
+    assert.equal(hook({ tool_name: 'Write', tool_input: { file_path: arquivo, content: `# contato da loja\n${tel}\n` } }), null, 'reescrever o arquivo mantendo a linha');
+    assert.equal(hook({ tool_name: 'Edit', tool_input: { file_path: arquivo, old_string: `${tel}`, new_string: `${tel}\n# ramal` } }), null, 'o old_string tinha a linha: trocá-la mantém');
+    assert.equal(hook({ tool_name: 'Edit', tool_input: { file_path: arquivo, old_string: '# contato', new_string: `# contato\n${tel}` } })?.permissionDecision, 'deny', 'a cópia de uma linha que já está no arquivo bloqueia');
+    assert.equal(hook({ tool_name: 'MultiEdit', tool_input: { file_path: arquivo, edits: [{ old_string: '# contato', new_string: `# c\n${tel}` }] } })?.permissionDecision, 'deny');
+    assert.equal(hook({ tool_name: 'Edit', tool_input: { file_path: arquivo, old_string: 'x', new_string: `${tel} (ramal)` } })?.permissionDecision, 'deny');
+    assert.equal(hook({ tool_name: 'Write', tool_input: { file_path: join(base, 'docs', 'novo.md'), content: `${tel}\n` } })?.permissionDecision, 'deny');
+
+    const arquivo2 = join(sem.base, 'docs', 'contato.md');
+    writeFileSync(arquivo2, `# contato\n${tel}\n`);
+    sem.git('add', '-A');
+    sem.git(...semHooks, 'commit', '-q', '-m', 'antes');
+    assert.equal(hook({ tool_name: 'Write', tool_input: { file_path: arquivo2, content: `# contato da loja\n${tel}\n` } })?.permissionDecision, 'deny', 'sem a chave não há legado');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(sem.base, { recursive: true, force: true });
+  }
+});
+
+test('à mão: só os arquivos do git (o ignorado fica de fora); com a chave o legado é contado e --todos o lista', () => {
   const tel = regra('telefone_literal').pega[0];
   const { base, git } = repositorio();
   const aMao = (...args) => spawnSync(process.execPath, [join(AQUI, 'confere-lgpd.mjs'), ...args], { cwd: base, encoding: 'utf8' });
@@ -321,7 +478,8 @@ test('à mão: só os arquivos do git (o ignorado fica de fora) e o legado conta
     writeFileSync(join(base, 'dados', 'banco.md'), `${tel}\n`);
     writeFileSync(join(base, 'docs', 'contato.md'), `${tel}\n`);
     git('add', '-A');
-    git('-c', 'core.hooksPath=', 'commit', '-q', '-m', 'antes');
+    assert.equal(aMao('.').status, 1, 'sem a chave a linha antiga bloqueia');
+    ancorar(base, git);
     const limpo = aMao('.');
     assert.equal(limpo.status, 0, limpo.stdout);
     assert.match(limpo.stdout, /Legado: 1 achado/);
@@ -337,13 +495,12 @@ test('à mão: só os arquivos do git (o ignorado fica de fora) e o legado conta
 });
 
 test('legado no pre-commit: git mv de teste para código leva a regra de código junto e bloqueia', () => {
-  const r = regras.find((x) => x.arquivos === 'codigo' && x.nivel !== 'medio' && x.regex !== undefined);
+  const r = regras.find((x) => x.arquivos === 'codigo' && x.nivel !== 'medio' && x.regex !== undefined && !FORTES.includes(x.id));
   const { base, git } = repositorio();
   try {
     mkdirSync(join(base, 'src', 'contatos'), { recursive: true });
     writeFileSync(join(base, CAMINHO.todos), `${preencher(r.pega[0])}\n`);
-    git('add', '-A');
-    assert.equal(git('-c', 'core.hooksPath=', 'commit', '-q', '-m', 'teste antes do pipeline').ok, true);
+    ancorar(base, git);
     git('mv', CAMINHO.todos, CAMINHO.codigo);
     const movido = git('commit', '-q', '-m', 'move o teste para o código');
     assert.equal(movido.ok, false, 'no código, a regra vale e o achado é novo');

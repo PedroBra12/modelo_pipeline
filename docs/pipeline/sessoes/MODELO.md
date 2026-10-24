@@ -1,8 +1,8 @@
 # Sessão <AAAA-MM-DD>: <assunto>
 
-Modelo da autoanálise de uma sessão (D2). Copie para `<AAAA-MM-DD>-<assunto-em-kebab>.md`, troque o bloco JSON pelo da sessão e escreva o texto curto. O `ajusta-pipeline.mjs` lê só o 1º bloco `json` e não conta este arquivo (o nome não começa com a data).
+Modelo da autoanálise de uma sessão (D2). Copie para `<AAAA-MM-DD>-<assunto-em-kebab>.md` (o assunto em kebab, com até 60 caracteres; o script recusa outro nome), troque o bloco JSON pelo da sessão e escreva o texto curto. O `ajusta-pipeline.mjs` lê só o 1º bloco `json` e não conta este arquivo (o nome não começa com a data).
 
-**Sem nome de cliente, código de cliente, celular, e-mail, CPF ou cidade.** Só módulo, pasta, arquivo e o achado técnico. O script recusa a sessão que passa nas regras do `confere-lgpd` ou tem texto com mais de 600 caracteres, e recusa nome que não existe em `.claude/pipeline.json` (erro de digitação).
+**Sem nome de pessoa (cliente, usuário ou alguém da equipe), código ou id de pessoa, celular, e-mail, CPF ou cidade, nem no assunto nem no nome do arquivo.** Só módulo, pasta, arquivo e o achado técnico. O script recusa a sessão que passa nas regras do `confere-lgpd` ou tem texto com mais de 600 caracteres, e recusa nome que não existe em `.claude/pipeline.json` (erro de digitação).
 
 ## Campos
 

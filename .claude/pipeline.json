@@ -27,28 +27,35 @@
         "nome": "permissao",
         "revisores": ["revisor-seguranca"],
         "remocoes": true,
-        "caminhos": ["(^|/)(auth|permiss[^/]*|papeis|sessao|middleware)(/|\\.)"],
+        "caminhos": [
+          "(^|/)(auth|permiss[^/]*|pap[eé]is|roles?|cargos?|rbac|acl|polic(y|ies)|guards?|sess(ao|oes|ion|ions)|middleware|proxy|login|jwt)(/|\\.)",
+          "(^|/)(auth|middleware|proxy)(/|\\.)"
+        ],
         "conteudo": [
-          "create\\s+policy", "alter\\s+policy", "row\\s+level\\s+security", "\\bpolicy\\b",
+          "create\\s+policy", "alter\\s+policy", "row\\s+level\\s+security", "\\bpolic(y|ies)\\b",
           "security\\s+definer", "\\bgrant\\b", "\\brevoke\\b",
-          "\\bauth\\.(uid|jwt|role|users)", "\\bauthenticated\\b",
-          "autoriz", "\\bforbidden\\b", "\\bunauthorized\\b", "\\b40[13]\\b",
-          "\\brole\\b"
-        ]
+          "autoriz", "\\bforbidden\\b", "\\bunauthorized\\b",
+          "\\bpermiss", "\\bpap(el|[eé]is)\\b", "\\broles\\b"
+        ],
+        "ignorar": ["^\\.claude/"]
       },
       {
         "nome": "dado_pessoal",
         "revisores": ["revisor-lgpd", "revisor-seguranca"],
+        "remocoes": true,
         "caminhos": [],
-        "conteudo": ["\\bcpf\\b", "\\bcelular\\b", "\\btelefone\\b", "\\bnascimento\\b", "\\bhmac\\b"],
+        "conteudo": [
+          "cpf", "\\bcnpj", "\\brg\\b", "\\bcep\\b", "e_?mail", "celular", "telefone", "\\bphone", "whatsapp",
+          "nascimento", "endere[cç]o", "\\baddress", "anonimiz", "\\bpurg"
+        ],
         "ignorar": ["^\\.claude/"]
       },
       {
         "nome": "banco",
         "revisores": ["revisor-seguranca"],
         "remocoes": true,
-        "caminhos": ["\\.sql$", "(^|/)migrations?/"],
-        "conteudo": []
+        "caminhos": ["\\.sql$", "(^|/)migrations?/", "schema\\.prisma$"],
+        "conteudo": ["\\.where\\(", "\\bwhere\\s*:", "\\.eq\\(\\s*['\"`]", "\\.from\\(\\s*['\"`]", "\\.rpc\\("]
       },
       {
         "nome": "config_pipeline",
@@ -60,8 +67,8 @@
         "nome": "rede_rota",
         "revisores": ["revisor-seguranca"],
         "remocoes": true,
-        "caminhos": ["(^|/)api/", "(^|/)(server|servidor|routes?)/"],
-        "conteudo": ["fetch\\(", "process\\.env", "Deno\\.env", "service_role", "Cache-Control"]
+        "caminhos": ["(^|/)api/", "(^|/)(server|servidor|routes?|controllers?|handlers?)/", "(^|/)route\\.[cm]?[jt]sx?$"],
+        "conteudo": ["fetch\\(", "\\baxios\\b", "process\\.env", "import\\.meta\\.env", "['\"]use server['\"]", "Cache-Control"]
       },
       {
         "nome": "lgpd_ignora",
@@ -83,7 +90,7 @@
         "conteudo": []
       }
     ],
-    "ignorar_conteudo": ["\\.md$", "\\.test\\.m?[jt]s$", "(^|/)__tests__/"]
+    "ignorar_conteudo": ["\\.md$", "\\.(test|spec|cy)\\.[cm]?[jt]sx?$", "(^|/)__tests__/", "(^|/)__mocks__/", "^tests?/"]
   },
   "ajuste": {
     "janela": 3,

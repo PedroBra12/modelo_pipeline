@@ -5,10 +5,11 @@
 //        [--comportamento] [--sem-comportamento "<motivo>"] [--sem-tela "<motivo>"] [--json]
 // `<base> <head>` compara do merge-base (base...head); `--trabalho` compara o HEAD com a árvore, inclusive o que ainda não foi commitado.
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PISO_GATILHOS, lerAgentes, lerNiveis, lerPastas, localizar, par, revisaoDeObjeto } from './config.mjs';
+import { PISO_GATILHOS, ehArquivoDeCodigo, lerAgentes, lerNiveis, lerPastas, localizar, par, revisaoDeObjeto } from './config.mjs';
+import { regrasCarregaram, varrer } from './confere-lgpd.mjs';
 
 const REFERENCIA = /^[A-Za-z0-9_][A-Za-z0-9_./~^@{}:-]*$/; // nunca começa com "-": não vira opção do git
 const MAX_MOTIVOS = 3;
@@ -57,7 +58,15 @@ export function interpretarDiff(texto, nomes) {
 
 /** Os arquivos novos ainda fora do git (ls-files --others) como se fossem inteiros adicionados. */
 function naoRastreados(cwd) {
-  return git(['ls-files', '--others', '--exclude-standard', '-z'], cwd).split('\0').filter(Boolean).map((caminho) => {
+  // só arquivo de verdade: o repositório aninhado e o link para pasta vêm como pasta (EISDIR), e o link quebrado não abre
+  const ehArquivo = (caminho) => {
+    try {
+      return statSync(join(cwd, caminho)).isFile();
+    } catch {
+      return false;
+    }
+  };
+  return git(['ls-files', '--others', '--exclude-standard', '-z'], cwd).split('\0').filter(Boolean).filter(ehArquivo).map((caminho) => {
     const bruto = readFileSync(join(cwd, caminho));
     if (bruto.includes(0)) return { caminho, binario: true, linhas: [], removidas: [] };
     const linhas = bruto.toString('utf8').split('\n');
@@ -66,11 +75,24 @@ function naoRastreados(cwd) {
   });
 }
 
+/** Cada referência existe no repositório? Senão, a mensagem diz qual (e, se for a main, como criá-la), não o erro cru do git. */
+export function conferirReferencias(refs, cwd = process.cwd()) {
+  for (const ref of refs) {
+    if (!REFERENCIA.test(ref ?? '')) throw new Error(`referência do git inválida: ${ref}`);
+    try {
+      git(['rev-parse', '-q', '--verify', `${ref}^{commit}`], cwd);
+    } catch {
+      const semMain = /^(origin\/)?main$/.test(ref) ? ' (crie a main pelo GitHub e traga com git pull, ver README)' : '';
+      throw new Error(`a referência ${ref} não existe${semMain}`);
+    }
+  }
+}
+
 /** O diff de `base...head`, ou do HEAD para a árvore (`trabalho`). */
 export function lerDiff({ base, head, trabalho = false, cwd = process.cwd() }) {
   let alvo = ['HEAD'];
   if (!trabalho) {
-    for (const ref of [base, head]) if (!REFERENCIA.test(ref ?? '')) throw new Error(`referência do git inválida: ${ref}`);
+    conferirReferencias([base, head], cwd);
     alvo = [`${base}...${head}`];
   }
   const nomes = git([...FLAGS_DIFF, '--name-only', '-z', ...alvo, '--'], cwd).split('\0').filter(Boolean);
@@ -155,7 +177,11 @@ export function carregarRevisao({ base, head, trabalho = false, cwd = process.cw
 
 // ---------- a escolha ----------
 
-const ehCodigo = (caminho, pastas) => !/\.md$/i.test(caminho) && pastas.some((re) => re.test(caminho));
+// Código: a extensão está na lista única do config.mjs, em qualquer lugar do repositório. As pastasDeTrabalho só valem para o binário.
+const ehCodigo = (caminho) => ehArquivoDeCodigo(caminho);
+const binarioEmPasta = (caminho, pastas) => !/\.md$/i.test(caminho) && pastas.some((re) => re.test(caminho));
+// imagem, fonte, pdf e vídeo: binário esperado, sem texto a ler. Não contam como ilegíveis nem disparam gatilho de conteúdo.
+const MIDIA = /\.(png|jpe?g|gif|webp|ico|avif|woff2?|ttf|otf|pdf|mp4|webm)$/i;
 
 /** Os motivos pelos quais o gatilho dispara no diff (nunca repete o trecho achado: pode ser dado pessoal). */
 function motivosDoGatilho(g, arquivos, ignorar, pastas) {
@@ -164,7 +190,8 @@ function motivosDoGatilho(g, arquivos, ignorar, pastas) {
     if (g.caminhos.some((re) => re.test(a.caminho))) motivos.push({ gatilho: g.nome, arquivo: a.caminho, por: 'caminho' });
     if (g.conteudo.length === 0) continue;
     if (!g.todo_arquivo && [...ignorar, ...g.ignorar].some((re) => re.test(a.caminho))) continue;
-    if (a.binario && !g.todo_arquivo && ehCodigo(a.caminho, pastas)) motivos.push({ gatilho: g.nome, arquivo: a.caminho, por: 'binário: não dá para ler o conteúdo' });
+    if (a.binario && MIDIA.test(a.caminho)) continue;
+    if (a.binario && !g.todo_arquivo && binarioEmPasta(a.caminho, pastas)) motivos.push({ gatilho: g.nome, arquivo: a.caminho, por: 'binário: não dá para ler o conteúdo' });
     const olhar = (linhas, sufixo) => {
       for (const { n, texto } of linhas) {
         const re = g.conteudo.find((r) => r.test(texto));
@@ -175,6 +202,32 @@ function motivosDoGatilho(g, arquivos, ignorar, pastas) {
     if (g.remocoes) olhar(a.removidas, ', linha removida');
   }
   return motivos;
+}
+
+/**
+ * O confere-lgpd nas linhas novas do diff: todo achado ativo (não suprimido), o aviso médio inclusive, chama o revisor-lgpd.
+ * O texto é o das linhas adicionadas juntas (a linha do achado volta ao número da linha no arquivo); o trecho achado nunca sai daqui.
+ * Binário e mídia (imagem, fonte, pdf, vídeo) não têm linha a ler: o pre-commit do confere-lgpd cuida deles, e um logo novo não vale um revisor opus.
+ */
+function motivosDoConfereLgpd(arquivos) {
+  if (!regrasCarregaram()) throw new Error('as regras do confere-lgpd não carregaram (lgpd-regras.mjs ou config.mjs quebrado): sem elas a revisão de LGPD não vale');
+  const motivos = [];
+  for (const a of arquivos) {
+    if (a.binario || a.linhas.length === 0 || MIDIA.test(a.caminho)) continue;
+    for (const achado of varrer(a.linhas.map((l) => l.texto).join('\n'), a.caminho)) {
+      if (achado.suprimido) continue;
+      motivos.push({ gatilho: 'confere-lgpd', arquivo: a.caminho, linha: a.linhas[Math.min(achado.linha, a.linhas.length) - 1].n, por: achado.regra.id });
+    }
+  }
+  return motivos;
+}
+
+/** Todo revisor citado em `sempre`, `comportamento` e nos gatilhos existe em `agentes` ou `niveis` (erro de digitação não vira omissão). */
+export function conferirRevisores(revisao, { agentes, niveis }) {
+  const nomes = [['sempre', revisao.sempre], ['comportamento', revisao.comportamento], ...revisao.gatilhos.map((g) => [`gatilho ${g.nome}`, g.revisores])];
+  for (const [onde, lista] of nomes) {
+    for (const nome of lista) if (localizar(agentes, niveis, nome) === undefined) throw new Error(`revisor ${nome} (${onde}) não existe em agentes nem em niveis do pipeline.json`);
+  }
 }
 
 const itemDe = (nome, motivos, { agentes, niveis }) => {
@@ -192,7 +245,8 @@ const itemDe = (nome, motivos, { agentes, niveis }) => {
  */
 export function escolher(arquivos, cfg, { comportamento = false, semComportamento, semTela } = {}) {
   const { revisao, pastas } = cfg;
-  const codigo = arquivos.filter((a) => ehCodigo(a.caminho, pastas));
+  conferirRevisores(revisao, cfg);
+  const codigo = arquivos.filter((a) => ehCodigo(a.caminho));
   const porNome = new Map();
   const juntar = (nome, motivos) => {
     const item = porNome.get(nome) ?? itemDe(nome, [], cfg);
@@ -206,6 +260,8 @@ export function escolher(arquivos, cfg, { comportamento = false, semComportament
     const motivos = motivosDoGatilho(g, arquivos, revisao.ignorar, pastas);
     if (motivos.length > 0) for (const nome of g.revisores) juntar(nome, motivos);
   }
+  const doConfereLgpd = motivosDoConfereLgpd(arquivos);
+  if (doConfereLgpd.length > 0) juntar('revisor-lgpd', doConfereLgpd);
   const resumir = (r) => ({ ...r, total: r.motivos.length, motivos: r.motivos.slice(0, MAX_MOTIVOS) });
   const obrigatorios = [...porNome.values()].map(resumir);
   const condicionais = [];
@@ -233,7 +289,7 @@ export function escolher(arquivos, cfg, { comportamento = false, semComportament
 }
 
 const onde = (m) => (m.linha === undefined ? m.arquivo : `${m.arquivo}:${m.linha}`);
-const motivo = (m) => (m.gatilho === 'sempre' || m.gatilho === 'comportamento' ? `${m.gatilho}: ${m.por}` : `gatilho ${m.gatilho}: ${onde(m)} (${m.por})`);
+const motivo = (m) => (m.gatilho === 'sempre' || m.gatilho === 'comportamento' ? `${m.gatilho}: ${m.por}` : m.gatilho === 'confere-lgpd' ? `confere-lgpd: ${m.por} (${onde(m)})` : `gatilho ${m.gatilho}: ${onde(m)} (${m.por})`);
 
 /** O texto que o orquestrador lê. */
 export function formatar(resultado, base, head) {
@@ -285,6 +341,7 @@ function principal(argv) {
   }
   const lidos = { agentes: lerAgentes(), niveis: lerNiveis(), pastas: lerPastas() };
   for (const r of Object.values(lidos)) if (r.erro !== null) throw new Error(r.erro);
+  conferirReferencias(o.trabalho ? ['HEAD'] : [base, head]);
   const revisao = carregarRevisao({ base, head, trabalho: o.trabalho });
   const cfg = { agentes: lidos.agentes.valor, niveis: lidos.niveis.valor, pastas: lidos.pastas.valor, revisao };
   const resultado = escolher(lerDiff({ base, head, trabalho: o.trabalho }), cfg, { comportamento: o.comportamento, semComportamento: o.semComportamento, semTela: o.semTela });

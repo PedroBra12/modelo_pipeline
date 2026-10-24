@@ -22,27 +22,27 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   seção 7 de `.claude/skills/pipeline/SKILL.md` é gerada daqui e de `agentes`.
                 - `revisao`: quem revisa o quê. `sempre` (revisores de toda mudança de código), `comportamento` (o `qa`)
                   com `comportamento_caminhos` (regex dos caminhos que o tornam obrigatório), `gatilhos` e
-                  `ignorar_conteudo` (arquivos cujas linhas não acionam gatilho de conteúdo: markdown, testes). Cada gatilho é `{ nome, revisores, caminhos, conteudo }` (regex, sem caixa, sobre o
+                  `ignorar_conteudo` (arquivos cujas linhas não acionam gatilho de conteúdo: `.md`, `.test`, `.spec` e `.cy`, `__tests__/`, `__mocks__/`, `tests/`). Cada gatilho é `{ nome, revisores, caminhos, conteudo }` (regex, sem caixa, sobre o
                   caminho e sobre as linhas adicionadas do diff), mais `remocoes` (as linhas removidas também contam),
                   `todo_arquivo` (vale até nos arquivos de `ignorar_conteudo`) e `ignorar` (arquivos que só este gatilho
                   ignora; o código recusa um `ignorar` que case com um caminho mínimo de gatilho de conteúdo, que não seja um prefixo de caminho
                   literal (`^pasta/`) ou, como o `ignorar_conteudo`, que use `(?` (um lookahead cala quase tudo)). Hoje: `permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`, `lgpd_ignora` (a supressão do `confere-lgpd`, com a mesma regex, em
-                  qualquer forma de comentário) e `lgpd_regras` (por caminho: a regra do `confere-lgpd`, o `config.mjs`, onde mora a `SUPRESSAO`, e o agente `revisor-lgpd`) e `tela` (D3, por caminho: todo arquivo de tela (`.jsx`, `.tsx`, `.vue`, `.svelte`, `.css`, `.scss` ou `.html`) de `apps/`, `packages/` ou `src/`, mexido, criado ou apagado, chama o `revisor-tela`; o `.js` ou `.ts` de ação ou de rota, não). O `dado_pessoal` ignora o `.claude/`: o pipeline fala de dado pessoal sem ser dado pessoal. Os caminhos e conteúdos que o modelo traz são genéricos (`src/`, `apps/`, `packages/`, `.sql`, `api/`): o projeto que adotar o modelo soma os dele, no `pipeline.json` e, para travá-los, no `PISO_GATILHOS` do `config.mjs`.
+                  qualquer forma de comentário) e `lgpd_regras` (por caminho: a regra do `confere-lgpd`, o `config.mjs`, onde mora a `SUPRESSAO`, e o agente `revisor-lgpd`) e `tela` (D3, por caminho: todo arquivo de tela (`.jsx`, `.tsx`, `.vue`, `.svelte`, `.css`, `.scss` ou `.html`) de `apps/`, `packages/` ou `src/`, mexido, criado ou apagado, chama o `revisor-tela`; o `.js` ou `.ts` de ação ou de rota, não). O `dado_pessoal` e a `permissao` ignoram o `.claude/` pelo conteúdo (o `config_pipeline` já chama a segurança por lá): o pipeline fala de permissão e de dado pessoal sem ser um nem outro. O `dado_pessoal`, o `banco`, a `permissao` e a `rede_rota` contam a linha removida também (tirar o filtro do dono, o campo, a anonimização ou a purga muda o tratamento). O conteúdo do `dado_pessoal` não leva o limite de palavra da frente, para casar o nome composto (`data_nascimento`, `cliente_cpf`, `email_hmac`). O `banco` pega também o filtro de consulta no código (`.where(`, `where:`, `.eq(`, `.from(`, `.rpc(`) e o schema do Prisma. A `rede_rota` pega `api/`, `server/`, `servidor/`, `routes/`, `controllers/`, `handlers/` e `route.*`, e `fetch(`, `axios`, `process.env`, `import.meta.env`, `"use server"` e `Cache-Control`. Os caminhos e conteúdos que o modelo traz são genéricos (`src/`, `apps/`, `packages/`, `.sql`, `api/`): o projeto que adotar o modelo soma os dele, no `pipeline.json` e, para travá-los, no `PISO_GATILHOS` do `config.mjs`.
                 - `ajuste`: `janela` (sessões, 3) e `rodadas_altas`. A escada, os pisos e o
                   teto não estão aqui de propósito (ver `config.mjs` e `guarda-agentes.mjs`).
+              - `lgpd` (opcional): `{ "legadoAte": "<sha>" }`, o commit a partir do qual o achado antigo do `confere-lgpd` não bloqueia. Sem a chave, que é o caso do modelo, não há legado nenhum.
               - `config.mjs`: leitura e validação do `.claude/pipeline.json`, aceitando o BOM. Cada campo devolve
                 `{ valor, erro }` (`lerRepositorio`, `lerPortao`, `lerPastas`, `lerAgentes`, `lerNiveis`, `lerRevisao`
                 com os regex já compilados, `lerAjuste`), mais `localizar` (acha um nome em `agentes` ou `niveis`) e
                 `urlDoRepositorio(repo)`, a regex de push do GitHub (https ou ssh, com ou sem `.git`, sem caixa, valor
                 escapado). Os **pisos do código** moram aqui, para um `pipeline.json` afrouxado não afrouxar a própria
-                regra: `ESCADA` (a ordem fixa), `PISOS` (o par mínimo de cada agente e nível ajustável; o do `revisor-tela` é `sonnet:medium`), `NIVEIS_DE_CODIGO` (`medio` e `codigo-seguranca`, que o JSON não põe em `opus`), `FIXOS` (o par
+                regra: `ESCADA` (a ordem fixa, do `sonnet:low` ao `opus:xhigh`, com o `opus:medium` logo depois do último degrau do sonnet; o ajuste só anda dentro do mesmo modelo), `PISOS` (o par mínimo de cada agente e nível ajustável; o do `revisor-tela` é `sonnet:medium` e o do `revisor-arquitetura` é `opus:medium`: o modelo vem do papel), `NIVEIS_DE_CODIGO` (`medio` e `codigo-seguranca`, que o JSON não põe em `opus`), `FIXOS` (o par
                 exato do que não se ajusta: `leitor-docs`, `revisor-lgpd` e os níveis `leve`, `orquestracao` e `forte`),
                 `SUPRESSAO` (a regex da supressão `lgpd-ignora`, que o `confere-lgpd` importa daqui), `PISO_GATILHOS` (os
                 revisores, caminhos e conteúdo mínimos de cada gatilho, `tela` inclusive, o `remocoes` e o `todo_arquivo` obrigatórios e os
                 `exemplos` de caminho contra os quais um `ignorar` é conferido) e `PISO_REVISAO` (o mínimo de `sempre`, `comportamento` e `comportamento_caminhos`); um valor
                 abaixo do piso, um gatilho a menos ou `sempre` vazio é erro de `lerAgentes`, `lerNiveis` ou
-                `lerRevisao`, e `conferirPisos` acusa piso fora da escada. Quem bloqueia trata o erro como recusa; o
-                `portao.mjs` só avisa.
+                `lerRevisao`, e `conferirPisos` acusa piso fora da escada. Quem bloqueia trata o erro como recusa; o `portao.mjs` só avisa. Mora aqui também a **lista única do que é código** (`EXTENSOES_DE_CODIGO` e `ehArquivoDeCodigo`: `ts tsx mts cts js jsx mjs cjs sql json py go rs rb java kt cs php vue svelte css scss html sh yml yaml toml prisma`), usada pelo `marca-alterado`, pelo `confere-docs` e pelo `escolhe-revisores`, e o `legadoAteDoTexto` / `lerLegadoAte` (o `lgpd.legadoAte` do `pipeline.json`: sha de 7 a 40 hexadecimais ou ausente).
               - `guarda-git.mjs`: PreToolUse em Bash e PowerShell. A função `decisao(comando, cwd)` devolve `deny` (há
                 motivo para negar), `ask` (sem motivo, mas o comando sobe algo: push, `remote add` ou `set-url`, escrita
                 em PR; o motivo é "confirme o comando: push ou PR", sem o texto de "peça para ele rodar com !", que é só
@@ -67,7 +67,7 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   `gh auth status -t`, `git credential`); o resto do `gh` e do `glab` que escreve (`pr merge`, `repo`,
                   `release`, `alias`, `api` de escrita, com o `-X` colado ou não…); `npm publish`; `commit --no-verify`;
                   mudar o `core.hooksPath` para outro valor (também `--unset-all`, `--replace-all` e `--add`, e
-                  `--remove-section` ou `--rename-section` na seção `core`).
+                  `--remove-section` ou `--rename-section` na seção `core`). Nega em qualquer comando, não só no que sobe, `GIT_CONFIG*=` e `NODE_OPTIONS=` (desviam os hooks do git e o que o node carrega dentro deles), e as chaves `include.*` e `includeIf.*` em `-c` e em `git config` (trazem uma configuração que desvia os hooks).
                 - Lê a linha continuada (`\` e a crase) separada e junta, tira as aspas dos argumentos sem espaço (a
                   aspa vazia fica), acha o programa depois de `xargs`, `timeout`, `cmd /c`, lê também o comando entre
                   aspas passado a outro shell (`bash -c`, `cmd /c`, `pwsh -Command`) e nega o `-EncodedCommand`.
@@ -148,7 +148,7 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 ou da pessoa, em qualquer worktree. Recusa quando a pasta de trabalho (as regex de `pastasDeTrabalho`)
                 não tem AGENTS.md ou ele não tem as partes `Faz:`, `Não faz:` e `Como testar:` (também em negrito);
                 quando ele cita um arquivo que não existe na pasta nem na raiz (nome sem barra entre crases, com
-                extensão de código, `.jsx` inclusive, `.md` ou `.sh`); quando um link relativo de um .md do commit não
+                extensão de código (a lista única do `config.mjs`: `ts`, `py`, `css`, `yml` e as outras) ou `.md`); quando um link relativo de um .md do commit não
                 leva a nada (exemplos em bloco de código e em `.claude/skills/` não contam); quando o repositório não
                 tem README.md; e quando o código mudou e o AGENTS.md não, sem a linha "Docs-conferidos:
                 <pasta>/AGENTS.md" na mensagem. Arquivo dentro de uma pasta `gerado/` que o AGENTS.md da pasta cita
@@ -157,19 +157,21 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 ilegível ou sem `pastasDeTrabalho` válidas, recusa o commit com o motivo.
               - `confere-lgpd.mjs`: dado pessoal (LGPD), com as regras de `lgpd-regras.mjs`, portadas do otto (`.claude/skills/ORIGEM.md`) e sem regra presa a um projeto. PreToolUse em Edit, Write, MultiEdit e NotebookEdit: nega a edição com achado crítico
                 ou alto (a raiz vem do git do arquivo, então vale no worktree; fora de um repositório, não confere). Hook
-                pre-commit do git (`git/pre-commit`, depois do confere-ramo, modo `--indice`): confere o conteúdo em
+                pre-commit e pre-merge-commit do git (`git/pre-commit` e `git/pre-merge-commit`, depois do confere-ramo, modo `--indice`): confere o conteúdo em
                 preparo de cada arquivo do commit (UTF-16 com BOM vira texto; binário só passa pelas regras de caminho e
                 de binário), recusa o mesmo e mostra os avisos (médio) e as supressões. À mão:
                 `node .claude/hooks/confere-lgpd.mjs [--todos] <arquivo ou pasta>...` (só os arquivos do git, guardados
                 ou novos; o ignorado, como o `.env.local`, fica de fora).
-                - **Legado** (um repositório que adota o pipeline pode já ter achados antigos, como celular com DDD real ou e-mail de domínio real em teste): o achado cuja regra já achava a
-                  mesma linha (o mesmo texto, em qualquer posição) antes não bloqueia, só é contado (`--todos` lista).
-                  "Antes" é o HEAD e, no meio de um merge, o MERGE_HEAD (vale o que mais tinha a linha, sem somar); o
-                  renomeado vale pelo nome antigo, e o texto de antes é varrido com o caminho de antes (o `git mv` de
-                  teste para código leva a regra de código junto). No Edit e no Write, "antes" é o arquivo em disco.
-                  Cada linha vale quantas vezes aparecia antes: a cópia, ou a chamada nova cuja última linha repete a
-                  de uma antiga, bloqueia. Regra de caminho e de binário só é legado com o arquivo igual. Linha nova
-                  ou mexida bloqueia: a dívida sai quando se toca nela.
+                - **Legado, opcional e ancorado.** Só existe com `"lgpd": { "legadoAte": "<sha>" }` no `pipeline.json` **do HEAD** (um commit que
+                  põe ou muda a chave não perdoa a si mesmo); sem a chave, que é o caso do modelo, nenhum achado é legado. Com ela, "antes" é o
+                  texto do arquivo naquele commit, seguido pelos renomes até o HEAD (`git diff -M`), e não o HEAD nem o MERGE_HEAD. O
+                  achado de um trecho que a âncora já tinha não bloqueia, só é contado (`--todos` lista). A chave do legado é o **trecho
+                  achado inteiro**, com os espaços normalizados, só em memória (nunca vai para a saída); cada trecho vale quantas
+                  vezes aparecia na âncora, e a cópia bloqueia. As regras fortes (`cpf_literal`, `cartao_literal`, `chave_conhecida`,
+                  `chave_privada`, as sem supressão) nunca viram legado. Regra de caminho e de binário só é legado com o arquivo igual.
+                  No Edit, o orçamento do legado é o da âncora menos o que fica no arquivo fora do `old_string`: a cópia de uma linha
+                  que já estava no arquivo bloqueia. Chave inválida ou de um commit que não existe: sem legado e um aviso, nunca mais
+                  permissivo.
                 Falso positivo se suprime na linha, ou num
                 comentário na linha de cima, com "lgpd-ignora: <regra> -- <motivo>"; CPF, cartão e chave não se
                 suprimem, e o revisor-lgpd confere cada supressão. Regra que não carrega (ou `config.mjs` quebrado, de onde vem a regex da supressão) nega toda edição e recusa
@@ -178,7 +180,13 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 log, erro e URL, `select *` em tabela de pessoas, coluna pessoal e dado sensível no banco, SQL
                 concatenado, dado pessoal para IA, analytics, webhook e HTTP de fora, consentimento marcado,
                 `localStorage`, cookie, geolocalização e cache sem prazo.
-              - `git/pre-commit`: roda o `confere-ramo`, o `confere-lgpd --indice` e, quando o commit toca `.claude/`, os testes do pipeline (sem as variáveis `GIT_*` do commit nem o `NODE_TEST_CONTEXT`, que os testes não podem herdar): `npm run test:pipeline` se o `package.json` tem esse script (o modelo não tem `package.json`; o projeto que o tiver aponta o script para o mesmo comando), senão `node --test` nos `.claude/hooks/*.test.mjs`. Falhou, ou não há teste nenhum, o commit é recusado (falha fechado). Quem muda a regra do pipeline passa nos testes dela.
+              - `git/pre-commit`: roda o `confere-ramo`, o `confere-lgpd --indice` e, quando o commit toca `.claude/`, os testes do pipeline: sempre o
+                `node --test` sobre a lista expandida `.claude/hooks/*.test.mjs` (sem as variáveis `GIT_*` do commit nem o
+                `NODE_TEST_CONTEXT`, que os testes não podem herdar). Nunca o script `test:pipeline` de um `package.json`: um commit
+                podia trocá-lo por `exit 0`. Falhou, ou não há teste nenhum (o `node --test` sem arquivo sairia verde), o commit é
+                recusado (falha fechado). O `git/pre-merge-commit` roda o `confere-ramo` e o `confere-lgpd --indice` (o git não roda o
+                pre-commit num merge quando este hook existe). Os cinco hooks de `git/` começam com `unset NODE_OPTIONS`, logo depois
+                do shebang: o ambiente do comando não escolhe o que o node carrega. Quem muda a regra do pipeline passa nos testes dela.
               - `escolhe-revisores.mjs <base> <head> | --trabalho [--comportamento] [--sem-comportamento "<motivo>"] [--sem-tela "<motivo>"] [--json]`:
                 não é hook; é o script que a seção 4 da skill `pipeline` manda rodar. Lê o diff arquivo por arquivo
                 (`base...head`, a partir do merge-base; ou o HEAD contra a árvore com `--trabalho`, inclusive arquivo
@@ -190,15 +198,15 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 árvore só entra com `--trabalho`. Um branch que afrouxa um `ignorar` pede a revisão uma vez, e o seguinte
                 já não pede. Imprime os revisores obrigatórios com `modelo:esforço` e o motivo (gatilho, arquivo e
                 linha, no máximo 3 por revisor; nunca o texto da linha, que pode ser dado pessoal). `sempre` vale
-                quando um arquivo de pasta de trabalho (não `.md`) mudou; os `gatilhos` casam o caminho de qualquer
+                quando um arquivo de código mudou (extensão da lista única do `config.mjs`, em qualquer lugar do repositório: as `pastasDeTrabalho` só decidem onde se exige o `AGENTS.md` e o binário); os `gatilhos` casam o caminho de qualquer
                 arquivo e as linhas adicionadas (e as removidas, nos gatilhos com `remocoes`) dos que não estão em
-                `ignorar_conteudo`; um binário numa pasta de trabalho aciona os gatilhos de conteúdo; o `lgpd_ignora` olha
+                `ignorar_conteudo`; um binário numa pasta de trabalho aciona os gatilhos de conteúdo (menos imagem, fonte, pdf e vídeo: `png jpg jpeg gif webp ico avif woff woff2 ttf otf pdf mp4 webm`, que não contam como ilegíveis); o `lgpd_ignora` olha
                 todo arquivo. O `qa` é obrigatório quando o diff toca `comportamento_caminhos`; `--sem-comportamento`
                 o tira e o motivo aparece na saída. `--sem-tela "<motivo>"` faz o mesmo só com o `revisor-tela`, para a troca só de
                 texto, de cópia ou de renome de uma tela (o motivo é obrigatório e sai em "Dispensado"; o `qa` e os outros
                 ficam). A opção que não tirou nada (sem tela no diff; no `--sem-comportamento`, sem código) imprime
                 "revisor-tela não era obrigatório: --sem-tela sem efeito" (ou "qa não era obrigatório: --sem-comportamento sem
-                efeito"), e o JSON traz `semEfeito`. Revisor que não existe em `agentes` nem em `niveis`, `pipeline.json` do head abaixo dos pisos e
+                efeito"), e o JSON traz `semEfeito`. O `confere-lgpd` também roda (`varrer`) nas linhas novas de cada arquivo de texto: todo achado ativo, o aviso médio inclusive (campo sensível, telemetria de fora), chama o `revisor-lgpd` com o motivo `confere-lgpd: <regra>` (o suprimido não; imagem e binário ficam com o pre-commit; sem as regras carregadas, falha fechado). Com `--trabalho` o item novo que não é arquivo (repositório aninhado, link) é pulado. Referência que não existe vira "a referência <x> não existe" (a `main` que ainda não existe diz como criá-la). O nome de revisor errado em `sempre`, `comportamento` ou em qualquer gatilho é recusado ao carregar, mesmo que o gatilho não dispare. Revisor que não existe em `agentes` nem em `niveis`, `pipeline.json` do head abaixo dos pisos e
                 diff que não casa com a lista de nomes saem com 2, não com omissão; quando o head não tem um gatilho do
                 `PISO_GATILHOS` (branch que saiu antes da regra), a mensagem acrescenta "branch anterior à regra: traga a
                 main (git merge main)".
@@ -216,13 +224,13 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 visto (a lista `vistas` do arquivo de ajuste; a de `baseline` só entra no relatório). `unico` não se
                 grava: é o achado sem `visto_por`. Para menos (revisor que rodou no par atual em `janela` sessões com
                 código no diff, sem achado de nível médio ou mais dele ou visto por ele, sem escape e sem gatilho
-                falso; a sessão só conta se alguém achou nível médio ou mais nela) desce um degrau da `ESCADA`, nunca abaixo do piso, um alvo por execução, o
+                falso; a sessão só conta se alguém achou nível médio ou mais nela) desce um degrau da `ESCADA` **dentro do mesmo modelo** (o ajuste só mexe no esforço; o modelo vem do papel, D3: a arquitetura desce até o piso dela, o `opus:medium`, e para aí), nunca abaixo do piso, um alvo por execução, o
                 mais caro primeiro, respeitando o `adiar` da sessão. Para mais (escape de nível médio ou mais, na hora; rodadas
                 altas do nível de código, com a janela completa) e gatilho que falta ou dispara à toa ele só propõe; o `--aplicar-mais` aplica
                 a proposta existente. Código nunca passa de `sonnet`; agente fixo nunca passa do `TETO`. Aplicar edita
                 só a linha do alvo no `pipeline.json`, o cabeçalho do agente e a tabela da seção 7 da skill `pipeline`, e
-                grava `docs/pipeline/ajustes/<data>-<alvo>.md` (com as `vistas`); só grava se o `pipeline.json` novo passa nos pisos. A janela completa vale só para descer e para a subida do código por rodadas; escape e gatilho que falta viram proposta na hora.
-              - `marca-alterado.mjs`: PostToolUse em Edit, Write, MultiEdit e NotebookEdit; anota código alterado em
+                grava `docs/pipeline/ajustes/<data>-<alvo>.md` (com as `vistas`); só grava se o `pipeline.json` novo passa nos pisos. A janela completa vale só para descer e para a subida do código por rodadas; escape e gatilho que falta viram proposta na hora. A tabela da skill mantém o fim de linha que o `SKILL.md` já usa (CRLF ou LF). O nome do arquivo de sessão, depois da data, é kebab de até 60 caracteres, e nem o nome nem o texto do bloco levam id de pessoa (`cliente 12345`, `lead #987`, `contato123`, `titular 0042`).
+              - `marca-alterado.mjs`: PostToolUse em Edit, Write, MultiEdit e NotebookEdit; anota código alterado (a lista única de extensões do `config.mjs`, `.css` e `.py` inclusive) em
                 `.claude/estado/alterados.txt`. Nunca bloqueia.
               - `portao.mjs`: Stop; com código alterado e o script do `portaoRapido` no package.json, roda o portão
                 rápido (`npm run <portaoRapido>`). Vermelho devolve o erro; verde pede a revisão do pipeline uma vez e
@@ -251,7 +259,7 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 verdade numa pasta temporária; os que dependem do `pipeline.json` copiam os hooks e escrevem o deles
                 (`teste-apoio.mjs`), então não mudam quando o do projeto muda.
               - O `portao.test.mjs` usa um `package.json` e um `pipeline.json` falsos numa pasta temporária, e confere o
-                que o `marca-alterado.mjs` anota (código do produto, `.jsx` inclusive; nunca `.claude/` nem `docs/`).
+                que o `marca-alterado.mjs` anota (código do produto pela lista única, `.jsx`, `.css` e `.py` inclusive; nunca `.claude/` nem `docs/`).
               - O `guarda-agentes.test.mjs` usa um `lerCabecalho` falso e também lê os cabeçalhos de verdade de
                 `.claude/agents/` (com as subpastas): todo arquivo está em `TETO` ou é o `orquestrador`
                 (o `orquestracao` de `niveis`), senão o teste falha; o cabeçalho tem de ser o do `pipeline.json`; o `name:` é o nome do arquivo e o `tools:` dos fixos é o da
@@ -263,7 +271,15 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 subagente, a linha de outro `type` com `message.model` depois da linha do chat, e o hook de ponta a ponta (todos os que passam pela ferramenta
                 `Agent` mandam um par certo, ou esperam o `ask` e o `deny`).
               - O `config.test.mjs` também cobre as seções novas e os pisos (`agentes`, `niveis`, `revisao`, `ajuste`).
-              - O `escolhe-revisores.test.mjs` usa um git de verdade numa pasta temporária (migration com `grant`, tela pura, `cpf`, diretório com " b/" no nome, linha `++`, binário, merge-base, linha de autorização removida, `lgpd-ignora`, `.claude/pipeline.json`, `--trabalho`, união com a base, o gatilho `tela` com `.jsx`, `.tsx`, `.vue`, `.svelte`, `.css`, `.scss` e `.html` mexido, criado e apagado, e o código de ação ou de rota de fora) e confere que cada regex de caminho do `pipeline.json` casa com um arquivo de `git ls-files` ou com um exemplo genérico do modelo (que ainda não tem `src/`).
+              - O `escolhe-revisores.test.mjs` testa a escolha dentro do processo (`escolher` e `formatar` com o diff montado à mão: migration com
+                `grant`, tela pura, `cpf`, linha de autorização removida, `lgpd-ignora`, `.claude/pipeline.json`, união com a base, o
+                gatilho `tela` em `.jsx`, `.tsx`, `.vue`, `.svelte`, `.css`, `.scss` e `.html` mexido, criado e apagado, `--sem-tela`, a lista
+                única de código em qualquer lugar) e usa um git de verdade numa pasta temporária só onde o git é o que se testa
+                (diretório com " b/", linha `++`, binário e imagem, merge-base, `--trabalho` com repositório aninhado, a regra do head e
+                da base, a linha de comando e as mensagens de erro, a `main` que não existe). Confere que cada regex de caminho do
+                `pipeline.json` casa com um arquivo de `git ls-files --cached --others` ou com um exemplo genérico do modelo (que ainda não
+                tem `src/`). O `escolhe-revisores.gatilhos.test.mjs` é o dos gatilhos genéricos um a um (permissao, rede_rota, banco,
+                dado_pessoal, ignorar_conteudo), do aviso do `confere-lgpd`, da mídia binária e do nome de revisor errado, tudo dentro do processo.
               - O `ajusta-pipeline.test.mjs` usa sessões de exemplo (desce um alvo por vez, piso, teto, janela
                 incompleta, linha de base, histerese, sessão vazia, escape logo depois da descida, mesmo dia, `visto_por`, gatilho falso, `adiar`, código sem `opus`), aplica o
                 ajuste num projeto temporário (e confere que nenhum par antigo sobra nos documentos) e confere em
@@ -274,7 +290,10 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 (`config`, `guarda-agentes`, `ajusta-pipeline` e `settings`), baixa todos os alvos ao piso (cabeçalhos e
                 tabela sincronizados) e roda esses quatro lá (~9 s): um teste que crava um par quebraria no 1º ajuste
                 automático e o pre-commit recusaria o commit.
-              - O `pre-commit.test.mjs` usa um git de verdade com os hooks copiados e confere que o commit que toca `.claude/` roda o `test:pipeline` (ou, sem o script, o `node --test`: vermelho recusa, verde passa, e sem teste nenhum recusa) e que o commit que não toca `.claude/` não roda nada.
+              - O `pre-commit.test.mjs` usa um git de verdade com os hooks copiados e **sem `package.json`**: o commit que toca `.claude/` roda o
+                `node --test` (vermelho recusa, verde passa, sem teste nenhum recusa, e o script `test:pipeline` de um `package.json` não
+                vale), com `NODE_TEST_CONTEXT=child` e `NODE_OPTIONS` quebrado no ambiente do commit, e o que não toca `.claude/` não roda
+                nada; confere que os cinco hooks de `git/` começam com `unset NODE_OPTIONS`.
               - O `settings.test.mjs` confere que o `.claude/settings.json` liga a `guarda-agentes` (matcher `Agent`) e
                 a `guarda-git` (Bash e PowerShell), as duas com `onFailure: "block"`, que todo hook ligado existe e que
                 a sessão abre como o agente `orquestrador` (`agent`), no modelo e no esforço do

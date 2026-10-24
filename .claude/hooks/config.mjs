@@ -13,6 +13,18 @@ export const MARCADOR = '<dono>/<repo>';
 export const CONFIGURE = 'configure o repositorio em .claude/pipeline.json';
 export const PORTAO_PADRAO = 'checar:rapido';
 
+/**
+ * O que é código: as extensões, numa lista só. O marca-alterado (portão), o confere-docs (AGENTS.md) e o escolhe-revisores
+ * (revisão) usam esta. Vale em qualquer lugar do repositório; as pastasDeTrabalho só decidem onde se exige o AGENTS.md.
+ */
+export const EXTENSOES_DE_CODIGO = [
+  'ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs', 'sql', 'json',
+  'py', 'go', 'rs', 'rb', 'java', 'kt', 'cs', 'php', 'vue', 'svelte', 'css', 'scss', 'html', 'sh', 'yml', 'yaml', 'toml', 'prisma',
+];
+const CODIGO = new RegExp(`\\.(${EXTENSOES_DE_CODIGO.join('|')})$`, 'i');
+/** O caminho (ou nome) é de um arquivo de código? */
+export const ehArquivoDeCodigo = (caminho) => CODIGO.test(caminho);
+
 const REPOSITORIO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SCRIPT = /^[A-Za-z0-9_][A-Za-z0-9_:.-]*$/; // vai para `npm run`, num shell: só nome de script
 
@@ -79,10 +91,10 @@ export const urlDoRepositorio = (repo) => new RegExp(`^(https://github\\.com/|gi
 // o JSON não os afrouxa, e o teto dos agentes fixos mora na guarda-agentes.mjs. ---
 
 /** Do mais barato ao mais forte. O ajuste anda um degrau por vez nesta ordem. */
-export const ESCADA = ['sonnet:low', 'sonnet:medium', 'sonnet:high', 'opus:high', 'opus:xhigh'];
+export const ESCADA = ['sonnet:low', 'sonnet:medium', 'sonnet:high', 'opus:medium', 'opus:high', 'opus:xhigh'];
 /** O par mínimo que o ajuste automático respeita, por seção e nome. */
 export const PISOS = {
-  agentes: { 'revisor-seguranca': 'opus:high', 'revisor-arquitetura': 'sonnet:high', qa: 'sonnet:medium', 'revisor-tela': 'sonnet:medium' },
+  agentes: { 'revisor-seguranca': 'opus:high', 'revisor-arquitetura': 'opus:medium', qa: 'sonnet:medium', 'revisor-tela': 'sonnet:medium' },
   niveis: { medio: 'sonnet:medium', 'codigo-seguranca': 'sonnet:high', 'revisao-ponytail': 'sonnet:medium' },
 };
 /** Os níveis de código: o `opus` só entra no `Plan` de uma decisão, então o JSON não os põe nele. */
@@ -100,11 +112,11 @@ export const SUPRESSAO = /lgpd-ignora:\s*([\w ,]+?)\s*--\s*\S.{9,}/;
  * O projeto que adotar o modelo soma aqui, e no pipeline.json, os caminhos e os conteúdos dele (pastas de rotas, de permissão, de dados).
  */
 export const PISO_GATILHOS = {
-  permissao: { revisores: ['revisor-seguranca'], caminhos: [], conteudo: ['security\\s+definer', '\\bgrant\\b'], remocoes: true, exemplos: ['src/x/servidor.ts', 'src/api/x/route.ts'] },
-  dado_pessoal: { revisores: ['revisor-lgpd', 'revisor-seguranca'], caminhos: [], conteudo: ['\\bcpf\\b'], exemplos: ['src/x/servidor.ts', 'src/api/x/route.ts'] },
-  banco: { revisores: ['revisor-seguranca'], caminhos: ['\\.sql$'], conteudo: [], remocoes: true, exemplos: ['db/migrations/20260101000000_x.sql'] },
+  permissao: { revisores: ['revisor-seguranca'], caminhos: ['(^|/)(auth|middleware|proxy)(/|\\.)'], conteudo: ['security\\s+definer', '\\bgrant\\b'], remocoes: true, exemplos: ['src/x/servidor.ts', 'src/api/x/route.ts', 'src/x/dados.ts'] },
+  dado_pessoal: { revisores: ['revisor-lgpd', 'revisor-seguranca'], caminhos: [], conteudo: ['cpf', 'e_?mail', 'celular', 'nascimento'], remocoes: true, exemplos: ['db/migrations/x.sql', 'src/x/dados.ts'] },
+  banco: { revisores: ['revisor-seguranca'], caminhos: ['\\.sql$'], conteudo: ['\\.where\\(', '\\bwhere\\s*:'], remocoes: true, exemplos: ['db/migrations/20260101000000_x.sql', 'src/x/dados.ts'] },
   config_pipeline: { revisores: ['revisor-seguranca', 'revisor-arquitetura'], caminhos: ['^\\.claude/(pipeline\\.json|agents/|hooks/|settings(\\.local)?\\.json|skills/pipeline/|skills/adjust-pipeline/)'], conteudo: [], exemplos: ['.claude/pipeline.json'] },
-  rede_rota: { revisores: ['revisor-seguranca'], caminhos: [], conteudo: ['fetch\\('], remocoes: true, exemplos: ['src/x/servidor.ts', 'src/api/x/route.ts'] },
+  rede_rota: { revisores: ['revisor-seguranca'], caminhos: ['(^|/)api/', '(^|/)route\\.[cm]?[jt]sx?$'], conteudo: ['[\'"]use server[\'"]', 'fetch\\('], remocoes: true, exemplos: ['src/x/servidor.ts', 'src/api/x/route.ts', 'src/app/x/route.ts'] },
   lgpd_ignora: { revisores: ['revisor-lgpd'], caminhos: [], conteudo: [SUPRESSAO.source], todo_arquivo: true, exemplos: [] },
   lgpd_regras: { revisores: ['revisor-lgpd'], caminhos: ['^\\.claude/hooks/(lgpd-regras|confere-lgpd)', '^\\.claude/hooks/config\\.mjs$', '^\\.claude/agents/revisor-lgpd\\.md$'], conteudo: [], exemplos: ['.claude/hooks/lgpd-regras.mjs'] },
   tela: { revisores: ['revisor-tela'], caminhos: ['^(apps|packages|src)/.+\\.(jsx|tsx|vue|svelte|css|scss|html)$'], conteudo: [], exemplos: ['src/x/Tela.jsx'] },
@@ -245,4 +257,32 @@ export function localizar(agentes, niveis, nome) {
   if (Object.hasOwn(agentes, nome)) return { secao: 'agentes', chave: nome };
   const chave = Object.keys(niveis).find((k) => k === nome || niveis[k].revisor === nome);
   return chave === undefined ? undefined : { secao: 'niveis', chave };
+}
+
+/**
+ * O legado do `confere-lgpd` é opcional: só existe com `"lgpd": { "legadoAte": "<sha>" }` no pipeline.json. O sha é o commit
+ * a partir do qual o achado antigo não bloqueia (o texto de cada arquivo naquele commit). Sem a chave não há legado nenhum.
+ */
+export function legadoAteDoTexto(texto) {
+  let dados;
+  try {
+    dados = JSON.parse(texto.replace(/^\uFEFF/, ''));
+  } catch (e) {
+    return falha(`lgpd.legadoAte: o pipeline.json não é JSON válido (${mensagem(e)})`);
+  }
+  const l = dados?.lgpd;
+  if (l === undefined) return ok(null);
+  if (!ehObjeto(l)) return falha('lgpd em .claude/pipeline.json tem de ser um objeto');
+  if (l.legadoAte === undefined) return ok(null);
+  if (typeof l.legadoAte !== 'string' || !/^[0-9a-f]{7,40}$/i.test(l.legadoAte)) return falha('lgpd.legadoAte em .claude/pipeline.json tem de ser o sha de um commit (7 a 40 caracteres hexadecimais)');
+  return ok(l.legadoAte);
+}
+
+/** O `lgpd.legadoAte` do arquivo (ver `legadoAteDoTexto`). */
+export function lerLegadoAte(arquivo = ARQUIVO) {
+  try {
+    return legadoAteDoTexto(readFileSync(arquivo, 'utf8'));
+  } catch (e) {
+    return falha(`não consegui ler ${arquivo}: ${mensagem(e)}`);
+  }
 }

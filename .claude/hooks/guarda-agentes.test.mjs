@@ -628,3 +628,13 @@ test('o hook de ponta a ponta confere o chat principal: opus xhigh passa; outro 
   const opus = hook(entradaDoHook({ subagent_type: 'general-purpose', model: 'opus', effort: 'high', description: 'x' }, { model: null }));
   assert.equal(opus.saida?.permissionDecision, 'ask', 'ask com ask');
 });
+
+test('opus:medium num agente fixo (o piso do revisor-arquitetura): passa quando o cabeçalho diz o mesmo, nega quando não, e a chamada não sobe o esforço sozinha', () => {
+  const ferr = TETO['revisor-arquitetura'].tools;
+  const vigente = { model: 'opus', effort: 'medium', tools: ferr };
+  const com = (cab, entrada = {}) => decidirAgente({ subagent_type: 'revisor-arquitetura', description: 'x', ...entrada }, () => ({ name: 'revisor-arquitetura', ...cab }), { 'revisor-arquitetura': vigente });
+  assert.deepEqual(com({ model: 'opus', effort: 'medium', tools: ferr }), passa, 'abaixo do teto (opus high) e igual ao cabeçalho');
+  assert.deepEqual(com({ model: 'opus', effort: 'medium', tools: ferr }, { model: 'opus', effort: 'medium' }), passa);
+  assert.equal(com({ model: 'opus', effort: 'high', tools: ferr }).decisao, 'deny', 'o cabeçalho ainda diz high: não bate com o JSON');
+  assert.equal(com({ model: 'opus', effort: 'medium', tools: ferr }, { effort: 'high' }).decisao, 'deny', 'a chamada pede mais esforço que o pipeline.json');
+});

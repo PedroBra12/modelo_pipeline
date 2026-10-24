@@ -97,6 +97,7 @@ test('agentes e niveis: o do projeto carrega; nome, model, effort e tools invál
     ['lgpd é fixo', com('agentes', 'revisor-lgpd', { ...dadosReais().agentes['revisor-lgpd'], model: 'sonnet' }), /revisor-lgpd é fixo em opus:high/],
     ['fixo mudado', com('agentes', 'leitor-docs', { ...dadosReais().agentes['leitor-docs'], model: 'sonnet' }), /fixo em haiku:low/],
     ['revisor-tela abaixo do piso', com('agentes', 'revisor-tela', { ...dadosReais().agentes['revisor-tela'], model: 'sonnet', effort: 'low' }), /agentes\.revisor-tela está em sonnet:low, abaixo do piso sonnet:medium/],
+    ['arquitetura em sonnet (o modelo vem do papel)', com('agentes', 'revisor-arquitetura', { ...dadosReais().agentes['revisor-arquitetura'], model: 'sonnet', effort: 'high' }), /sonnet:high, abaixo do piso opus:medium/],
     ['nome desconhecido', com('agentes', 'intruso', q), /nome desconhecido/],
     ['nível de código em opus', com('niveis', 'medio', { model: 'opus', effort: 'high' }), /niveis\.medio: nível de código não usa opus/],
     ['nível codigo-seguranca em opus', com('niveis', 'codigo-seguranca', { model: 'opus', effort: 'high' }), /niveis\.codigo-seguranca: nível de código não usa opus/],
@@ -142,8 +143,8 @@ test('revisao: a do projeto compila e cumpre os pisos; gatilho repetido, regex i
     ['lookahead no ignorar_conteudo', (d) => { d.ignorar_conteudo.push('^docs/(?!.*\\.sql$)'); }, /não aceitam \(\?/],
     ['ignorar do gatilho que não é prefixo', (d) => { g(d, 'dado_pessoal').ignorar = ['\\.mjs$']; }, /dado_pessoal: ignorar tem de ser um prefixo de caminho literal/],
     ['ignorar que cala o permissao', (d) => { g(d, 'permissao').ignorar = ['.']; }, /permissao: um ignorar casa com src\/x\/servidor\.ts/],
-    ['ignorar que cala o dado_pessoal', (d) => { g(d, 'dado_pessoal').ignorar = ['^src/']; }, /dado_pessoal: um ignorar casa com src\/x\/servidor\.ts/],
-    ['ignorar_conteudo global que cala o dado_pessoal', (d) => { d.ignorar_conteudo.push('servidor'); }, /dado_pessoal: um ignorar casa com src\/x\/servidor\.ts/],
+    ['ignorar que cala o dado_pessoal', (d) => { g(d, 'dado_pessoal').ignorar = ['^src/']; }, /dado_pessoal: um ignorar casa com src\/x\/dados\.ts/],
+    ['ignorar_conteudo global que cala o dado_pessoal', (d) => { d.ignorar_conteudo.push('dados'); }, /dado_pessoal: um ignorar casa com src\/x\/dados\.ts/],
     ['caminhos do qa tirados', (d) => { d.comportamento_caminhos = []; }, /comportamento_caminhos perdeu/],
   ];
   for (const [rotulo, muda, esperado] of casos) comArquivo(com(muda), (c) => assert.match(lerRevisao(c).erro, esperado, rotulo));
@@ -184,4 +185,12 @@ test('o nível codigo-seguranca descreve o código que toca um gatilho de risco,
   }
   assert.match(tarefa, /integração de fase/);
   assert.doesNotMatch(tarefa, /isolamento entre donos de dado ou dado pessoal/, 'o texto antigo (só permissão, isolamento e dado pessoal) saiu');
+});
+
+test('a lista única de extensões de código: as pedidas estão nela e o resto (md, imagem, texto) não é código', async () => {
+  const { EXTENSOES_DE_CODIGO, ehArquivoDeCodigo } = await import('./config.mjs');
+  const pedidas = 'ts tsx mts cts js jsx mjs cjs sql json py go rs rb java kt cs php vue svelte css scss html sh yml yaml toml prisma'.split(' ');
+  assert.deepEqual([...EXTENSOES_DE_CODIGO].sort(), [...pedidas].sort());
+  for (const e of pedidas) assert.ok(ehArquivoDeCodigo(`a/b/x.${e}`) && ehArquivoDeCodigo(`X.${e.toUpperCase()}`), e);
+  for (const n of ['README.md', 'a.png', 'LICENSE', 'x.txt', 'ts', 'a.tsx.bak']) assert.equal(ehArquivoDeCodigo(n), false, n);
 });
