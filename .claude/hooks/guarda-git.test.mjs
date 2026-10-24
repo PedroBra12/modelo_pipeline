@@ -370,7 +370,7 @@ const itens = {
       'grep -rn NODE_OPTIONS $(pwd)',
       "awk 'BEGIN{system(\"export NODE_OPTIONS=x\")}'",
     ],
-    libera: ["awk '/NODE_OPTIONS/' .env"],
+    libera: ['echo $NODE_OPTIONS'],
   },
   '3 configuração do git sem variável': {
     bloqueia: [
@@ -437,8 +437,6 @@ const itens = {
       'git -C . log -S hooksPath --oneline',
       'git --no-pager show HEAD:.claude/hooks/guarda-git.mjs | grep GIT_CONFIG',
       'git diff -G hooksPath',
-      "awk '/GIT_CONFIG/' .env",
-      "sed -n '/GIT_CONFIG/p' .env",
       'head -n 5 .git/config',
       'tail -n 3 .git/config',
       "grep -E 'NODE_OPTIONS|GIT_CONFIG' .env",
@@ -456,6 +454,97 @@ const itens = {
 for (const [item, { bloqueia: nega, libera: passa }] of Object.entries(itens)) {
   for (const c of nega) test(`[item ${item}] bloqueia: ${c}`, () => assert.notEqual(avaliar(c), null));
   for (const c of passa) test(`[item ${item}] libera: ${c}`, () => assert.equal(avaliar(c), null));
+}
+
+// Os cinco ajustes da rodada seguinte: cada um com o que tem de negar e o que tem de continuar passando.
+const ajustes = {
+  '1 awk, sed e rg --pre não são só leitura': {
+    bloqueia: [
+      "awk '/NODE_OPTIONS/' .env",
+      "awk '/NODE_OPTIONS/ { print | \"sh\" }' .env",
+      "sed -n '/GIT_CONFIG/p' .env",
+      "sed -n '/NODE_OPTIONS/w out.txt' .env",
+      'echo NODE_OPTIONS | sed s/a/b/',
+      'rg --pre ./x.sh NODE_OPTIONS .',
+      'rg --pre=./x.sh NODE_OPTIONS .',
+      'rg --hostname-bin ./x.sh NODE_OPTIONS .',
+      'find . | xargs rg --pre ./x.sh NODE_OPTIONS',
+    ],
+    libera: ['rg -n NODE_OPTIONS .claude', 'rg -n --glob *.mjs GIT_CONFIG .claude | head -3', 'grep -rn NODE_OPTIONS .claude'],
+  },
+  '2 git que lê não traz configuração nem programa': {
+    bloqueia: [
+      'git -c core.pager=sh log -S NODE_OPTIONS',
+      'git -c core.pager=sh diff -G hooksPath',
+      'git --config-env=core.pager=PAGER show HEAD -S hooksPath',
+      'git --config-env core.pager=PAGER log -S hooksPath',
+      'git grep -O ./x.sh NODE_OPTIONS',
+      'git grep -Osh NODE_OPTIONS',
+      'git grep --open-files-in-pager=sh NODE_OPTIONS',
+      'git grep --open-files NODE_OPTIONS',
+      'git diff --ext-diff -G hooksPath',
+      'git log -p --ext-diff -S NODE_OPTIONS',
+      'git diff --ext-di -G hooksPath',
+      'git diff --outp=.git/config',
+    ],
+    libera: [
+      'git -C . log -S hooksPath --oneline',
+      'git log -c -S NODE_OPTIONS',
+      'git diff --no-ext-diff -G hooksPath',
+      'git grep -o -n NODE_OPTIONS',
+      'git grep -n -e NODE_OPTIONS',
+      'git log --oneline -S hooksPath',
+      'git --no-pager diff -G hooksPath',
+    ],
+  },
+  '3 a máscara da mensagem do commit': {
+    bloqueia: [
+      'python x.py git commit -m "NODE_OPTIONS=x"',
+      'env GIT_AUTHOR_NAME=x git commit -m "NODE_OPTIONS=x" && python y.py',
+      'git commit -m "a\\"; export NODE_OPTIONS=x; echo \\"b"',
+      'git commit -m "$(cat <<\'EOF\'; export NODE_OPTIONS=x\nmensagem\nEOF\n)"',
+      'git commit -m "$(cat <<\'EOF\' > ~/.bashrc\nexport NODE_OPTIONS=x\nEOF\n)"',
+      'git commit -m "usa eval aqui" ; echo NODE_OPTIONS',
+      'git commit -m "roda | sh agora" ; grep NODE_OPTIONS .env',
+    ],
+    libera: [
+      'git status; git commit -m "documenta o NODE_OPTIONS"',
+      'cd docs && git commit -m "documenta o NODE_OPTIONS"',
+      'git add . && git commit -m "documenta o NODE_OPTIONS" && git log -1',
+      'git -C . commit --message="NODE_OPTIONS no .git/config"',
+      'git commit -m "$(cat <<\'EOF\'  \nmenciona NODE_OPTIONS, hooksPath e .git/hooks\nEOF\n)"',
+    ],
+  },
+  '4 ${ atribui': {
+    bloqueia: [
+      'echo ${NODE_OPTIONS:=--require=./x.js}',
+      'echo "${GIT_CONFIG_COUNT:=1}"',
+      'printenv ${GIT_CONFIG_COUNT:-x}',
+      'grep ${NODE_OPTIONS:=x} .env',
+    ],
+    libera: ['echo $NODE_OPTIONS', 'echo "$GIT_CONFIG_COUNT"'],
+  },
+  '5 o que vem depois do 1º segmento do pipe também só lê': {
+    bloqueia: [
+      'echo export NODE_OPTIONS=x | python',
+      'echo NODE_OPTIONS=x | Tee-Object .env',
+      'grep NODE_OPTIONS .env | node',
+      'cat .env | python | grep NODE_OPTIONS',
+      'grep NODE_OPTIONS .env | grep -v x | python',
+    ],
+    libera: [
+      "find . -name '*.mjs' | xargs grep NODE_OPTIONS",
+      'grep -rn NODE_OPTIONS . | head',
+      "grep NODE_OPTIONS .env | wc -l | tr -d ' '",
+      'git log -S NODE_OPTIONS | head -3',
+      'cat .env | cut -d= -f1 | grep NODE_OPTIONS',
+      'find . -name x.mjs | xargs -n1 grep -c GIT_CONFIG | head -3',
+    ],
+  },
+};
+for (const [item, { bloqueia: nega, libera: passa }] of Object.entries(ajustes)) {
+  for (const c of nega) test(`[ajuste ${item}] bloqueia: ${c}`, () => assert.notEqual(avaliar(c), null));
+  for (const c of passa) test(`[ajuste ${item}] libera: ${c}`, () => assert.equal(avaliar(c), null));
 }
 
 test('o push e o PR saem só da pasta do projeto, fora dos worktrees de agente', () => {

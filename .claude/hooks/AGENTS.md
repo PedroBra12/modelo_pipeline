@@ -82,22 +82,22 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   `--remove-section` ou `--rename-section` na seção `core`). Nega ainda as chaves `include.*` e `includeIf.*` em `-c` e em `git config` (trazem uma configuração que desvia os hooks).
                 - **Regra invertida**, em qualquer comando, não só no que sobe: nega **toda menção** de `GIT_CONFIG*` ou `NODE_OPTIONS` (desviam os hooks do git e o que o node carrega dentro deles) e,
                   pela mesma regra, de `hooksPath`, `.git/config`, `config.worktree` e `.git/hooks` (desligam os hooks sem variável nenhuma). A exceção é só o **segmento** cujo 1º programa só lê
-                  (`grep`, `rg`, `cat`, `echo`, `printenv`, `Select-String`, `Get-Item`, `Get-ChildItem`, `Get-Content`, `Write-Output`, `Write-Host`, `awk`, `sed` sem `-i`/`--in-place`, `head`, `tail`,
-                  `git grep|log|show|diff` sem `--output`, `xargs grep|rg`) ou só tira (`unset`, `env -u` sem atribuição, `Remove-Item`); o `git config` que só traz o `core.hooksPath` fica por
+                  (`grep`, `rg`, `cat`, `echo`, `printenv`, `Select-String`, `Get-Item`, `Get-ChildItem`, `Get-Content`, `Write-Output`, `Write-Host`, `head`, `tail`, `wc`, `cut`, `tr`, `Measure-Object`,
+                  `git grep|log|show|diff` sem `-c`/`--config-env` antes do subcomando e sem `--output`, `--ext-diff`, `-O`/`--open-files-in-pager` (nem o prefixo que o git aceita), `xargs grep|rg`; o `rg` sem `--pre` nem `--hostname-bin`; `awk` e `sed` ficam de fora: o `sed` grava e executa, o `awk` executa pelo pipe e pelo `getline`) ou só tira (`unset`, `env -u` sem atribuição, `Remove-Item`); o `git config` que só traz o `core.hooksPath` fica por
                   conta da regra do `core.hooksPath` acima. A regra é por menção, e não por uma lista de jeitos de escrever (`Set-Item Env:\NOME`, `$env:NOME+=`, `Set-Content`, `Rename-Item`,
                   `read NOME`, `declare -x`, `printf >> .git/config`... nunca fecha). Os segmentos se separam por `;`, `&`, `&&`, `||`, `|` e quebra de linha (o `&` de `>&2`, `2>&1` e `&>` não
-                  separa), e o que está entre aspas não separa. Tiram a exceção do segmento: parêntese (`$(`, `<(`, `>(`, `@(` e o parêntese do PowerShell executam), crase, um `| sh`, `| bash`,
+                  separa), e o que está entre aspas não separa. Tiram a exceção do segmento: parêntese (`$(`, `<(`, `>(`, `@(` e o parêntese do PowerShell executam), `${` (a expansão `${X:=y}` atribui), crase, um `| sh`, `| bash`,
                   `| pwsh`, `| iex`, `eval`, `xargs` que não seja `grep|rg`, ou heredoc para um shell; e tira a da **unidade** (o mesmo, sem separar no `|`) o que grava em arquivo: `>`, `>>`, `tee`,
-                  `Out-File`, `Set-Content`, `Add-Content`, mesmo começando por `echo` ou `cat`, e mesmo quando só o corpo do heredoc redirecionado cita o nome (`>&2`, `2>&1` e `> /dev/null` não contam).
-                  Fica de fora da conferência só o texto entre aspas logo depois do `-m` ou `--message` de um `git commit` (sem `$(` nem crase dentro das aspas duplas; a forma
-                  `$(cat <<'EOF' ... EOF)` também vale); o resto da linha continua conferido. No push, o `AMBIENTE` (`GIT_*`, `GH_*`) vale também com `+=`.
+                  `Out-File`, `Set-Content`, `Add-Content`, mesmo começando por `echo` ou `cat`, e mesmo quando só o corpo do heredoc redirecionado cita o nome (`>&2`, `2>&1` e `> /dev/null` não contam). Na unidade que cita um nome, todo segmento à direita do 1º também tem de só ler (`echo NOME | python` e `echo NOME | Tee-Object f` negam; `find ... | xargs grep NOME` e `grep NOME f | head` passam).
+                  Fica de fora da conferência só o texto entre aspas logo depois do `-m` ou `--message` de um `git commit` que é o 1º programa do segmento (sem `$(`, crase nem `` na mensagem; a forma
+                  `$(cat <<'EOF' ... EOF)` também vale, com só espaço entre o `'EOF'` e a quebra de linha); o resto da linha continua conferido, e o `eval`, `sh` e afins se procuram no comando sem essa máscara. No push, o `AMBIENTE` (`GIT_*`, `GH_*`) vale também com `+=`.
                 - Lê a linha continuada (`\` e a crase) separada e junta, tira as aspas dos argumentos sem espaço (a
                   aspa vazia fica), acha o programa depois de `xargs`, `timeout`, `cmd /c`, lê também o comando entre
                   aspas passado a outro shell (`bash -c`, `cmd /c`, `pwsh -Command`) e nega o `-EncodedCommand`.
                 - Modo em `PIPELINE_GUARDA_GIT`: `negar` (padrão), `perguntar` (o `deny` vira `ask`, menos a falta de
                   repositório configurado), `desligado` (sai antes de tudo).
                 - **O limite**: a guarda segura o erro e o atalho do agente, não um agente hostil. `sh x.sh` (um script que o agente escreveu antes) passa por qualquer regra de texto, e a trava
-                  definitiva é uma checagem obrigatória no GitHub, que é decisão do usuário.
+                  definitiva é uma checagem obrigatória no GitHub, que é decisão do usuário. Um link ou uma junção para a pasta `.git` passa pelo `Write` (a `guarda-git-arquivos` lê o nome do caminho, não o destino do link).
               - `guarda-git-arquivos.mjs`: PreToolUse em Edit, Write, MultiEdit e NotebookEdit (`.claude/hooks/guarda-git-arquivos.mjs`), a mesma porta da `guarda-git` pelas ferramentas de edição.
                 `motivoDoCaminho(caminho, cwd)` nega o caminho dentro de `.git/` (config, `config.worktree`, `hooks/`…) e o próprio arquivo `.git` (o ponteiro de um worktree). O caminho se lê a
                 partir do `cwd` da entrada, com `..` resolvido, `\` virado `/` e pelo nome de cada pasta: `.GIT`, `.git.`, `.git ` e `GIT~1` também negam, e `.gitignore`, `.github/` e
