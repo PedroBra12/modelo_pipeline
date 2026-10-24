@@ -29,6 +29,13 @@ test('o matcher Agent chama a guarda-agentes, e Bash e PowerShell chamam a guard
   assert.equal(git.hook.onFailure, 'block');
 });
 
+test('o matcher de edição chama a guarda-git-arquivos, com onFailure block, nas quatro ferramentas de escrita', () => {
+  const arquivos = entradaDo('guarda-git-arquivos.mjs');
+  assert.ok(arquivos, 'falta a entrada da guarda-git-arquivos');
+  assert.deepEqual(arquivos.matcher.sort(), ['Edit', 'MultiEdit', 'NotebookEdit', 'Write']);
+  assert.equal(arquivos.hook.onFailure, 'block');
+});
+
 test('todo hook do settings.json aponta para um script que existe, e o PostToolUse e o Stop estão ligados', () => {
   const aqui = dirname(fileURLToPath(import.meta.url));
   const comandos = Object.values(SETTINGS.hooks ?? {}).flatMap((entradas) => entradas.flatMap((e) => (e.hooks ?? []).map((h) => h.command)));

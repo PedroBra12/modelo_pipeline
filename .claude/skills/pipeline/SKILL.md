@@ -68,7 +68,9 @@ Como lançar cada nome:
 - `revisor-tela`: subagente fixo, dono do portão 5. Passe a ele as telas tocadas (arquivos e rotas), o papel e a conta de exemplo de quem as usa e o worktree. Ele sobe o app local em portas próprias e grava as capturas numa pasta temporária, que você apaga depois de ler o relatório. Na troca só de texto, de cópia ou de renome, `--sem-tela "<motivo>"` o dispensa, e o motivo vai para o relatório.
 
 **Triagem:**
-- **corrigir agora:** o "Must fix" do `ponytail-review`, todo achado de bug, risco ou regra não negociável dos revisores, e todo defeito do `qa` (cada um vira teste antes da correção). Depois, rode os portões de novo, e o `qa` de novo (retomando o mesmo, com `SendMessage`) depois de toda rodada de correção, não só se ele reprovou: a correção de um achado já criou defeito novo mais de uma vez;
+- **corrigir agora:** o "Must fix" do `ponytail-review`, todo achado de bug, risco ou regra não negociável dos revisores, e todo defeito do `qa` (cada um vira teste antes da correção). Depois, rode os portões de novo, e o `qa` de novo depois de toda rodada de correção, não só se ele reprovou: a correção de um achado já criou defeito novo mais de uma vez;
+- **agente novo a partir da 2ª rodada:** o `SendMessage` leva o histórico inteiro do agente, e cada rodada fica mais cara (um agente de código retomado cinco vezes passou de 800 mil tokens). Retome o mesmo agente, de código ou revisor, só na 1ª rodada de correção ou no 1º reteste. Daí em diante, abra um agente novo, com um brief curto (o que mudar, os arquivos exatos, o estado numa linha) e escopo estreito; o revisor de reteste olha só o diff da rodada;
+- **quando parar:** se uma rodada de reteste traz só achado baixo ou um limite já conhecido, pare a corrida e leve o resto ao relatório;
 - **corrigir se couber no escopo:** o "Should fix" e o resto do que é desta pasta; o que não couber, o "Nice to have" e as `Suspeitas` do `qa` vão para o relatório;
 - **achado que aparece pela 2ª vez:** vira lint, teste ou script (`principle-encode-lessons-in-structure`), não mais uma linha de texto.
 

@@ -226,8 +226,6 @@ const bloqueia = [
   'env NODE_OPTIONS=x git commit -m x',
   'env -u FOO NODE_OPTIONS=x git commit -m x',
   'env -u NODE_OPTIONS GIT_CONFIG_COUNT=1 git commit -m x',
-  // a mensagem de commit que cita a variável também é negada: a regra é por menção (o ponytail provou o furo da outra)
-  'git commit -m "documenta o NODE_OPTIONS"',
   // a leitura e a remoção de um dos nomes, mais a atribuição do outro, no mesmo segmento
   'unset NODE_OPTIONS; GIT_CONFIG_COUNT=1 git commit -m x',
   // PowerShell lido sem um programa de leitura da lista
@@ -346,6 +344,119 @@ const libera = [
 
 for (const c of bloqueia) test(`bloqueia: ${c}`, () => assert.notEqual(avaliar(c), null));
 for (const c of libera) test(`libera: ${c}`, () => assert.equal(avaliar(c), null));
+
+// Os itens da rodada da guarda (D2 e D3 do autoajuste): cada grupo traz o que tem de negar e o que tem de passar.
+const itens = {
+  '1 separador &': {
+    bloqueia: [
+      'grep x f & export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null; git commit -m y',
+      'echo ok & NODE_OPTIONS=--require=./x.js git commit -m x',
+      'cat .env &export NODE_OPTIONS=x',
+    ],
+    libera: [
+      'grep -rn NODE_OPTIONS docs/ 2>&1 | head -3',
+      'echo $NODE_OPTIONS >&2',
+      'grep -rn NODE_OPTIONS docs/ 2>/dev/null',
+      'grep -rn NODE_OPTIONS docs/ &>/dev/null',
+      'git status & grep -c NODE_OPTIONS .env',
+    ],
+  },
+  '2 parêntese': {
+    bloqueia: [
+      'cat <(GIT_CONFIG_COUNT=1 git commit -m y)',
+      'Write-Output (Set-Item env:GIT_CONFIG_COUNT 1)',
+      'echo >(export NODE_OPTIONS=x)',
+      'Write-Output @(Set-Item env:NODE_OPTIONS x)',
+      'grep -rn NODE_OPTIONS $(pwd)',
+      "awk 'BEGIN{system(\"export NODE_OPTIONS=x\")}'",
+    ],
+    libera: ["awk '/NODE_OPTIONS/' .env"],
+  },
+  '3 configuração do git sem variável': {
+    bloqueia: [
+      "printf '[core]\\n\\thooksPath = x\\n' >> .git/config",
+      "sed -i 's/^/hooksPath=x /' .git/config",
+      'cp evil.cfg .git/hooks/pre-commit',
+      'echo x > .git/hooks/pre-commit',
+      'touch .git/config.worktree',
+      'ln -s /dev/null .git/hooks/pre-commit',
+      'mv .git/hooks .git/hooks.off',
+      'python x.py .git/config',
+      'Set-Content .git/config "[core]"',
+      "printf 'hooksPath = x' | tee .git/config.worktree",
+      'git config --file .git/config user.name y',
+    ],
+    libera: [
+      'cat .git/config',
+      'grep -n hooksPath .git/config',
+      'head -n 20 .git/config',
+      'Get-Content .git/config',
+      'git log -S hooksPath --oneline',
+      'git config --get core.hooksPath',
+    ],
+  },
+  '4 redirecionamento': {
+    bloqueia: [
+      "echo 'export GIT_CONFIG_COUNT=1' >> ~/.bashrc",
+      "cat >> ~/.bashrc <<'EOF'\nexport NODE_OPTIONS=--require=./x.js\nEOF",
+      "cat > .git/config <<'EOF'\n[core]\n\thooksPath = x\nEOF",
+      'cat <<EOF > ~/.profile\nNODE_OPTIONS=x\nEOF',
+      "echo 'export NODE_OPTIONS=x' | tee -a ~/.bashrc",
+      "Write-Output 'GIT_CONFIG_COUNT=1' | Add-Content $PROFILE",
+      "echo NODE_OPTIONS=x | Out-File .env",
+      'printenv NODE_OPTIONS > .env.local',
+      'grep -rn NODE_OPTIONS docs/ >| out.txt',
+      "python - <<'EOF'\nimport os; os.environ['NODE_OPTIONS'] = 'x'\nEOF",
+    ],
+    libera: [
+      'grep -rn NODE_OPTIONS docs/ > /dev/null',
+      'printenv NODE_OPTIONS 2>/dev/null',
+      "cat <<'EOF'\nexport NODE_OPTIONS=x\nEOF",
+      'Write-Output $env:NODE_OPTIONS > $null',
+    ],
+  },
+  '6 leitura': {
+    bloqueia: [
+      'git commit -m "x"; export NODE_OPTIONS=x',
+      'git commit -m "$(export NODE_OPTIONS=x)"',
+      'git commit -m "ok" -m "$(export NODE_OPTIONS=x)"',
+      'git commit -m "ok" && echo -m "export NODE_OPTIONS=1" >> ~/.bashrc',
+      'git commit NODE_OPTIONS=y -m "ok"',
+      "sed -i 's/^/NODE_OPTIONS=x /' f",
+      "sed -ni '/x/p' .git/config",
+      'sed --in-place s/a/b/ .git/config',
+      'git diff --output=.git/config',
+      'echo NODE_OPTIONS=x | xargs export',
+      'echo NODE_OPTIONS=x | xargs sh -c',
+      'find . | xargs -I{} env NODE_OPTIONS=x git commit -m x',
+      'find . | xargs env NODE_OPTIONS=x git commit -m x',
+    ],
+    libera: [
+      'git grep -n NODE_OPTIONS',
+      'git log -S NODE_OPTIONS --oneline',
+      'git -C . log -S hooksPath --oneline',
+      'git --no-pager show HEAD:.claude/hooks/guarda-git.mjs | grep GIT_CONFIG',
+      'git diff -G hooksPath',
+      "awk '/GIT_CONFIG/' .env",
+      "sed -n '/GIT_CONFIG/p' .env",
+      'head -n 5 .git/config',
+      'tail -n 3 .git/config',
+      "grep -E 'NODE_OPTIONS|GIT_CONFIG' .env",
+      "find . -name '*.mjs' | xargs grep -n NODE_OPTIONS",
+      "find . -name '*.mjs' | xargs -n1 rg GIT_CONFIG",
+      "find . -name '*.mjs' -print0 | xargs -0 -I{} grep NODE_OPTIONS {}",
+      'git commit -m "documenta o NODE_OPTIONS"',
+      "git commit -am 'GIT_CONFIG vira outra coisa; hooksPath tambem'",
+      'git commit --message="NODE_OPTIONS no .git/config"',
+      'git commit -m "primeira" -m "NODE_OPTIONS e o eval do bash"',
+      'git commit -m "$(cat <<\'EOF\'\nmenciona NODE_OPTIONS, hooksPath e .git/hooks\nEOF\n)"',
+    ],
+  },
+};
+for (const [item, { bloqueia: nega, libera: passa }] of Object.entries(itens)) {
+  for (const c of nega) test(`[item ${item}] bloqueia: ${c}`, () => assert.notEqual(avaliar(c), null));
+  for (const c of passa) test(`[item ${item}] libera: ${c}`, () => assert.equal(avaliar(c), null));
+}
 
 test('o push e o PR saem só da pasta do projeto, fora dos worktrees de agente', () => {
   for (const c of ['git push origin main', 'gh pr create --draft --fill']) {

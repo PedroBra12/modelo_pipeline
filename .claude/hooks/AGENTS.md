@@ -79,17 +79,31 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   `gh auth status -t`, `git credential`); o resto do `gh` e do `glab` que escreve (`pr merge`, `repo`,
                   `release`, `alias`, `api` de escrita, com o `-X` colado ou não…); `npm publish`; `commit --no-verify`;
                   mudar o `core.hooksPath` para outro valor (também `--unset-all`, `--replace-all` e `--add`, e
-                  `--remove-section` ou `--rename-section` na seção `core`). Nega em qualquer comando, não só no que sobe, **toda menção** de `GIT_CONFIG*` ou `NODE_OPTIONS` (desviam os hooks do git e o que o node carrega dentro deles), **menos** no
-                  segmento (separado por `;`, `&&`, `||`, `|` e quebra de linha) cujo 1º programa só lê (`grep`, `rg`, `cat`, `echo`, `printenv`, `Select-String`, `Get-Item`,
-                  `Get-ChildItem`, `Get-Content`, `Write-Output`, `Write-Host`) ou só tira (`unset`, `env -u` sem atribuição, `Remove-Item`). A regra é por menção, e não por uma lista de
-                  jeitos de escrever a variável (`Set-Item Env:\NOME`, `$env:NOME+=`, `Set-Content`, `Rename-Item`, `read NOME`, `declare -x`... nunca fecha). Uma substituição de
-                  comando (`$(...)`, crase) no segmento, ou um `| sh`, `| bash`, `| pwsh`, `| iex`, `eval`, `xargs` ou heredoc para um shell, tira a exceção. Custa: a mensagem de commit
-                  que cita a variável também é negada. No push, o `AMBIENTE` (`GIT_*`, `GH_*`) vale também com `+=`. Nega ainda as chaves `include.*` e `includeIf.*` em `-c` e em `git config` (trazem uma configuração que desvia os hooks).
+                  `--remove-section` ou `--rename-section` na seção `core`). Nega ainda as chaves `include.*` e `includeIf.*` em `-c` e em `git config` (trazem uma configuração que desvia os hooks).
+                - **Regra invertida**, em qualquer comando, não só no que sobe: nega **toda menção** de `GIT_CONFIG*` ou `NODE_OPTIONS` (desviam os hooks do git e o que o node carrega dentro deles) e,
+                  pela mesma regra, de `hooksPath`, `.git/config`, `config.worktree` e `.git/hooks` (desligam os hooks sem variável nenhuma). A exceção é só o **segmento** cujo 1º programa só lê
+                  (`grep`, `rg`, `cat`, `echo`, `printenv`, `Select-String`, `Get-Item`, `Get-ChildItem`, `Get-Content`, `Write-Output`, `Write-Host`, `awk`, `sed` sem `-i`/`--in-place`, `head`, `tail`,
+                  `git grep|log|show|diff` sem `--output`, `xargs grep|rg`) ou só tira (`unset`, `env -u` sem atribuição, `Remove-Item`); o `git config` que só traz o `core.hooksPath` fica por
+                  conta da regra do `core.hooksPath` acima. A regra é por menção, e não por uma lista de jeitos de escrever (`Set-Item Env:\NOME`, `$env:NOME+=`, `Set-Content`, `Rename-Item`,
+                  `read NOME`, `declare -x`, `printf >> .git/config`... nunca fecha). Os segmentos se separam por `;`, `&`, `&&`, `||`, `|` e quebra de linha (o `&` de `>&2`, `2>&1` e `&>` não
+                  separa), e o que está entre aspas não separa. Tiram a exceção do segmento: parêntese (`$(`, `<(`, `>(`, `@(` e o parêntese do PowerShell executam), crase, um `| sh`, `| bash`,
+                  `| pwsh`, `| iex`, `eval`, `xargs` que não seja `grep|rg`, ou heredoc para um shell; e tira a da **unidade** (o mesmo, sem separar no `|`) o que grava em arquivo: `>`, `>>`, `tee`,
+                  `Out-File`, `Set-Content`, `Add-Content`, mesmo começando por `echo` ou `cat`, e mesmo quando só o corpo do heredoc redirecionado cita o nome (`>&2`, `2>&1` e `> /dev/null` não contam).
+                  Fica de fora da conferência só o texto entre aspas logo depois do `-m` ou `--message` de um `git commit` (sem `$(` nem crase dentro das aspas duplas; a forma
+                  `$(cat <<'EOF' ... EOF)` também vale); o resto da linha continua conferido. No push, o `AMBIENTE` (`GIT_*`, `GH_*`) vale também com `+=`.
                 - Lê a linha continuada (`\` e a crase) separada e junta, tira as aspas dos argumentos sem espaço (a
                   aspa vazia fica), acha o programa depois de `xargs`, `timeout`, `cmd /c`, lê também o comando entre
                   aspas passado a outro shell (`bash -c`, `cmd /c`, `pwsh -Command`) e nega o `-EncodedCommand`.
                 - Modo em `PIPELINE_GUARDA_GIT`: `negar` (padrão), `perguntar` (o `deny` vira `ask`, menos a falta de
                   repositório configurado), `desligado` (sai antes de tudo).
+                - **O limite**: a guarda segura o erro e o atalho do agente, não um agente hostil. `sh x.sh` (um script que o agente escreveu antes) passa por qualquer regra de texto, e a trava
+                  definitiva é uma checagem obrigatória no GitHub, que é decisão do usuário.
+              - `guarda-git-arquivos.mjs`: PreToolUse em Edit, Write, MultiEdit e NotebookEdit (`.claude/hooks/guarda-git-arquivos.mjs`), a mesma porta da `guarda-git` pelas ferramentas de edição.
+                `motivoDoCaminho(caminho, cwd)` nega o caminho dentro de `.git/` (config, `config.worktree`, `hooks/`…) e o próprio arquivo `.git` (o ponteiro de um worktree). O caminho se lê a
+                partir do `cwd` da entrada, com `..` resolvido, `\` virado `/` e pelo nome de cada pasta: `.GIT`, `.git.`, `.git ` e `GIT~1` também negam, e `.gitignore`, `.github/` e
+                `.claude/hooks/git/` passam. Sem caminho legível (JSON quebrado, `file_path` e `notebook_path` ausentes), nega. Mesma saída da `guarda-git` (`hookSpecificOutput`,
+                `permissionDecision: deny`) e mesmo `PIPELINE_GUARDA_GIT` (`perguntar` vira `ask`, `desligado` sai antes de tudo). Ligado no `.claude/settings.json` com `onFailure: "block"`; testes em
+                `guarda-git-arquivos.test.mjs` e `settings.test.mjs`.
               - `guarda-agentes.mjs`: PreToolUse na ferramenta `Agent`. A função pura `decidirAgente(entrada,
                 lerCabecalho, agentes)` devolve `deny`, `ask` ou `null`; `lerCabecalho(tipo)` dá o `name`, o `model`, o
                 `effort` e o `tools` do frontmatter de `.claude/agents/<tipo>.md` (nada se o arquivo não existe) e um
@@ -318,7 +332,7 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 vale), com `NODE_TEST_CONTEXT=child` e `NODE_OPTIONS` quebrado no ambiente do commit, e o que não toca `.claude/` não roda
                 nada; confere que os cinco hooks de `git/` começam com `unset NODE_OPTIONS`.
               - O `settings.test.mjs` confere que o `.claude/settings.json` liga a `guarda-agentes` (matcher `Agent`) e
-                a `guarda-git` (Bash e PowerShell), as duas com `onFailure: "block"`, que todo hook ligado existe e que
+                a `guarda-git` (Bash e PowerShell) e a `guarda-git-arquivos` (Edit, Write, MultiEdit e NotebookEdit), as três com `onFailure: "block"`, que todo hook ligado existe e que
                 a sessão abre como o agente `orquestrador` (`agent`), no modelo e no esforço do
                 `FIXOS.niveis.orquestracao` (`model` e `effortLevel`, D3).
               - Teste que commita num git temporário não pode usar a `main` com os hooks ligados: use outro branch ou

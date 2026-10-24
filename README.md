@@ -86,6 +86,8 @@ As regras inegociáveis não dependem só da memória do LLM; elas são fiscaliz
     - `--sem-comportamento "<motivo>"` dispensa o `qa` na troca de CSS, texto ou renome. `--sem-tela "<motivo>"` dispensa o `revisor-tela` só na troca de texto, cópia ou renome.
   - [`ajusta-pipeline.mjs`](.claude/hooks/ajusta-pipeline.mjs): a conta do autoajuste (seção 4).
 
+**O limite das guardas.** As guardas locais pegam o erro e o atalho do agente: o commit na `main`, o teste vermelho, o dado pessoal, o hook desligado pelo ambiente ou pelo `.git/config`. Elas não seguram um agente hostil, porque um script gravado em arquivo e rodado depois (`sh x.sh`) passa por qualquer regra que lê o texto do comando. A trava que nenhum agente desliga daqui é uma checagem obrigatória no GitHub (ver "O que adaptar").
+
 ### 4. O autoajuste (skill `adjust-pipeline`)
 
 Sem medir, o custo e a cobertura da revisão só mudam por opinião, e o revisor esquecido só aparece quando o defeito já escapou. Por isso o pipeline mede a si mesmo (D2).
@@ -226,5 +228,6 @@ Para abrir direto com um alias (`nome_alias`), adicione ao seu terminal:
   - a tabela da skill `pipeline` regerada com `node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela`.
 
   Pela D3, o modelo vem do papel e o esforço de partida, do custo do erro.
+- **Checagem obrigatória no GitHub (recomendada):** um workflow do GitHub Actions marcado como obrigatório no PR, que rode `node --test ".claude/hooks/*.test.mjs"` e o `confere-lgpd` sobre cada commit do PR. É a única trava que o agente não desliga da máquina dele. Custa minutos do Actions: grátis em repositório público, e da cota do plano em privado. Decida antes de ligar.
 - **Regras específicas do domínio do projeto:** escreva as invariantes de negócio, isolamento de dados, autenticação e integrações no item 8 de [`CLAUDE.md`](CLAUDE.md) e detalhe em [`docs/arquitetura.md`](docs/arquitetura.md). Os agentes [`revisor-arquitetura`](.claude/agents/revisor-arquitetura.md), [`revisor-seguranca`](.claude/agents/revisor-seguranca.md) e [`revisor-lgpd`](.claude/agents/revisor-lgpd.md) leem diretamente desses dois arquivos.
 - **Layout de pastas (`monorepo` ou pacote único):** ajuste o array `pastasDeTrabalho` em [`.claude/pipeline.json`](.claude/pipeline.json). Mantenha o sufixo `(?=/)` nas regex, para que pastas agrupadoras como `apps/` ou `src/` não sejam cobradas como pastas de trabalho folha.

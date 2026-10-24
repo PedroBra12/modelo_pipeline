@@ -35,35 +35,84 @@ const PULA_CONFERENCIA = /^core\.hookspath/i; // o confere-docs, o confere-lgpd 
 const DESVIA_REMOTO = /^(remote\.|url\.|alias\.|include(if)?\.|branch\..+\.(push)?remote(=|$))/i; // trocaria o destino do push, o esconderia num apelido, ou traria por um include uma configuração que desvia os hooks
 const MUDA_PASTA = /(^|[\s;&|(){}])(cd|chdir|pushd|popd|set-location|sl|push-location|pop-location)(?=[\s;&|)}]|$)/im;
 const AMBIENTE = /(^|\W)(GIT|GH)_\w*\s*\+?=/i; // GIT_DIR, GIT_CONFIG_*, GH_REPO, GH_HOST… (no Windows, sem caixa)
-// Regra invertida, em qualquer comando (não só no que sobe): a configuração por ambiente (GIT_CONFIG*) desliga os hooks do git, e o NODE_OPTIONS
-// muda o que o node carrega dentro deles. TODA menção do nome nega, menos no segmento cujo 1º programa só lê ou só tira a variável. Lista de formas
-// de escrever uma variável de ambiente nunca fecha (Set-Item Env:\NOME, $env:NOME+=, chaves do env:, Set-Content, Rename-Item, read NOME, declare -x...),
-// então a lista que fica é a das duas exceções, que é curta e fechada. Os segmentos se separam por ;, &&, ||, | e quebra de linha.
-const MENCAO_DO_AMBIENTE = /\b(?:GIT_CONFIG\w*|NODE_OPTIONS)\b/i;
-const SO_LE = new Set(['grep', 'rg', 'cat', 'echo', 'printenv', 'select-string', 'get-item', 'get-childitem', 'get-content', 'write-output', 'write-host']);
+// Regra invertida, em qualquer comando (não só no que sobe): a configuração por ambiente (GIT_CONFIG*) desliga os hooks do git, o NODE_OPTIONS
+// muda o que o node carrega dentro deles, e a configuração do próprio git (core.hooksPath, .git/config, config.worktree, .git/hooks) os desliga sem
+// variável nenhuma. TODA menção de um desses nomes nega, menos no segmento cujo 1º programa só lê (ou só tira a variável) e que não executa nem grava
+// nada. Lista de formas de escrever uma variável ou um arquivo nunca fecha (Set-Item Env:\NOME, $env:NOME+=, Set-Content, Rename-Item, read NOME,
+// declare -x, printf >> .git/config...), então a lista que fica é a das exceções, que é curta e fechada. Os segmentos se separam por ;, &, &&, ||, | e
+// quebra de linha (não pelo & de >&2, 2>&1 e &>), e o que está entre aspas não separa. Perde a exceção o segmento com parêntese ($(, <(, >(, @(, o
+// parêntese do PowerShell: executam) e a unidade (o mesmo, sem separar no |) que grava em arquivo: >, >>, tee, Out-File, Set-Content, Add-Content.
+const NOME_DE_AMBIENTE = /\b(?:GIT_CONFIG\w*|NODE_OPTIONS)\b/i;
+const NOME_DE_ARQUIVO = /\.git[\\/](?:config|hooks)\b|config\.worktree/i;
+const NOME_DO_HOOKSPATH = /hookspath/i;
+const menciona = (texto) => NOME_DE_AMBIENTE.test(texto) || NOME_DE_ARQUIVO.test(texto) || NOME_DO_HOOKSPATH.test(texto);
+const SO_LE = new Set(['grep', 'rg', 'cat', 'echo', 'printenv', 'select-string', 'get-item', 'get-childitem', 'get-content', 'write-output', 'write-host', 'awk', 'sed', 'head', 'tail']);
 const SO_TIRA = new Set(['unset', 'remove-item']);
-const SEGMENTO_DO_AMBIENTE = /\r?\n|&&|\|\||[;|]/;
-const SHELL_NA_PONTA = /(^|[\s;&|(])(sh|bash|zsh|dash|ksh|pwsh|powershell|cmd|iex|invoke-expression|eval|source|xargs)(\.exe)?(\s|$)/i;
+const GIT_QUE_LE = new Set(['grep', 'log', 'show', 'diff']);
+const SEGMENTO_DO_AMBIENTE = /\r?\n|&&|\|\||[;|]|(?<![>&<])&(?![>&])/;
+const UNIDADE_DO_AMBIENTE = /\r?\n|&&|\|\||;|(?<![>&<])&(?![>&])/;
+// xargs grep/rg só lê; qualquer outro xargs executa o que recebe e fica na lista dos shells
+const XARGS_LE = String.raw`xargs(?:\s+-[-\w={}]+(?:\s+(?:\d+|\{\}|'[^']*'|"[^"]*"))?)*\s+(?:grep|rg)(?:\s|$)`;
+const SHELL_NA_PONTA = new RegExp(String.raw`(^|[\s;&|(])(sh|bash|zsh|dash|ksh|pwsh|powershell|cmd|iex|invoke-expression|eval|source|xargs(?!${XARGS_LE.slice(5)}))(\.exe)?(\s|$)`, 'i');
+const SO_XARGS_LE = new RegExp(String.raw`^\s*${XARGS_LE}`, 'i');
+const SED_NO_ARQUIVO = /(?:^|\s)(?:-[a-zA-Z]*i|--in-place)/;
+const GRAVA_COM_COMANDO = /(?:^|[\s|])(?:tee|out-file|set-content|add-content)(?=\s|$)/i;
+// a mensagem de git commit (-m "texto", --message=texto) é texto, não ordem; entre aspas duplas só vale sem $( nem crase, que executam.
+// A forma $(cat <<'EOF' ... EOF) com o delimitador entre aspas simples também é só texto.
+const ASPAS_DUPLAS = String.raw`"(?:[^"\\$\x60]|\\.|\$(?![({]))*"`;
+const ASPAS_SIMPLES = String.raw`'[^']*'`;
+const HEREDOC_DA_MENSAGEM = String.raw`"\$\(cat\s+<<-?\s*'(?<h>\w+)'[^\n]*\n(?:(?!\n[ \t]*\k<h>[ \t]*\n)[\s\S])*\n[ \t]*\k<h>[ \t]*\n\s*\)"`;
+const TEXTO_DA_MENSAGEM = `${HEREDOC_DA_MENSAGEM}|${ASPAS_DUPLAS}|${ASPAS_SIMPLES}`;
+const COMMIT_COM_MENSAGEM = new RegExp(String.raw`(\bgit\b[^;&|\n"']*\bcommit\b)((?:[^;&|\n"']|${TEXTO_DA_MENSAGEM})*)`, 'g');
+const OPCAO_DA_MENSAGEM = new RegExp(String.raw`(?<=\s)(-[a-zA-Z]*m|--message)(=|\s*)(?:${TEXTO_DA_MENSAGEM})`, 'g');
+const tirarMensagensDeCommit = (t) => t.replace(COMMIT_COM_MENSAGEM, (_, cabeca, resto) => cabeca + resto.replace(OPCAO_DA_MENSAGEM, '$1$2""'));
+// o corpo de heredoc que menciona um nome vira o marcador no lugar do <<EOF: o comando que o recebe (cat > .git/config <<EOF) é julgado como quem menciona
+const HEREDOC = /<<-?\s*(['"]?)(\w+)\1([^\n]*)\n([\s\S]*?)\n[ \t]*\2[ \t]*(?=\n|$)/g;
+const marcarHeredocs = (t) => t.replace(HEREDOC, (_, _aspa, _delimitador, resto, corpo) => ` ${menciona(corpo) ? 'GIT_CONFIG_HEREDOC' : ''} ${resto}`);
+// o que está entre aspas não separa segmentos (grep -E 'A|B'); a aspa que não fecha não protege nada
+const protegerAspas = (t) => t.replace(/\\.|"(?:\\.|[^"\\])*"|'[^']*'/g, (m) => (m[0] === '\\' ? m : m.replace(/[;|&\r\n]/g, '\u0000')));
 /** O 1º programa do segmento (sem caminho, sem .exe, em minúsculas), ou '' se começa por atribuição, substituição ou outra coisa que não é programa. */
 function primeiroPrograma(segmento) {
   const token = segmento.trim().replace(/^[&!({\s]+/, '').split(/\s+/)[0] ?? '';
   return /^[\w.\\/-]+(\.exe)?$/i.test(token) && !token.includes('=') ? nomeDoPrograma(token) : '';
 }
-/** O segmento só lê ou só tira (e não traz atribuição nem substituição de comando que faça outra coisa)? */
+/** O subcomando do git (depois das opções globais), ou ''. */
+function subcomandoDoGit(segmento) {
+  const tokens = segmento.trim().replace(/^[&!({\s]+/, '').split(/\s+/).slice(1);
+  for (let k = 0; k < tokens.length; k++) {
+    if (!tokens[k].startsWith('-')) return tokens[k];
+    if (GIT_OPCOES_COM_VALOR.has(tokens[k])) k++;
+  }
+  return '';
+}
+const gravaEmArquivo = (unidade) => {
+  const sem = unidade.replace(/\d*>&(?:\d+|-)/g, ' ').replace(/(?:\d*|&)>>?\s*(?:\/dev\/null|\$null|nul)(?![\w./-])/gi, ' ');
+  return sem.includes('>') || GRAVA_COM_COMANDO.test(sem);
+};
+/** O segmento só lê ou só tira (e não traz atribuição, substituição de comando nem parêntese que façam outra coisa)? */
 function soLeOuTira(segmento) {
-  if (/\$\(|[\x60]/.test(segmento)) return false; // a substituição de comando executa o que está dentro
+  if (/[(\x60]/.test(segmento)) return false; // $(, <(, >(, @(, o parêntese do PowerShell e a crase executam o que está dentro
   const programa = primeiroPrograma(segmento);
+  if (programa === 'sed') return !SED_NO_ARQUIVO.test(segmento);
+  if (programa === 'xargs') return SO_XARGS_LE.test(segmento);
+  if (programa === 'git') {
+    // git config com o core.hooksPath só: quem o escreve é negado pelo analisarGit; com o nome do arquivo ou da variável, não
+    const soHooksPath = !NOME_DE_AMBIENTE.test(segmento) && !NOME_DE_ARQUIVO.test(segmento);
+    const sub = subcomandoDoGit(segmento);
+    return (GIT_QUE_LE.has(sub) && !/--output/.test(segmento)) || (sub === 'config' && soHooksPath);
+  }
   if (SO_LE.has(programa) || SO_TIRA.has(programa)) return true;
   // env -u NOME ... sem nenhuma atribuição (env -u NODE_OPTIONS git status): só tira
   return programa === 'env' && /\s(-u|--unset)\b/i.test(segmento) && !/(^|\s)[A-Za-z_]\w*\+?=/.test(segmento);
 }
-// `bruto` é o comando como veio; `semHeredoc` tira os heredocs mas mantém o que está entre aspas (o tirarAspas o esvaziaria: a mensagem de commit e o
-// "export NOME=x" entre aspas precisam ser vistos).
-function mudaAmbienteDosHooks(bruto, semHeredoc) {
-  if (!MENCAO_DO_AMBIENTE.test(bruto)) return false;
+function mudaAmbienteDosHooks(comando) {
+  const texto = marcarHeredocs(tirarMensagensDeCommit(comando));
+  if (!menciona(texto)) return false;
   // o que a leitura imprime não pode virar ordem: nada de ... | sh / bash / pwsh / iex / eval / xargs, nem de heredoc para um shell, num comando que menciona o nome
-  if (SHELL_NA_PONTA.test(bruto)) return true;
-  return semHeredoc.split(SEGMENTO_DO_AMBIENTE).some((segmento) => MENCAO_DO_AMBIENTE.test(segmento) && !soLeOuTira(segmento));
+  if (SHELL_NA_PONTA.test(texto)) return true;
+  const protegido = protegerAspas(texto);
+  if (protegido.split(UNIDADE_DO_AMBIENTE).some((unidade) => menciona(unidade) && gravaEmArquivo(unidade))) return true;
+  return protegido.split(SEGMENTO_DO_AMBIENTE).some((segmento) => menciona(segmento) && !soLeOuTira(segmento));
 }
 // o comando entre aspas que vai para outro shell é lido também; o codificado não se lê, e se nega
 const SHELL_ANINHADO = /\b(?:bash|sh|zsh|cmd|pwsh|powershell)(?:\.exe)?\s+(?:-c|-command|\/c|\/k)\s+(["'])((?:(?!\1)[\s\S])*)\1/gi;
@@ -233,7 +282,7 @@ export function analisar(comando, repo = lerRepositorio()) {
     total.proibido ??= r.proibido;
     total.sobe ||= r.sobe;
   }
-  if (mudaAmbienteDosHooks(comando, semHeredoc)) total.proibido ??= 'menção a GIT_CONFIG_* ou NODE_OPTIONS fora de um segmento que só lê (grep, rg, cat, echo, printenv, Select-String, Get-Item) ou só tira (unset, env -u, Remove-Item): desvia os hooks do git';
+  if (mudaAmbienteDosHooks(comando)) total.proibido ??= 'menção a GIT_CONFIG_*, NODE_OPTIONS, core.hooksPath, .git/config, config.worktree ou .git/hooks fora de um segmento que só lê (grep, rg, cat, echo, printenv, Select-String, Get-Item, git grep/log/show/diff, awk, sed sem -i, head, tail) ou só tira (unset, env -u, Remove-Item), sem parêntese nem gravação em arquivo: desvia os hooks do git';
   if (total.sobe && MUDA_PASTA.test(limpo)) total.proibido ??= 'push ou PR com troca de pasta no comando';
   if (total.sobe && AMBIENTE.test(limpo)) total.proibido ??= 'push ou PR com variável GIT_ ou GH_ no comando';
   return total;
