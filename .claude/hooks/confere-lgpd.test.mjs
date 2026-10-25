@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VALIDADORES, cpfValido, digitosCpf, regras, relatorio, varrer } from './confere-lgpd.mjs';
+import { VALIDADORES, cpfValido, digitosCpf, marcarLegado, regras, relatorio, varrer } from './confere-lgpd.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const RAIZ = join(AQUI, '..', '..');
@@ -135,6 +135,28 @@ test('o relatório não repete o trecho achado', () => {
   const texto = relatorio(varrer(`const cpf = '${CPF}';`, CAMINHO.codigo));
   assert.match(texto, /cpf_literal/);
   assert.ok(!texto.includes(CPF) && !texto.includes(CPF.replace(/\D/g, '')));
+});
+
+test('o config.mjs quebrado nega toda edição no confere-lgpd, menos a do próprio config.mjs (para consertar)', () => {
+  const raiz = mkdtempSync(join(tmpdir(), 'confere-lgpd-cfg-'));
+  try {
+    mkdirSync(join(raiz, '.claude', 'hooks'), { recursive: true });
+    for (const f of ['confere-lgpd.mjs', 'lgpd-regras.mjs']) cpSync(join(AQUI, f), join(raiz, '.claude', 'hooks', f));
+    writeFileSync(join(raiz, '.claude', 'hooks', 'config.mjs'), '<<<<<<< HEAD\n=======\n>>>>>>> outro\n');
+    const roda = (arquivo) => {
+      const r = spawnSync(process.execPath, [join(raiz, '.claude', 'hooks', 'confere-lgpd.mjs')], {
+        input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: join(raiz, arquivo), new_string: 'const a = 1;' } }),
+        encoding: 'utf8',
+        env: { ...process.env, CLAUDE_PROJECT_DIR: raiz },
+      });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput;
+    };
+    assert.equal(roda('lib/x.js')?.permissionDecision, 'deny');
+    assert.equal(roda('.claude/hooks/config.mjs'), null, 'o config.mjs se conserta pelo Edit');
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
 });
 
 function hook(entrada, ambiente = {}) {

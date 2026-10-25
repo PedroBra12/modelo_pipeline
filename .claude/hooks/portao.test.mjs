@@ -128,3 +128,26 @@ for (const [rotulo, config] of [['JSON quebrado', '{ lixo'], ['sem o arquivo', n
 comProjeto('pipeline.json ilegível mas sem código alterado: não faz nada', { codigoDoPortao: 1, config: '{ lixo' }, (raiz) => {
   assert.equal(rodar(raiz), null);
 });
+
+test('marca-alterado: anota o código do produto (tela .jsx inclusive), não o .claude, o docs nem o que não é código', async () => {
+  const { relevante } = await import('./marca-alterado.mjs');
+  const raiz = join(tmpdir(), 'projeto');
+  assert.equal(relevante(raiz, join(raiz, 'src', 'tela', 'Tela.jsx')), 'src/tela/Tela.jsx');
+  assert.equal(relevante(raiz, join(raiz, 'src', 'lib', 'util.js')), 'src/lib/util.js');
+  assert.equal(relevante(raiz, join(raiz, 'db', 'migrations', '1_a.sql')), 'db/migrations/1_a.sql');
+  assert.equal(relevante(raiz, join(raiz, 'src', 'estilo.css')), 'src/estilo.css', 'css é código (a lista única do config.mjs)');
+  assert.equal(relevante(raiz, join(raiz, 'scripts', 'job.py')), 'scripts/job.py');
+  assert.equal(relevante(raiz, join(raiz, 'deploy', 'ci.yml')), 'deploy/ci.yml');
+  assert.equal(relevante(raiz, join(raiz, 'package.json')), 'package.json');
+  assert.equal(relevante(raiz, join(raiz, 'src', 'logo.png')), null);
+  assert.equal(relevante(raiz, join(raiz, 'README.md')), null);
+  assert.equal(relevante(raiz, join(raiz, 'docs', 'schema.sql')), null);
+  assert.equal(relevante(raiz, join(raiz, '.claude', 'hooks', 'portao.mjs')), null);
+});
+
+test('marca-alterado: o lockfile não é código do produto', async () => {
+  const { relevante } = await import('./marca-alterado.mjs');
+  const raiz = join(tmpdir(), 'projeto');
+  for (const n of ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'apps/web/package-lock.json']) assert.equal(relevante(raiz, join(raiz, ...n.split('/'))), null, n);
+  assert.equal(relevante(raiz, join(raiz, 'package.json')), 'package.json');
+});

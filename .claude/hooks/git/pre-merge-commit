@@ -1,4 +1,7 @@
 #!/bin/sh
-# Hook pre-merge-commit do git: o merge feito na main é commit na main; o confere-ramo o recusa.
+unset NODE_OPTIONS  # o ambiente do comando não escolhe o que o node carrega dentro do hook
+# Hook pre-merge-commit do git: o merge feito na main é commit na main (o confere-ramo o recusa), e o que o merge traz passa
+# pelo confere-lgpd como num commit (o git não roda o pre-commit no merge quando este hook existe).
 # Ligado por: git config core.hooksPath .claude/hooks/git
-exec node "$(dirname "$0")/../confere-ramo.mjs"
+node "$(dirname "$0")/../confere-ramo.mjs" || exit 1
+exec node "$(dirname "$0")/../confere-lgpd.mjs" --indice

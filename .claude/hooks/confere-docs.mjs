@@ -2,7 +2,7 @@
 // então vale para todo commit, do agente ou da pessoa, em qualquer worktree. Recusa quando:
 // - a pasta de trabalho de um arquivo (as regex de pastasDeTrabalho, em .claude/pipeline.json) não tem AGENTS.md,
 //   ou ele não tem as partes do modelo (Faz:, Não faz:, Como testar:);
-// - o AGENTS.md cita um arquivo que não existe na pasta;
+// - o AGENTS.md cita um arquivo que não existe na pasta nem na raiz do repositório;
 // - um link relativo de um .md do commit não leva a nada;
 // - o código de uma pasta mudou e o AGENTS.md dela não, sem a linha "Docs-conferidos: <pasta>/AGENTS.md"
 //   (arquivo de uma pasta `gerado/` que o AGENTS.md cita não conta como código);
@@ -11,13 +11,13 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lerPastas } from './config.mjs';
+import { EXTENSOES_DE_CODIGO, ehArquivoDeCodigo, lerPastas } from './config.mjs';
 
-const CODIGO = /\.(ts|tsx|mts|cts|js|mjs|cjs|sql|json)$/i;
+const CODIGO = { test: ehArquivoDeCodigo }; // a lista única de extensões de código mora no config.mjs
 const GERADO = /(^|\/)gerado\//; // arquivo gerado e citado no AGENTS.md não conta como código que mudou (as demais regras valem)
-const ARQUIVO_CITAVEL = /\.(ts|tsx|mts|cts|js|mjs|cjs|sql|json|md|sh)$/i;
+const ARQUIVO_CITAVEL = new RegExp(`\\.(${[...EXTENSOES_DE_CODIGO, 'md'].join('|')})$`, 'i');
 const PARTES = ['Faz:', 'Não faz:', 'Como testar:'];
-const CITADOS_DE_FORA = new Set(['package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.base.json', 'README.md', 'CLAUDE.md', 'AGENTS.md', 'PRODUCT.md', 'SKILL.md', 'pipeline.json']);
+const CITADOS_DE_FORA = new Set(['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'tsconfig.json', 'tsconfig.base.json', 'README.md', 'CLAUDE.md', 'AGENTS.md', 'PRODUCT.md', 'SKILL.md', 'pipeline.json']);
 const SEM_CONFERIR_LINKS = /^\.claude\/skills\//; // skills de terceiros: os links de exemplo são deles
 
 /**
@@ -91,7 +91,7 @@ export function conferir({ raiz, arquivos, apagados = [], mensagem, pastas }) {
     if (faltam.length > 0) problemas.push(`${dono}/AGENTS.md não tem: ${faltam.join(', ')} (o modelo tem as partes ${PARTES.join(', ')})`);
     const naPasta = new Set(readdirSync(join(raiz, dono), { recursive: true }).map((n) => basename(String(n))));
     for (const [, nome] of texto.matchAll(/`([\w-][\w.-]*)`/g)) {
-      if (!ARQUIVO_CITAVEL.test(nome) || CITADOS_DE_FORA.has(nome) || naPasta.has(nome)) continue;
+      if (!ARQUIVO_CITAVEL.test(nome) || CITADOS_DE_FORA.has(nome) || naPasta.has(nome) || existe(nome)) continue; // o da raiz vale sem caminho
       problemas.push(`${dono}/AGENTS.md cita \`${nome}\`, que não existe na pasta`);
     }
     // o gerador tem teste que falha quando o arquivo dele fica velho, então só o gerado que o AGENTS.md cita não conta;

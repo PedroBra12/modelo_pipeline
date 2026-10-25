@@ -1,5 +1,104 @@
 {
-  "repositorio": "<dono>/<repo>",
+  "repositorio": "PedroBra12/modelo_pipeline",
   "portaoRapido": "checar:rapido",
-  "pastasDeTrabalho": ["^(apps|packages|src)/[^/]+(?=/)", "^\\.claude/hooks(?=/)"]
+  "pastasDeTrabalho": ["^(apps|packages|src)/[^/]+(?=/)", "^\\.claude/hooks(?=/)"],
+  "agentes": {
+    "revisor-seguranca": { "model": "opus", "effort": "xhigh", "tools": "Read, Grep, Glob", "tarefa": "revisão de risco: banco, permissão, dado pessoal, rede, segredo, isolamento entre donos de dado" },
+    "revisor-arquitetura": { "model": "opus", "effort": "high", "tools": "Read, Grep, Glob", "tarefa": "revisão de arquitetura: fronteiras entre pastas, contrato, AGENTS.md, decisão registrada" },
+    "revisor-lgpd": { "model": "opus", "effort": "high", "tools": "Read, Grep, Glob", "tarefa": "revisão de LGPD: finalidade, caminho do dado pessoal, retenção, supressões" },
+    "qa": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "tarefa": "rodar a coisa de verdade e tentar quebrar" },
+    "revisor-tela": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "tarefa": "ver a tela tocada rodando a 320 px e a 1280 px no ambiente local, com a skill de tela do projeto, contra o PRODUCT.md (portão 5)" },
+    "leitor-docs": { "model": "haiku", "effort": "low", "tools": "Read, Grep, Glob", "tarefa": "ler `docs/` e os `AGENTS.md` e apontar os arquivos e linhas onde focar" }
+  },
+  "niveis": {
+    "leve": { "model": "sonnet", "effort": "low", "tarefa": "renomear, buscar (`Explore`), conferir um fato ou um arquivo, mudança trivial, `ponytail-debt`" },
+    "medio": { "model": "sonnet", "effort": "medium", "tarefa": "código: feature, bug ou refactor dentro de uma pasta" },
+    "codigo-seguranca": { "model": "sonnet", "effort": "high", "tarefa": "código que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`) e a integração de fase" },
+    "revisao-ponytail": { "model": "sonnet", "effort": "high", "revisor": "ponytail-review", "tarefa": "`ponytail-review` e `ponytail-audit` (em `general-purpose`)" },
+    "orquestracao": { "model": "opus", "effort": "xhigh", "tarefa": "`orquestrador` (`.claude/agents/orquestrador.md`), só como agente do chat principal" },
+    "forte": { "model": "opus", "effort": "high", "tarefa": "as propostas `Plan` de uma decisão de arquitetura (`decisao.md`)" }
+  },
+  "revisao": {
+    "sempre": ["revisor-arquitetura", "ponytail-review"],
+    "comportamento": ["qa"],
+    "comportamento_caminhos": ["^(apps|packages|src)/"],
+    "gatilhos": [
+      {
+        "nome": "permissao",
+        "revisores": ["revisor-seguranca"],
+        "remocoes": true,
+        "caminhos": [
+          "(^|/)(auth[\\w-]*|permiss[^/]*|pap[eé]is|roles?|cargos?|rbac|acl|polic(y|ies)|guards?|sess(ao|oes|ion|ions)|middleware|proxy|login|jwt)(/|\\.)",
+          "(^|/)(auth[\\w-]*|middleware|proxy)(/|\\.)"
+        ],
+        "conteudo": [
+          "create\\s+policy", "alter\\s+policy", "row\\s+level\\s+security", "\\bpolic(y|ies)\\b",
+          "security\\s+definer", "\\bgrant\\b", "\\brevoke\\b",
+          "autoriz", "\\bforbidden\\b", "\\bunauthorized\\b",
+          "\\bpermiss", "\\bpap(el|[eé]is)\\b", "\\broles\\b", "\\.role\\b", "\\bis_?admin\\b"
+        ],
+        "ignorar": ["^\\.claude/"]
+      },
+      {
+        "nome": "dado_pessoal",
+        "revisores": ["revisor-lgpd", "revisor-seguranca"],
+        "remocoes": true,
+        "caminhos": [],
+        "conteudo": [
+          "cpf", "cnpj", "\\brg(\\b|_)|_rg\\b", "\\bcep\\b", "e_?mail", "celular", "telefone", "\\bphone", "whatsapp", "documento",
+          "nascimento", "endere[cç]o", "(e_?mail|street|shipping|billing|home|postal)_?address|\\baddress_?line", "\\b(user|customer|client|person|contact|order|shipping|billing|cliente|pessoa|contato|pedido)\\.address\\b", "anonimiz", "\\bpurg"
+        ],
+        "ignorar": ["^\\.claude/"]
+      },
+      {
+        "nome": "banco",
+        "revisores": ["revisor-seguranca"],
+        "remocoes": true,
+        "caminhos": ["\\.sql$", "(^|/)migrations?/", "schema\\.prisma$"],
+        "conteudo": [
+          "\\b(supabase|client|db|sb|knex|trx|tx|admin)\\.from\\(",
+          "(^\\s*|\\)\\s*|\\b(db|knex|trx|tx|qb|q|query|builder|sb|supabase|client)\\s*)\\.where\\(\\s*['\"`{(\\w]",
+          "\\bwhere\\s*:\\s*(\\{|\\(|(eq|and|or|not|inArray|sql)\\b)", "^\\s*\\.from\\(\\s*['\"`]", "\\.eq\\(\\s*['\"`]", "\\.rpc\\("
+        ]
+      },
+      {
+        "nome": "config_pipeline",
+        "revisores": ["revisor-seguranca", "revisor-arquitetura"],
+        "caminhos": ["^\\.claude/(pipeline\\.json|agents/|hooks/|settings(\\.local)?\\.json|skills/pipeline/|skills/adjust-pipeline/)"],
+        "conteudo": []
+      },
+      {
+        "nome": "rede_rota",
+        "revisores": ["revisor-seguranca"],
+        "remocoes": true,
+        "caminhos": ["(^|/)api/", "(^|/)(server|servidor|routes?|controllers?|handlers?)/", "(^|/)route\\.[cm]?[jt]sx?$", "(^|/)(actions?|acoes)(/|\\.[cm]?[jt]sx?$)"],
+        "conteudo": ["fetch\\(", "\\baxios\\b", "process\\.env", "import\\.meta\\.env", "['\"]use server['\"]", "Cache-Control", "service_role", "Deno\\.env", "auth\\.admin"]
+      },
+      {
+        "nome": "lgpd_ignora",
+        "revisores": ["revisor-lgpd"],
+        "todo_arquivo": true,
+        "caminhos": [],
+        "conteudo": ["lgpd-ignora:\\s*([\\w ,]+?)\\s*--\\s*\\S.{9,}"]
+      },
+      {
+        "nome": "lgpd_regras",
+        "revisores": ["revisor-lgpd"],
+        "remocoes": true,
+        "caminhos": ["^\\.claude/hooks/(lgpd-regras|confere-lgpd)", "^\\.claude/hooks/config\\.mjs$", "^\\.claude/agents/revisor-lgpd\\.md$"],
+        "conteudo": ["legadoAte"]
+      },
+      {
+        "nome": "tela",
+        "revisores": ["revisor-tela"],
+        "caminhos": ["^(apps|packages|src)/(?!.*\\.(test|spec|stories)\\.).+\\.(jsx|tsx|vue|svelte|css|scss|html)$"],
+        "conteudo": []
+      }
+    ],
+    "ignorar_conteudo": ["\\.md$", "\\.(test|spec|cy)\\.[cm]?[jt]sx?$", "(^|/)__tests__/", "(^|/)__mocks__/", "^tests?/"]
+  },
+  "ajuste": {
+    "janela": 3,
+    "rodadas_altas": 2
+  }
 }

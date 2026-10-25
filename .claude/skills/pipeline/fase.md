@@ -2,7 +2,7 @@
 
 Para o orquestrador de uma fase do plano do projeto (`docs/plano.md`): o agente `.claude/agents/orquestrador.md`, que roda como agente do chat principal. O orquestrador não escreve código: prepara, divide, integra e fecha.
 
-1. **Ler.** Antes, confira o chat: orquestrar é rodar como o agente `orquestrador` (`opus`, `xhigh`; linha "orquestração" da `SKILL.md`, seção 7). Se o chat não roda assim, peça ao usuário para reabrir com `claude --agent orquestrador` e espere. Depois, leia o `CLAUDE.md`, a seção da fase no plano e o `AGENTS.md` das pastas envolvidas; na dúvida sobre onde estão as seções da arquitetura e as decisões que a fase toca, acione o `leitor-docs` e leia apenas as linhas apontadas.
+1. **Ler.** Antes, confira o chat: orquestrar é rodar como o agente `orquestrador` (nível `orquestracao`, `SKILL.md` seção 7). Se o chat não roda assim, peça ao usuário para reabrir com `claude --agent orquestrador` e espere. Depois, leia o `CLAUDE.md`, a seção da fase no plano e o `AGENTS.md` das pastas envolvidas; na dúvida sobre onde estão as seções da arquitetura e as decisões que a fase toca, acione o `leitor-docs` e leia apenas as linhas apontadas.
    **Pronto quando:** a entrega, o aceite e as perguntas ainda abertas da fase estão listados.
 2. **Decidir primeiro.** Cada decisão que a fase pede passa por `decisao.md`, antes de dividir o trabalho. Pergunta que só outra pessoa responde vira questionário (siga `.claude/skills/to-questionnaire/SKILL.md`) e trava só o que depende dela.
    **Pronto quando:** nenhum agente vai começar em cima de uma escolha em aberto.
@@ -18,12 +18,13 @@ Para o orquestrador de uma fase do plano do projeto (`docs/plano.md`): o agente 
    - o modelo e o esforço do nível da tarefa (`SKILL.md`, seção 7);
    - a pasta dele;
    - a ordem "siga a skill `pipeline` (feature ou refactor) só nesta pasta até os portões e o commit (a seção 4 fica com o orquestrador); mudança de contrato se relata".
-   **Pronto quando:** todos voltaram, cada um com os portões verdes e o commit no seu branch, e o orquestrador rodou a revisão (seção 4 do `SKILL.md`) sobre eles.
-5. **Integrar.** Cada branch entra na `main` pelo PR dele: o orquestrador traz a `main` ao branch, roda os portões nele, sobe e marca o PR pronto, e o usuário junta, um por vez. Depois, um agente de integração, no nível código, segurança (`sonnet`, `high`), num branch `pr/<fase>-integracao`, roda tudo do zero (a montagem do ambiente local e a suíte completa). Por fim, o `qa` confere o aceite, item por item, com a saída real.
+   **Pronto quando:** todos voltaram, cada um com os portões verdes e o commit no seu branch, e o orquestrador rodou a revisão (seção 4 do `SKILL.md`, com os revisores que o `escolhe-revisores.mjs` imprimiu) sobre eles.
+5. **Integrar.** Cada branch entra na `main` pelo PR dele: o orquestrador traz a `main` ao branch, roda os portões nele, sobe e marca o PR pronto, e o usuário junta, um por vez. Depois, um agente de integração, no nível `codigo-seguranca` (`SKILL.md`, seção 7), num branch `pr/<fase>-integracao`, roda tudo do zero (a montagem do ambiente local e a suíte completa). Por fim, o `qa` confere o aceite, item por item, com a saída real.
    **Pronto quando:** o `qa` aprovou o aceite, ou o que falhou está explicado com o comando que falha.
 6. **Fechar.**
    - `ponytail-audit` nas pastas da fase;
    - `ponytail-debt` para os atalhos (`shortcut:`) deixados;
    - achado que se repetiu entre agentes vira lint, teste ou script (`principle-encode-lessons-in-structure`);
-   - a seção "Estado" do `CLAUDE.md` atualizada.
-   **Pronto quando:** o relatório da fase para o usuário tem a entrega, o aceite, os achados, a dívida e as decisões, e o usuário juntou todos os PRs da fase.
+   - a seção "Estado" do `CLAUDE.md` atualizada;
+   - **autoanálise da fase (D2):** grave `docs/pipeline/sessoes/<AAAA-MM-DD>-<fase>.md` no formato do `MODELO.md` (agentes com tokens e rodadas, achados com quem viu e quem deixou escapar, erros do orquestrador, lições) e rode `node .claude/hooks/ajusta-pipeline.mjs --relatorio`; o que ele pedir segue a skill `adjust-pipeline`.
+   **Pronto quando:** o relatório da fase para o usuário tem a entrega, o aceite, os achados, a dívida, as decisões e a saída da autoanálise, e o usuário juntou todos os PRs da fase.

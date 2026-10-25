@@ -3,9 +3,12 @@
 // O git passa o remoto e a URL nos argumentos e, na entrada, uma linha por ref: <ref local> <sha local> <ref remota> <sha remoto>.
 // Vale para todo push daqui, como quer que o comando seja escrito; só o usuário passa por cima, com --no-verify.
 // Falha fechado: sem repositório configurado (marcador, ausente, inválido) ou com o arquivo ilegível, nega todo push.
+// O confere-lgpd roda também sobre os arquivos de cada ref que sobe (commit a commit de <remoto>..<local>, ou de origin/main..<local> quando a ref é
+// nova): é a trava de quem commitou sem o hook (clone à parte, pull --ff-only, PATH com outro node). Achado que bloqueia nega o push.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { lerRepositorio, urlDoRepositorio } from './config.mjs';
+import { bloqueia, conferirRef, regrasCarregaram, relatorio } from './confere-lgpd.mjs';
 
 const ZERO = /^0+$/;
 
@@ -29,13 +32,43 @@ export function avaliarPush(url, linhas, ehAncestral, repositorio = lerRepositor
   return null;
 }
 
+/**
+ * O motivo de negar o push por dado pessoal nos arquivos das refs que sobem (ou null). `existe(ref)` diz se a ref existe aqui;
+ * `conferir(base, local)` devolve os achados do confere-lgpd (ver conferirRef). Falha fechado: regra que não carrega, ou erro ao conferir, nega.
+ */
+export function avaliarLgpdDoPush(linhas, existe, conferir, regrasOk = regrasCarregaram()) {
+  const refs = linhas.map((l) => l.trim().split(/\s+/)).filter((c) => c.length === 4 && !ZERO.test(c[1]));
+  if (refs.length === 0) return null;
+  if (!regrasOk) return 'as regras do confere-lgpd não carregaram (lgpd-regras.mjs ou config.mjs quebrado), e sem elas o que sobe não se confere';
+  for (const [, local, ref, remoto] of refs) {
+    const base = !ZERO.test(remoto) ? remoto : existe('refs/remotes/origin/main') ? 'refs/remotes/origin/main' : null;
+    let achados;
+    try {
+      achados = conferir(base, local);
+    } catch (erro) {
+      return `não consegui conferir o dado pessoal de ${ref} (${erro instanceof Error ? erro.message : String(erro)})`;
+    }
+    const bloqueiam = achados.filter(bloqueia);
+    if (bloqueiam.length > 0) {
+      const commits = [...new Set(bloqueiam.map((a) => a.commit).filter(Boolean).map((c) => c.slice(0, 10)))];
+      return `dado pessoal nos commits de ${ref} (confere-lgpd; o commit foi feito sem o hook?):\n${relatorio(bloqueiam)}${commits.length > 0 ? `\nCommit(s): ${commits.join(', ')}` : ''}`;
+    }
+  }
+  return null;
+}
+
 async function principal() {
   const [, , remoto = '', url = ''] = process.argv;
   let entrada = '';
   for await (const pedaco of process.stdin) entrada += pedaco;
   const linhas = entrada.split(/\r?\n/).filter((l) => l.trim() !== '');
   const ehAncestral = (a, b) => spawnSync('git', ['merge-base', '--is-ancestor', a, b]).status === 0;
-  const motivo = avaliarPush(url, linhas, ehAncestral);
+  let motivo = avaliarPush(url, linhas, ehAncestral);
+  if (motivo === null) {
+    const raiz = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).stdout.trim();
+    const existe = (ref) => spawnSync('git', ['-C', raiz, 'rev-parse', '-q', '--verify', `${ref}^{commit}`]).status === 0;
+    motivo = avaliarLgpdDoPush(linhas, existe, (base, local) => conferirRef(raiz, base, local));
+  }
   if (motivo !== null) {
     process.stderr.write(`confere-push: push para ${remoto} negado: ${motivo}.\n`);
     process.exit(1);
