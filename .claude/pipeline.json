@@ -1,5 +1,5 @@
 {
-  "repositorio": "<dono>/<repo>",
+  "repositorio": "PedroBra12/modelo_pipeline",
   "portaoRapido": "checar:rapido",
   "pastasDeTrabalho": ["^(apps|packages|src)/[^/]+(?=/)", "^\\.claude/hooks(?=/)"],
   "agentes": {

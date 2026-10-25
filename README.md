@@ -160,7 +160,7 @@ Risco aceito: o ciclo de subir e descer entre sessões. Cada degrau para baixo p
    git switch -c pr/inicio
    ```
 4. **Configure o [`.claude/pipeline.json`](.claude/pipeline.json):**
-   - `repositorio`: `dono/repo` no GitHub (enquanto estiver `<dono>/<repo>`, todo push e PR é bloqueado por segurança);
+   - `repositorio`: o `dono/repo` do seu projeto no GitHub. O modelo vem com o repositório dele próprio (`PedroBra12/modelo_pipeline`): troque antes do primeiro push. Com o marcador `<dono>/<repo>` (ou vazio), todo push e PR é negado; com o valor do modelo, só o pre-push do passo 3 nega o push para o seu `origin`, e a escrita em PR só pede confirmação;
    - `portaoRapido`: nome do script no `package.json` que roda checagem de tipos, lint e testes rápidos no fim de cada turno (padrão: `checar:rapido`);
    - `pastasDeTrabalho`: lista de regex das pastas que exigem `AGENTS.md` próprio;
    - `revisao`: os caminhos e conteúdos dos gatilhos do seu projeto (onde mora a permissão, o dado pessoal, o banco, a rede e a tela), somados aos do modelo (ver "O que adaptar").
