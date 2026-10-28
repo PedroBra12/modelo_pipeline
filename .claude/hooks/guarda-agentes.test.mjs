@@ -2,12 +2,12 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARQUIVO, FIXOS, lerAgentes, lerNiveis } from './config.mjs';
-import { TETO, SO_NO_CHAT, decidirAgente, decidirChamador, decidirOrquestrador, juntarDecisoes, lerCabecalhoDoArquivo, lerParDoRegistro, lerRegistroDoArquivo, parDoChat } from './guarda-agentes.mjs';
+import { TETO, TETO_TOKENS, SO_NO_CHAT, caminhosCitados, decidirAgente, decidirEsforcoPipeline, decidirTeto, tamanhoDoArquivo, decidirChamador, decidirOrquestrador, juntarDecisoes, lerCabecalhoDoArquivo, lerEsforcoDoEstado, lerParDoRegistro, lerRegistroDoArquivo, parDoChat } from './guarda-agentes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const AGENTES = join(AQUI, '..', 'agents');
@@ -427,7 +427,7 @@ test('com o cabeçalho lido do arquivo de verdade, o agente fixo em minúsculas,
   }
 });
 
-test('o revisor-tela passa direto em sonnet high, com as ferramentas do qa, e nega outro modelo, esforço ou ferramentas (D3)', () => {
+test('o revisor-tela passa direto em sonnet high, com as ferramentas do qa, e nega outro modelo, esforço ou ferramentas (D45)', () => {
   assert.deepEqual(TETO['revisor-tela'], { model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash' });
   assert.deepEqual(decide({ subagent_type: 'revisor-tela' }), passa, 'pelo cabeçalho');
   assert.deepEqual(decide({ subagent_type: 'revisor-tela', model: 'sonnet', effort: 'high' }), passa, 'explícito');
@@ -439,7 +439,7 @@ test('o revisor-tela passa direto em sonnet high, com as ferramentas do qa, e ne
   assert.equal(decidirAgente({ subagent_type: 'revisor-tela', description: 'x' }, cabecalho('Read, Grep, Glob, Bash, Edit')).decisao, 'deny', 'com o Edit');
 });
 
-// ---------- o chat principal em opus xhigh (D3) ----------
+// ---------- o chat principal em opus xhigh (D45) ----------
 
 const ESPERADO = FIXOS.niveis.orquestracao;
 const SEM_PAR = { model: undefined, effort: undefined };
@@ -467,7 +467,7 @@ test('decidirOrquestrador: o par esperado vem do config.mjs (opus xhigh); esfor�
   for (const par of [{}, { effort: 'xhigh' }, { model: 'claude-opus-5-5' }, { model: '', effort: '  ' }, { model: null, effort: null }, undefined]) {
     const r = d(par);
     assert.equal(r.decisao, 'ask', JSON.stringify(par));
-    assert.match(r.motivo, /confirme que o chat está em opus xhigh, D3/);
+    assert.match(r.motivo, /confirme que o chat está em opus xhigh, D45/);
   }
   assert.equal(d({ model: 'claude-haiku-4-5' }).decisao, 'deny', 'modelo errado e esforço desconhecido: o deny vence o ask');
   assert.equal(d({ effort: 'high' }).decisao, 'deny', 'esforço errado e modelo desconhecido: o deny vence o ask');
@@ -532,7 +532,7 @@ test('a janela do registro: a única linha do chat no começo de um arquivo de m
   assert.deepEqual(lerRegistroDoArquivo(arquivo, Number.POSITIVE_INFINITY), { model: 'claude-opus-5-5', effort: 'xhigh' }, 'sem janela o mesmo arquivo dá o par: é a janela que corta');
 });
 
-test('o hook de ponta a ponta nega a chamada de Agent feita por um subagente, sem rodar a checagem do par; o chat principal aberto como orquestrador segue (D3)', () => {
+test('o hook de ponta a ponta nega a chamada de Agent feita por um subagente, sem rodar a checagem do par; o chat principal aberto como orquestrador segue (D45)', () => {
   const hook = (entrada) => {
     const r = spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8' });
     return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
@@ -542,7 +542,7 @@ test('o hook de ponta a ponta nega a chamada de Agent feita por um subagente, se
   const dentro = hook(com({ agent_id: 'abc', agent_type: 'general-purpose' }));
   assert.equal(dentro.status, 0);
   assert.equal(dentro.saida?.permissionDecision, 'deny');
-  assert.match(dentro.saida.permissionDecisionReason, /subagente não abre subagente: só o chat principal, o orquestrador, delega \(D3\)/);
+  assert.match(dentro.saida.permissionDecisionReason, /subagente não abre subagente: só o chat principal, o orquestrador, delega \(D45\)/);
   assert.equal(hook(com({ agent_id: 'abc', agent_type: 'orquestrador' })).saida?.permissionDecision, 'deny', 'agent_id vale mesmo com agent_type orquestrador');
   assert.equal(hook(com({ agent_id: 'abc' })).saida?.permissionDecision, 'deny', 'só o agent_id');
   const foraDoPar = hook(com({ agent_id: 'abc', agent_type: 'qa' }, { effort: 'low' }));
@@ -574,8 +574,8 @@ test('parDoChat: com effort.level na entrada só ele vale; sem ele valem CLAUDE_
   assert.deepEqual(decidirOrquestrador(parDoChat({ effort: { level: 'xhigh' } }, { CLAUDE_EFFORT: 'low' }, () => ({ model: 'claude-opus-5-5', effort: 'low' }))), passa, 'com effort.level só ele vale');
 });
 
-test('decidirChamador: quem separa o subagente do chat principal é o agent_id; sem ele, qualquer agent_type segue para a checagem do par (D3)', () => {
-  const motivo = 'subagente não abre subagente: só o chat principal, o orquestrador, delega (D3)';
+test('decidirChamador: quem separa o subagente do chat principal é o agent_id; sem ele, qualquer agent_type segue para a checagem do par (D45)', () => {
+  const motivo = 'subagente não abre subagente: só o chat principal, o orquestrador, delega (D45)';
   for (const entrada of [{ agent_id: 'a1' }, { agent_id: 'a1', agent_type: 'orquestrador' }, { agent_id: 'a1', agent_type: 'general-purpose' }, { agent_id: ' a1 ', agent_type: 'Explore' }]) {
     assert.deepEqual(decidirChamador(entrada), { decisao: 'deny', motivo }, JSON.stringify(entrada));
   }
@@ -620,7 +620,7 @@ test('o hook de ponta a ponta confere o chat principal: opus xhigh passa; outro 
   const faltando = hook(JSON.stringify(noRegistro));
   assert.equal(faltando.status, 0, 'registro ilegível: o hook decide, não cai');
   assert.equal(faltando.saida?.permissionDecision, 'ask');
-  assert.match(faltando.saida.permissionDecisionReason, /confirme que o chat está em opus xhigh, D3/);
+  assert.match(faltando.saida.permissionDecisionReason, /confirme que o chat está em opus xhigh, D45/);
   const negado = hook(entradaDoHook({ subagent_type: 'fork', prompt: 'x' }, { effort: 'high' }));
   assert.equal(negado.saida?.permissionDecision, 'deny', 'deny com deny');
   assert.match(negado.saida.permissionDecisionReason, /fork herda/);
@@ -629,12 +629,194 @@ test('o hook de ponta a ponta confere o chat principal: opus xhigh passa; outro 
   assert.equal(opus.saida?.permissionDecision, 'ask', 'ask com ask');
 });
 
-test('opus:medium num agente fixo (o piso do revisor-arquitetura): passa quando o cabeçalho diz o mesmo, nega quando não, e a chamada não sobe o esforço sozinha', () => {
-  const ferr = TETO['revisor-arquitetura'].tools;
-  const vigente = { model: 'opus', effort: 'medium', tools: ferr };
-  const com = (cab, entrada = {}) => decidirAgente({ subagent_type: 'revisor-arquitetura', description: 'x', ...entrada }, () => ({ name: 'revisor-arquitetura', ...cab }), { 'revisor-arquitetura': vigente });
-  assert.deepEqual(com({ model: 'opus', effort: 'medium', tools: ferr }), passa, 'abaixo do teto (opus high) e igual ao cabeçalho');
-  assert.deepEqual(com({ model: 'opus', effort: 'medium', tools: ferr }, { model: 'opus', effort: 'medium' }), passa);
-  assert.equal(com({ model: 'opus', effort: 'high', tools: ferr }).decisao, 'deny', 'o cabeçalho ainda diz high: não bate com o JSON');
-  assert.equal(com({ model: 'opus', effort: 'medium', tools: ferr }, { effort: 'high' }).decisao, 'deny', 'a chamada pede mais esforço que o pipeline.json');
+// ---------- o teto de 50 mil tokens (D60) ----------
+
+const LIMITE = TETO_TOKENS * 3; // caracteres (ou bytes) que cabem no teto
+const grande = (bytes) => 'a'.repeat(bytes);
+/** Um leitor de tamanho de mentira: `{ caminho: bytes }`; o que não está na tabela não existe. */
+const tamanhos = (tabela) => (caminho) => (Object.hasOwn(tabela, caminho) ? { real: caminho, bytes: tabela[caminho] } : null);
+const doTeto = (prompt, tabela = {}, tipo = {}) => decidirAgente({ description: 'revisar', subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', prompt, ...tipo }, ler, TETO, tamanhos(tabela));
+
+test('teto da D60: o pedido até 50 mil tokens passa; um caractere acima nega, com a estimativa, o teto e a D60', () => {
+  assert.deepEqual(doTeto(grande(LIMITE)), passa);
+  const r = doTeto(grande(LIMITE + 1));
+  assert.equal(r.decisao, 'deny');
+  assert.match(r.motivo, /50000/);
+  assert.match(r.motivo, /50001/);
+  assert.match(r.motivo, /D60/);
+  assert.match(r.motivo, /Resuma para a função deste agente/);
+  assert.match(r.motivo, /mapa \(arquivos, linhas, o que mudou\)/);
+});
+
+test('teto da D60: arquivo grande fora do repositório citado por caminho soma ao pedido, mesmo com o pedido pequeno', () => {
+  const pacote = '/tmp/fora/pacote.md';
+  assert.deepEqual(doTeto(`leia ${pacote}`, { [pacote]: 1000 }), passa);
+  assert.equal(doTeto(`leia ${pacote}`, { [pacote]: LIMITE }).decisao, 'deny');
+  assert.equal(doTeto(`leia ${pacote}:12-40.`, { [pacote]: LIMITE }).decisao, 'deny', ':linha e ponto final não escondem o arquivo');
+  assert.equal(doTeto(`leia ${pacote}`, { '/outro/arquivo.md': LIMITE }).decisao, null, 'o que o pedido não cita não conta');
+  const acentuado = '/tmp/fora/relatório-final.md';
+  assert.equal(doTeto(`leia ${acentuado}:12.`, { [acentuado]: LIMITE }).decisao, 'deny', 'o acento no nome não esconde o arquivo');
+});
+
+test('teto da D60: o arquivo que não existe, a pasta e o do repositório não contam (o leitor devolve nada)', () => {
+  assert.deepEqual(doTeto('leia /tmp/fora/nao-existe.md e /tmp/fora e /raiz/repo/app/x.js', {}), passa);
+});
+
+test('teto da D60: o mesmo arquivo citado duas vezes conta uma só, e dois arquivos somam', () => {
+  const a = '/tmp/fora/a.md';
+  const b = '/tmp/fora/b.md';
+  const metade = Math.floor(LIMITE * 0.6);
+  assert.deepEqual(doTeto(`${a} ${a} ${a}`, { [a]: metade }), passa);
+  assert.equal(doTeto(`${a} ${b}`, { [a]: metade, [b]: metade }).decisao, 'deny');
+  const duasEntradas = (caminho) => (caminho === '/link/a.md' || caminho === a ? { real: a, bytes: metade } : null);
+  assert.deepEqual(decidirTeto({ prompt: `${a} /link/a.md` }, duasEntradas), passa, 'dois nomes do mesmo arquivo (o realpath) contam uma vez');
+});
+
+test('teto da D60: vale para o agente fixo, o deny vence o ask e a regra do tipo continua mandando', () => {
+  const longo = grande(LIMITE + 1);
+  assert.equal(decidirAgente({ subagent_type: 'revisor-arquitetura', prompt: longo }, ler, TETO, tamanhos({})).decisao, 'deny');
+  assert.deepEqual(decidirAgente({ subagent_type: 'revisor-arquitetura', prompt: 'curto' }, ler, TETO, tamanhos({})), passa);
+  assert.equal(doTeto(longo, {}, { model: 'opus' }).decisao, 'deny', 'o ask do opus perde para o deny do teto');
+  assert.equal(doTeto('curto', {}, { model: 'opus' }).decisao, 'ask', 'sem passar do teto o ask fica');
+  assert.match(doTeto(longo, {}, { model: 'haiku' }).motivo, /haiku só vale no leitor-docs/, 'a negativa do tipo vem primeiro');
+});
+
+test('caminhosCitados: só caminho absoluto, sem relativo, sem repetir, sem o ponto e o :linha do fim', () => {
+  assert.deepEqual(caminhosCitados('veja /tmp/a/b.md:10-20, /tmp/a/b.md e docs/decisoes.md, ../x/y e src/(app)/z.jsx. Fim /tmp/c.'), ['/tmp/a/b.md', '/tmp/c']);
+  assert.deepEqual(caminhosCitados('sem caminho nenhum, só e/ou'), []);
+  assert.deepEqual(caminhosCitados('leia /tmp/pacotes/relatório-final.md e /tmp/ação/x.md:12'), ['/tmp/pacotes/relatório-final.md', '/tmp/ação/x.md'], 'o acento não corta o caminho, e o :12 do fim sai');
+  assert.deepEqual(caminhosCitados('veja /tmp/a.md:3-9; depois (/tmp/b.md), "/tmp/c.md" e `/tmp/d.md`:'), ['/tmp/a.md', '/tmp/b.md', '/tmp/c.md', '/tmp/d.md']);
+  assert.deepEqual(caminhosCitados('o caminho /tmp/com espaço/x.md'), ['/tmp/com'], 'limite: o caminho com espaço se corta no espaço');
+});
+
+test('tamanhoDoArquivo (o fs de verdade): conta o arquivo fora da raiz pelo realpath; ignora pasta, o que falta e o de dentro da raiz', () => {
+  const base = mkdtempSync(join(tmpdir(), 'teto-'));
+  try {
+    const raiz = join(base, 'repo');
+    const fora = join(base, 'fora');
+    mkdirSync(join(raiz, 'app'), { recursive: true });
+    mkdirSync(fora);
+    writeFileSync(join(raiz, 'app', 'x.js'), grande(500));
+    writeFileSync(join(fora, 'pacote.md'), grande(700));
+    symlinkSync(join(fora, 'pacote.md'), join(base, 'atalho.md'));
+    symlinkSync(raiz, join(base, 'raiz-por-link'));
+    assert.equal(tamanhoDoArquivo(join(fora, 'pacote.md'), raiz).bytes, 700);
+    assert.equal(tamanhoDoArquivo(join(base, 'atalho.md'), raiz).real, tamanhoDoArquivo(join(fora, 'pacote.md'), raiz).real, 'o link e o alvo dão o mesmo realpath');
+    assert.equal(tamanhoDoArquivo(join(raiz, 'app', 'x.js'), raiz), null, 'o arquivo do repositório não conta');
+    assert.equal(tamanhoDoArquivo(join(base, 'raiz-por-link', 'app', 'x.js'), raiz), null, 'o do repositório por link também não');
+    assert.equal(tamanhoDoArquivo(fora, raiz), null, 'pasta');
+    assert.equal(tamanhoDoArquivo(join(fora, 'nao-existe.md'), raiz), null);
+    const l = decidirTeto({ prompt: `${join(fora, 'pacote.md')} ${join(base, 'atalho.md')}` }, (c) => tamanhoDoArquivo(c, raiz));
+    assert.deepEqual(l, passa);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('o hook de ponta a ponta nega o pedido acima do teto e deixa passar o pequeno', () => {
+  const rodar = (prompt) => spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entradaDoHook({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', prompt }), encoding: 'utf8' });
+  assert.equal(rodar('curto').stdout, '');
+  const r = JSON.parse(rodar(grande(LIMITE + 1)).stdout);
+  assert.equal(r.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(r.hookSpecificOutput.permissionDecisionReason, /D60/);
+});
+
+// ---------- o worktree pede o branch de partida (D63) ----------
+
+const doWorktree = (prompt, { tabela = {}, textos = {}, isolation = 'worktree' } = {}) => decidirAgente(
+  { description: 'codigo', subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', prompt, ...(isolation === null ? {} : { isolation }) },
+  ler, TETO, tamanhos(tabela), (caminho) => textos[caminho] ?? '',
+);
+
+test('worktree (D63): sem git switch -c nem git checkout -b no pedido ou no pacote nega, com a D63 e o que dizer', () => {
+  const r = doWorktree('escreva o código da pasta .claude/hooks');
+  assert.equal(r.decisao, 'deny');
+  assert.match(r.motivo, /o worktree do agente nasce da main \(D63\)/);
+  assert.match(r.motivo, /git switch -c <branch> <branch da tarefa>/);
+  const pacote = '/tmp/fora/pacote.md';
+  assert.equal(doWorktree(`siga ${pacote}`, { tabela: { [pacote]: 100 }, textos: { [pacote]: 'faça tudo certo\n' } }).decisao, 'deny', 'o pacote sem a frase também nega');
+});
+
+test('worktree (D63): a frase no pedido, ou só no pacote (fora do repositório), passa; git checkout -b vale; o de dentro do repositório não é lido', () => {
+  assert.deepEqual(doWorktree('1º passo: `git switch -c PedroBra12/x main`'), passa);
+  assert.deepEqual(doWorktree('1º passo: git checkout -b PedroBra12/x origin/main'), passa);
+  const pacote = '/tmp/fora/pacote.md';
+  assert.deepEqual(doWorktree(`siga ${pacote}`, { tabela: { [pacote]: 100 }, textos: { [pacote]: 'o 1º passo é git switch -c PedroBra12/x PedroBra12/y\n' } }), passa);
+  const dentro = '/raiz/repo/docs/x.md';
+  assert.equal(doWorktree(`siga ${dentro}`, { textos: { [dentro]: 'git switch -c a b' } }).decisao, 'deny', 'arquivo que o leitor de tamanho não conta (repositório) não vale');
+});
+
+test('worktree (D63): sem isolation, ou com outro valor, nada muda', () => {
+  assert.deepEqual(doWorktree('escreva o código', { isolation: null }), passa);
+  assert.deepEqual(doWorktree('escreva o código', { isolation: 'remote' }), passa);
+});
+
+test('worktree (D63): o hook de ponta a ponta nega o subagente isolado sem a frase e deixa passar com ela', () => {
+  const rodar = (prompt) => spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entradaDoHook({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', isolation: 'worktree', prompt }), encoding: 'utf8' });
+  const r = JSON.parse(rodar('escreva o código').stdout);
+  assert.equal(r.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(r.hookSpecificOutput.permissionDecisionReason, /D63/);
+  assert.equal(rodar('git switch -c a/b main').stdout, '');
+});
+
+// ---------- o esforço do pipeline em .claude/estado/esforco (D64) ----------
+
+test('esforço do pipeline (D64): rapido nega todos os revisores (fixos e ponytail-review) e o qa; medio nega arquitetura e lgpd; alto e undefined deixam passar; inválido nega fechado', () => {
+  for (const tipo of ['revisor-seguranca', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-tela', 'qa']) {
+    const r = decidirEsforcoPipeline({ subagent_type: tipo }, 'rapido');
+    assert.equal(r.decisao, 'deny', `rapido nega ${tipo}`);
+    assert.match(r.motivo, /esforço rapido \(D64\)/);
+  }
+  assert.equal(decidirEsforcoPipeline({ subagent_type: 'general-purpose', prompt: 'aplique a skill ponytail-review a lib/x.js' }, 'rapido').decisao, 'deny', 'rapido nega ponytail-review no prompt');
+  assert.equal(decidirEsforcoPipeline({ subagent_type: 'general-purpose', description: 'ponytail-review da pasta' }, 'rapido').decisao, 'deny', 'rapido nega ponytail-review na description');
+  assert.deepEqual(decidirEsforcoPipeline({ subagent_type: 'leitor-docs' }, 'rapido'), passa, 'rapido deixa leitor-docs');
+  assert.deepEqual(decidirEsforcoPipeline({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', prompt: 'escreva o código' }, 'rapido'), passa, 'rapido deixa agente de código');
+
+  for (const tipo of ['revisor-arquitetura', 'revisor-lgpd']) {
+    const r = decidirEsforcoPipeline({ subagent_type: tipo }, 'medio');
+    assert.equal(r.decisao, 'deny', `medio nega ${tipo}`);
+    assert.match(r.motivo, /esforço medio \(D64\)/);
+  }
+  for (const tipo of ['revisor-seguranca', 'revisor-tela', 'qa', 'leitor-docs']) {
+    assert.deepEqual(decidirEsforcoPipeline({ subagent_type: tipo }, 'medio'), passa, `medio deixa ${tipo}`);
+  }
+  assert.deepEqual(decidirEsforcoPipeline({ subagent_type: 'general-purpose', prompt: 'aplique ponytail-review' }, 'medio'), passa, 'medio deixa ponytail-review');
+
+  for (const tipo of Object.keys(TETO)) {
+    assert.deepEqual(decidirEsforcoPipeline({ subagent_type: tipo }, 'alto'), passa, `alto deixa ${tipo}`);
+    assert.deepEqual(decidirEsforcoPipeline({ subagent_type: tipo }, undefined), passa, `undefined deixa ${tipo}`);
+  }
+  assert.equal(decidirEsforcoPipeline({ subagent_type: 'qa' }, 'invalido').decisao, 'deny', 'valor inválido nega fechado');
+});
+
+test('esforço do pipeline (D64): lerEsforcoDoEstado e o hook de ponta a ponta respeitam .claude/estado/esforco e PIPELINE_ESFORCO', () => {
+  const raiz = mkdtempSync(join(tmpdir(), 'esforco-estado-'));
+  try {
+    assert.equal(lerEsforcoDoEstado(raiz, {}), undefined, 'sem arquivo e sem env');
+    mkdirSync(join(raiz, '.claude', 'estado'), { recursive: true });
+    writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), '  MEDIO \n');
+    assert.equal(lerEsforcoDoEstado(raiz, {}), 'medio');
+    assert.equal(lerEsforcoDoEstado(raiz, { PIPELINE_ESFORCO: 'rapido' }), 'rapido', 'env vence o arquivo');
+
+    const rodar = (tool_input, esforco) => {
+      writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), `${esforco}\n`);
+      const r = spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], {
+        input: entradaDoHook(tool_input),
+        encoding: 'utf8',
+        env: { ...process.env, CLAUDE_PROJECT_DIR: raiz },
+      });
+      return r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput;
+    };
+    assert.equal(rodar({ subagent_type: 'revisor-arquitetura', description: 'x' }, 'medio')?.permissionDecision, 'deny');
+    assert.equal(rodar({ subagent_type: 'revisor-lgpd', description: 'x' }, 'medio')?.permissionDecision, 'deny');
+    assert.equal(rodar({ subagent_type: 'revisor-seguranca', description: 'x' }, 'medio'), null);
+    assert.equal(rodar({ subagent_type: 'qa', description: 'x' }, 'medio'), null);
+    assert.equal(rodar({ subagent_type: 'qa', description: 'x' }, 'rapido')?.permissionDecision, 'deny');
+    assert.equal(rodar({ subagent_type: 'revisor-seguranca', description: 'x' }, 'rapido')?.permissionDecision, 'deny');
+    assert.equal(rodar({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', prompt: 'código' }, 'rapido'), null);
+    assert.equal(rodar({ subagent_type: 'revisor-arquitetura', description: 'x' }, 'alto'), null);
+    assert.equal(rodar({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', prompt: 'código' }, 'lixo')?.permissionDecision, 'deny');
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
 });

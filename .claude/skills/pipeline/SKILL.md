@@ -21,13 +21,28 @@ Leia o pedido e o `AGENTS.md` das pastas que ele toca (e os das pastas acima). E
 | mudança trivial (uma ou duas linhas óbvias, sem lógica nova) | só as seções 3 a 5 abaixo |
 | só uma pergunta | responda; sem portão |
 
-**Pronto quando:** a 1ª linha da resposta diz o caminho (`Pipeline: feature`) e a lista de tarefas tem os passos do playbook, copiados.
+Defina também o **esforço do pipeline (D7)** e grave-o em `.claude/estado/esforco` (`mkdir -p .claude/estado && printf '%s\n' <esforco> > .claude/estado/esforco`):
+- `medio` (**padrão** quando o usuário não pede outro): roda os portões, o `qa` e os revisores acionados pelos gatilhos, **sem** `revisor-arquitetura` e `revisor-lgpd` na revisão do código (`revisor-seguranca`, `ponytail-review` no `grande`, `revisor-tela` no layout novo e `qa` continuam).
+- `rapido` (mudança pontual em parte não essencial, ou quando o usuário pede "rápido"): escreve o código e roda só os portões mecânicos da seção 3 (`portaoRapido`, `confere-lgpd`, `confere-docs`); **sem revisores, sem `qa` e sem autoanálise da sessão**.
+- `alto` (mudança crítica de arquitetura/banco/LGPD, fase inteira, ou quando o usuário pede "alto"): roda todos os revisores acionados (`revisor-arquitetura` e `revisor-lgpd` inclusive), o `qa` e a autoanálise.
+- **Guardrails mecânicos (D7):** o `escolhe-revisores.mjs` lê `.claude/estado/esforco` (ou `--esforco`), a `guarda-agentes.mjs` bloqueia (`deny`) qualquer chamada de agente fora do esforço gravado, e o `portao.mjs` libera no verde sem cobrar revisão quando o esforço é `rapido`.
+
+**Pronto quando:** a 1ª linha da resposta diz o caminho e o esforço (`Pipeline: feature · esforço: medio`), `.claude/estado/esforco` está gravado e a lista de tarefas tem os passos do playbook, copiados.
 
 ## 2. Regras de todo caminho
 
 - **Escopo:** só a pasta da tarefa. Fora dela, a mudança se relata ao orquestrador, não se edita.
 - **Estilo:** a menor mudança completa (skill `ponytail`). As camadas que a arquitetura pede (contrato, provedor, ponto de extensão) são deliberadas e ficam.
 - **Perguntas:** na dúvida sobre onde uma regra ou decisão (`D<n>`) está em `docs/` ou nos `AGENTS.md`, só o chat principal (o `orquestrador`) aciona o subagente `leitor-docs`, que apenas lê e aponta os arquivos e linhas onde focar; o agente de worktree não o aciona e relata a dúvida ao orquestrador. Fato no código se busca com `Explore` (nível leve da seção 7); só a decisão vai para o usuário.
+- **Pacote de contexto por agente (D4):** antes de lançar um subagente (código, revisor ou `qa`), o orquestrador grava no scratchpad um pacote só para ele: a decisão e o contrato já fechados, os fatos com a fonte, os arquivos e as LINHAS por onde começar e o que mudar. O pedido aponta o pacote.
+  - **Fato** é comando mais saída, ou `arquivo:linha`. A saída que a seção 4 manda passar (a do `confere-lgpd` ao `revisor-lgpd`, a dos portões ao `qa`) vai inteira, ou pelo caminho do arquivo que a guarda. O que o código faz entra como ponteiro, nunca como fato conferido.
+  - **Sem dado pessoal nem segredo**, como na autoanálise: nem nome, código de cliente, celular, e-mail, CPF ou cidade. O scratchpad fica fora do repositório, e os hooks não o conferem.
+  - **Teto de 50 mil tokens (D5):** o pedido e os arquivos fora do repositório que ele cita por caminho absoluto (o pacote) somam no máximo 50 mil tokens, estimados pelo tamanho ÷ 3; a `guarda-agentes` nega acima disso. Passou, resuma para a função daquele agente: o que ele precisa para executar, não tudo o que você sabe. A retomada por `SendMessage`, que a guarda não vê, segue o mesmo teto.
+  - **Agente de código:** lê só o que o pacote aponta e diz no relatório o que leu a mais.
+  - **Revisor e `qa`:** o piso é o diff inteiro da rodada (`<base> <head>`, ou o delta). O pacote diz por onde começar, não o limite, e o que lerem a mais vai no relatório. Com o diff acima do teto, o pacote leva o mapa (arquivos, linhas e o que mudou em cada trecho) e cita os pedaços do diff gravados no scratchpad, que ele abre sozinho (D5). Ao fechar a revisão, apague os pedaços, como as capturas do `revisor-tela`. Ele leva fatos e ponteiros, nunca a conclusão do orquestrador nem juízo sobre o que está em revisão (o revisor que recebe a hipótese tende a confirmá-la).
+  - **Retomar (D6).** Retome com `SendMessage` só o agente com menos de ~100 mil tokens de contexto (o `subagent_tokens` que ele devolveu), só com o chat no par da orquestração (D3) e o par do agente ainda igual ao do `pipeline.json`. Acima disso, ou fora do par, lance agente novo com o mapa e o item dele. A `guarda-agentes` não vê o `SendMessage`: o teto vale por disciplina.
+  - A autoanálise marca `"pacote": true` no agente que recebeu pacote, e o agente retomado ganha linha própria, para medir o efeito.
+- **Pedido ao agente de código (D4):** quando a mudança mexe no estado de um item (da lista, da tela, da folha), o pedido lista todas as transições dele antes do código: de onde vem, para onde vai, o que o recarrega e quem mais o muda. Cada transição esquecida custava uma rodada inteira.
 - **Regras do `CLAUDE.md`** valem em todo passo. O commit e o push seguem a seção 5.
 
 ## 3. Portões
@@ -38,25 +53,25 @@ Leia o pedido e o `AGENTS.md` das pastas que ele toca (e os das pastas acima). E
 2. **Completo:** a suíte inteira, quando a mudança tocou banco, rota, permissão ou mais de uma pasta.
 3. **Prova:** a coisa de verdade rodou (`principle-prove-it-works`): o teste ficou vermelho antes e verde depois (no refactor, verde antes e depois), a rota respondeu, o comando devolveu o que devia.
 4. **Documentação:** em cada pasta tocada, cada campo do `AGENTS.md` confere com o código (skill `writing-for-agents`); decisão nova tem a linha `D<n>` em `docs/decisoes.md`; termo novo está em `docs/glossario.md`.
-5. **Tela:** tela nova ou mudada foi feita com a skill `frontend-design`, dentro do `PRODUCT.md`. Quem a vê rodando na tela estreita (320 px) e na larga é o `revisor-tela`, na seção 4 (D3).
+5. **Tela:** tela nova ou mudada foi feita com a skill `frontend-design`, dentro do `PRODUCT.md`. Quem a vê rodando na tela estreita (320 px) e na larga é o `revisor-tela`, na seção 4 (D3), quando o layout muda (D5).
 6. **LGPD:** `node .claude/hooks/confere-lgpd.mjs <pastas da tarefa>` sem achado crítico nem alto. Os avisos (médio) e as supressões vão para o relatório e para o `revisor-lgpd`. O hook do Edit não vê o que o shell escreve; isso só é pego no commit.
 
 Enquanto o projeto não tiver os comandos dos portões 1 e 2, eles não existem: diga isso no relatório, sem fingir verde.
 
 ## 4. Revisão e QA
 
-Depois dos portões, o chat principal (o `orquestrador`; subagente não abre outro subagente) roda o script, que dá o **mínimo obrigatório**:
+Depois dos portões, o chat principal (o `orquestrador`; subagente não abre outro subagente) roda o script, que lê `.claude/estado/esforco` (ou `--esforco rapido|medio|alto`, padrão `medio`, D7) e dá o **mínimo obrigatório** (no esforço `rapido`, esta seção inteira é dispensada: o script imprime zero obrigatórios e a `guarda-agentes` nega revisores e `qa`):
 
 ```
-node .claude/hooks/escolhe-revisores.mjs <base> <head>
-node .claude/hooks/escolhe-revisores.mjs --trabalho      # antes do commit: o HEAD contra a árvore, com o que ainda não foi commitado
+node .claude/hooks/escolhe-revisores.mjs <base> <head> [--esforco rapido|medio|alto]
+node .claude/hooks/escolhe-revisores.mjs --trabalho      # antes do commit: o HEAD contra a árvore, com o que ainda não foi commitado (o qa e o revisor-tela só depois dele)
 ```
 
 `<base>` é a `main` ou o commit de onde o branch saiu, e `<head>` o commit da tarefa (a comparação parte do merge-base). O script aplica a seção `revisao` de `.claude/pipeline.json` ao diff e imprime os revisores com modelo, esforço e o motivo (gatilho, arquivo e linha):
-- `sempre`: `revisor-arquitetura` e `ponytail-review`, para todo código;
-- gatilhos por caminho ou por linha do diff, inclusive linha removida onde removê-la enfraquece uma proteção: `permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`, `lgpd_ignora`, `lgpd_regras` e `tela`;
+- `grande`: `revisor-arquitetura` e `ponytail-review`, só na mudança grande (D5): o diff aciona o gatilho `banco`, toca mais de uma rota de `app/` (ou `src/app/`, `apps/<nome>/app/`: o 1º segmento depois dos grupos `(…)`; em `api/`, os dois primeiros) ou cria pasta de trabalho (um `AGENTS.md` novo);
+- gatilhos por caminho ou por linha do diff, inclusive linha removida onde removê-la enfraquece uma proteção: `permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`, `lgpd_ignora`, `lgpd_regras` e `tela` (este só com layout novo, D5: arquivo de tela criado ou apagado, declaração de layout no CSS, ou elemento, `className` ou `style` no JSX/TSX);
 - `revisor-lgpd`, também quando o `confere-lgpd` acha um aviso nas linhas novas do diff (campo sensível, telemetria de fora);
-- `qa`, obrigatório quando o diff toca um caminho de `comportamento_caminhos` (no modelo, `apps/`, `packages/` e `src/`). `--sem-comportamento "<motivo>"` o tira (CSS, texto, renome) e o motivo vai para o relatório; `--comportamento` o exige em qualquer outro código.
+- `qa`, obrigatório quando o diff toca um caminho de `comportamento_caminhos` (no modelo, `apps/`, `packages/` e `src/`, menos arquivos de teste em `comportamento_ignorar`, D6). `--sem-comportamento "<motivo>"` o tira (CSS, texto, renome) e o motivo vai para o relatório; `--comportamento` o exige em qualquer outro código.
 
 Lance numa mensagem só, em paralelo, todos os que o script imprime. O orquestrador pode somar um revisor por julgamento e põe o motivo no relatório; o que o script lista, nunca tira. O que o script não lista foi decidido pelo `pipeline.json`, e mudar isso é a skill `adjust-pipeline`.
 
@@ -64,17 +79,33 @@ Como lançar cada nome:
 - `ponytail-review`: subagente `general-purpose`, no nível `revisao-ponytail` (seção 7): "aplique a skill `ponytail-review` a <arquivos>; relate em português, não edite";
 - `revisor-arquitetura` e `revisor-seguranca`: subagentes fixos de `.claude/agents/`;
 - `revisor-lgpd`: subagente fixo. Ele não roda comando: passe a ele os arquivos tocados e a saída do `confere-lgpd` do portão 6;
-- `qa`: subagente fixo. Passe a ele o objetivo, o critério de aceite, as pastas tocadas, os comandos de "Como rodar" e a saída dos portões (ele não os repete);
-- `revisor-tela`: subagente fixo, dono do portão 5. Passe a ele as telas tocadas (arquivos e rotas), o papel e a conta de exemplo de quem as usa e o worktree. Ele sobe o app local em portas próprias e grava as capturas numa pasta temporária, que você apaga depois de ler o relatório. Na troca só de texto, de cópia ou de renome, `--sem-tela "<motivo>"` o dispensa, e o motivo vai para o relatório.
+- `qa`: subagente fixo. Passe a ele o objetivo, o critério de aceite, as pastas tocadas, os comandos de "Como rodar", a saída dos portões (ele não os repete), o worktree, o commit a testar (o `<head>` do script), o **modo** e o **prazo** (D4):
+  - **completo**, na rodada de revisão (a única, D6): um `qa`, com prazo de 20 min, também na mudança grande (D5). Só no caminho `fase` (`fase.md`, passo 5) são três `qa` numa mensagem só, um por **fatia** do plano de teste, cada um com prazo de 15 min: (1) caminho feliz e regressão ao redor; (2) bordas e entrada inválida; (3) permissão, isolamento, repetição e ordem;
+  - **curto**, na correção (D6): só os casos corrigidos e os vizinhos deles, com prazo de 10 min. Quem o lança escolhe, pela regra da seção 2 (menos de ~100 mil tokens), entre retomar o `qa` que achou o item e abrir outro; o item de um revisor entra na lista do `qa` curto. A mensagem diz o commit novo, o modo, o prazo e o delta;
+  - cada `qa` sobe o simulador e o app numa cópia própria do commit, como o `revisor-tela`. Por isso o `qa` e o `revisor-tela` só rodam sobre commit, nunca sobre o `--trabalho`;
+  - o veredito `incompleto` do `qa` ou do `revisor-tela` (prazo vencido com caso de fora, ou caso de permissão ou isolamento em `Suspeitas`) não é aprovado. Relance o que faltou no modo curto, ou leve a falta ao usuário;
+- `revisor-tela`: subagente fixo, dono do portão 5. Passe a ele as telas tocadas (arquivos e rotas), o papel e a conta de exemplo de quem as usa, o worktree, o commit a testar e o prazo de 15 min; ele roda uma vez, na rodada de revisão. Na correção só volta se achou o item, e então só nas telas e nos estados do delta (D6). Ele sobe o simulador e o app em portas próprias, numa cópia própria do commit, e grava as capturas numa pasta temporária, que você apaga depois de ler o relatório. O script só o imprime com layout novo (D5); no falso positivo (o elemento mudou, o layout não), `--sem-tela "<motivo>"` o dispensa, e o motivo vai para o relatório.
 
 **Triagem:**
-- **corrigir agora:** o "Must fix" do `ponytail-review`, todo achado de bug, risco ou regra não negociável dos revisores, e todo defeito do `qa` (cada um vira teste antes da correção). Depois, rode os portões de novo, e o `qa` de novo depois de toda rodada de correção, não só se ele reprovou: a correção de um achado já criou defeito novo mais de uma vez;
-- **agente novo a partir da 2ª rodada:** o `SendMessage` leva o histórico inteiro do agente, e cada rodada fica mais cara (um agente de código retomado cinco vezes passou de 800 mil tokens). Retome o mesmo agente, de código ou revisor, só na 1ª rodada de correção ou no 1º reteste. Daí em diante, abra um agente novo, com um brief curto (o que mudar, os arquivos exatos, o estado numa linha) e escopo estreito; o revisor de reteste olha só o diff da rodada;
-- **quando parar:** se uma rodada de reteste traz só achado baixo ou um limite já conhecido, pare a corrida e leve o resto ao relatório;
+- **corrigir agora:** o "Must fix" do `ponytail-review`, todo achado de bug, risco ou regra não negociável dos revisores, e todo defeito do `qa` (cada um vira teste antes da correção). Depois, siga a correção abaixo, mesmo que o `qa` curto aprove: a correção de um achado já criou defeito novo mais de uma vez;
 - **corrigir se couber no escopo:** o "Should fix" e o resto do que é desta pasta; o que não couber, o "Nice to have" e as `Suspeitas` do `qa` vão para o relatório;
 - **achado que aparece pela 2ª vez:** vira lint, teste ou script (`principle-encode-lessons-in-structure`), não mais uma linha de texto.
 
-**Pronto quando:** todo achado de "corrigir agora" foi corrigido, com os portões verdes de novo e o `qa` aprovado, e os demais estão no relatório.
+**Uma rodada de revisão, e a correção (D6):**
+- **A rodada.** Com os portões verdes e o commit feito, o script roda uma vez, sobre o branch inteiro (`escolhe-revisores.mjs <base> <head>`), e o conjunto que ele imprime sai numa mensagem só, com o `qa` completo quando o script o imprime (obrigatório, ou condicional que você aceita). É a única vez que o conjunto roda.
+- **Correção.** Ela entra em commit, e então:
+  - os portões rodam de novo;
+  - o `qa` roda no modo curto, sobre os casos corrigidos e os vizinhos deles;
+  - o revisor que achou um item de risco (bug, permissão, dado pessoal, regra que não se negocia) confere só aquele item, num agente novo com um pacote pequeno: o item, o delta e o ponteiro da regra. Se ele tem menos de ~100 mil tokens de contexto, a seção 2 deixa retomá-lo com `SendMessage`;
+  - o item de texto ou de documentação não volta a revisor: o orquestrador o confere;
+  - **LGPD na correção (D6):** se o `confere-lgpd` do delta mostra supressão nova, ou se o `escolhe-revisores.mjs <commit anterior> <head>` imprime o `revisor-lgpd` (gatilho `dado_pessoal`, `lgpd_ignora` ou `confere-lgpd`), o `revisor-lgpd` confere só esse ponto, num agente novo com um pacote pequeno.
+
+  O delta não reabre o conjunto: o `escolhe-revisores` roda sobre ele só para o item da LGPD acima. A rede da correção são os portões, o `qa` curto e quem achou o item. **Risco aceito (D6):** a correção pode criar defeito que só um revisor de fora do item veria; a rede final é o PR, que o usuário revisa antes do merge.
+- **Fechar.** A correção sem defeito novo nos portões e no `qa` curto fecha, e o resto vai para o relatório. Defeito novo abre outra correção, que conta no teto.
+- **Teto.** Antes de abrir a 4ª rodada de correção, pare. Escreva a premissa que os defeitos têm em comum e teste-a (`principle-attack-the-premise`), ou leve-a ao usuário. Não mande outro remendo.
+- **O que se repetiu vira estrutura (D6).** O que a sessão fez duas vezes sai do texto e entra no hook: a `guarda-agentes` nega o subagente com `isolation: worktree` sem `git switch -c` no pedido ou no pacote (o worktree nasce da `main`); a mudança só de comentário num `.sql` não aciona gatilho por caminho nem o `grande` (os gatilhos de conteúdo seguem lendo as linhas dela), e o `.md` e o arquivo de teste não tornam o `qa` obrigatório; o `confere-main` deixa passar o `pack-refs`.
+
+**Pronto quando:** todo achado de "corrigir agora" foi corrigido, com os portões verdes de novo, o `qa` completo da rodada (quando o script o pediu) e o `qa` curto da correção aprovados, o item de risco conferido por quem o achou, e os demais estão no relatório. O `incompleto` não conta: vale o resto relançado no modo curto e aprovado, ou a falta aceita pelo usuário numa mensagem dele, antes do commit final.
 
 ## 5. Commit
 
@@ -103,11 +134,14 @@ O relatório, curto, em português:
 - os riscos que o usuário precisa saber (inclusive as linhas finais do `ponytail`);
 - o commit (hash e 1ª linha).
 
-**Autoanálise (D2), ao fim de toda sessão que mudou o repositório:** o orquestrador grava `docs/pipeline/sessoes/<AAAA-MM-DD>-<assunto>.md`, no formato de `docs/pipeline/sessoes/MODELO.md`: um bloco JSON fixo (agentes com modelo, esforço, tokens, minutos e rodadas; achados com revisor, severidade, se foi só ele que viu, se foi confirmado e quem deveria ter visto e não viu; erros do orquestrador) e um texto curto com as lições. Os números vêm do que os subagentes devolvem; o que for estimado leva `"aprox": true`. Depois roda `node .claude/hooks/ajusta-pipeline.mjs --relatorio`, cola a saída no relatório e, se ela pedir ajuste, segue a skill `adjust-pipeline`. A sessão entra no commit da tarefa ou num commit `docs:` à parte.
+**Autoanálise (D2, D6, D7), ao fim de toda sessão que mudou o repositório nos esforços `medio` e `alto` (dispensada no `rapido`).** Ela sobrevive ao compact porque o estado fica fora do contexto:
+- **O livro da sessão.** A cada agente que volta, o orquestrador anota uma linha em `<scratchpad>/livro-sessao.jsonl`, na hora, antes de seguir. A linha leva `agentId`, `papel` (`codigo`, `revisor`, `qa`, `consulta` ou `integracao`), `tipo`, `modelo`, `esforco`, `modulo`, `modo` (`completo` ou `curto`), `pacote`, `retomado` e `achados` (`severidade`, `resumo` e `visto_por`). Sem dado pessoal, como o arquivo da sessão. O usuário faz compact quando o contexto passa de ~50%: o livro é o que guarda o estado.
+- **O arquivo da sessão.** No fim, um subagente `general-purpose` no nível `autoanalise` da seção 7 (ele só junta números e não julga), lê o livro e roda `node .claude/hooks/coleta-agentes.mjs <pasta tasks da sessão> [--desde <ISO>] [--json]`, que tira das transcrições em disco, por `agentId`, o modelo, os tokens (o contexto final), os minutos e o número de pedidos (mais de um é retomado). Ele grava `docs/pipeline/sessoes/<AAAA-MM-DD>-<assunto>.md` no formato de `docs/pipeline/sessoes/MODELO.md`: um bloco JSON fixo (agentes com modelo, esforço, tokens, minutos e rodadas; achados com revisor, severidade, se foi só ele que viu, se foi confirmado e quem deveria ter visto e não viu; erros do orquestrador) e um texto curto com as lições. O que for estimado leva `"aprox": true`. Os erros do orquestrador e as lições ele não inventa: vêm do livro e do orquestrador.
+- **A conta.** O orquestrador confere o arquivo, roda `node .claude/hooks/ajusta-pipeline.mjs --relatorio`, cola a saída no relatório e, se ela pedir ajuste, segue a skill `adjust-pipeline`. A sessão entra no commit da tarefa ou num commit `docs:` à parte.
 
 ## 7. Agentes: modelo e esforço
 
-**A regra do par (D3):** o papel dá o modelo, que não se ajusta: julgar lendo é `opus`, escrever ou rodar é `sonnet`, só apontar é `haiku`. O custo do erro dá o esforço de partida, do mais alto ao mais baixo: quem orquestra e o revisor cujo erro vaza dado entre donos ou abre a guarda; quem revisa ou testa e o código que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`); o resto do código; o trivial. Depois, só a conta da D2 mexe, um degrau de esforço, sem trocar o modelo. O par vigente de cada um é o da tabela abaixo.
+**A regra do par (D3):** o papel dá o modelo, que não se ajusta: julgar lendo é `opus`, escrever ou rodar é `sonnet`, só apontar é `haiku`. O custo do erro dá o esforço de partida, do mais alto ao mais baixo: quem orquestra e o revisor cujo erro vaza dado entre donos ou abre a guarda; quem revisa ou testa e o código que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`); o resto do código; o trivial. Depois, só a conta da D2 ou uma ordem do usuário (D4) mexe, um degrau de esforço, sem trocar o modelo. O par vigente de cada um é o da tabela abaixo.
 
 O orquestrador é `opus xhigh`, sempre: a `guarda-agentes` nega delegar com o chat principal em outro par.
 
@@ -120,6 +154,7 @@ O orquestrador é `opus xhigh`, sempre: a `guarda-agentes` nega delegar com o ch
 | nível `medio` | código: feature, bug ou refactor dentro de uma pasta | `sonnet` | `medium` |
 | nível `codigo-seguranca` | código que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`) e a integração de fase | `sonnet` | `high` |
 | nível `revisao-ponytail` | `ponytail-review` e `ponytail-audit` (em `general-purpose`) | `sonnet` | `high` |
+| nível `autoanalise` | juntar o livro da sessão (`livro-sessao.jsonl`, no scratchpad) com os números do `coleta-agentes.mjs` e gravar o arquivo da sessão | `sonnet` | `medium` |
 | nível `orquestracao` | `orquestrador` (`.claude/agents/orquestrador.md`), só como agente do chat principal | `opus` | `xhigh` |
 | nível `forte` | as propostas `Plan` de uma decisão de arquitetura (`decisao.md`) | `opus` | `high` |
 | agente `revisor-seguranca` (`.claude/agents/`) | revisão de risco: banco, permissão, dado pessoal, rede, segredo, isolamento entre donos de dado | `opus` | `xhigh` |

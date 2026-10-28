@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { avaliarMain } from './confere-main.mjs';
+import { avaliarMain, ehPodaDoPackRefs } from './confere-main.mjs';
 
 const HOOKS = join(dirname(fileURLToPath(import.meta.url)), 'git');
 const A = 'a'.repeat(40);
@@ -94,4 +94,70 @@ test('o hook reference-transaction no git de verdade: recusa a main fora do orig
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+const DOIS = (v) => `${v} ${ZERO} refs/heads/main`;
+
+test('avaliarMain (D63): o pack-refs apaga a ref solta da main, e só ele passa; apagar de verdade continua negado', () => {
+  const ancestral = () => true;
+  const empacota = () => true; // o pai é o git pack-refs e o packed-refs tem a main nesse sha
+  const naoEmpacota = () => false;
+  assert.equal(avaliarMain([DOIS(A)], A, ancestral, empacota), null, 'a poda do pack-refs passa');
+  assert.match(avaliarMain([DOIS(A)], A, ancestral, naoEmpacota) ?? '', /apagar a main/, 'o mesmo estado fora do pack-refs nega');
+  assert.match(avaliarMain([DOIS(A)], A, ancestral) ?? '', /apagar a main/, 'sem o 4º argumento nega');
+  assert.match(avaliarMain([`${ZERO} ${ZERO} refs/heads/main`], A, ancestral, empacota) ?? '', /apagar a main/, 'o apagar sem valor antigo (branch -D) nega, mesmo com o pai pack-refs');
+  assert.match(avaliarMain([DOIS(A), `${A} ${B} refs/heads/main`], A, () => false, empacota) ?? '', /a main só anda/, 'o pack-refs não passa o que mexe a main para outro commit');
+});
+
+test('o pack-refs no git de verdade (D63): a manutenção que empacota a main não é recusada; apagar a main com o valor antigo, solta e empacotada, continua sendo', () => {
+  const base = mkdtempSync(join(tmpdir(), 'confere-main-packrefs-'));
+  const git = (pasta, ...args) => {
+    const r = spawnSync('git', args, { cwd: pasta, encoding: 'utf8' });
+    return { ok: r.status === 0, saida: `${r.stdout}${r.stderr}` };
+  };
+  try {
+    const remoto = join(base, 'remoto.git');
+    const semente = join(base, 'semente');
+    const repo = join(base, 'repo');
+    git(base, 'init', '-q', '--bare', '-b', 'main', remoto);
+    git(base, 'clone', '-q', remoto, semente);
+    for (const [k, v] of [['user.name', 'teste'], ['user.email', 'teste@example.com'], ['core.autocrlf', 'false']]) git(semente, 'config', k, v);
+    writeFileSync(join(semente, 'README.md'), 'a\n');
+    git(semente, 'add', '-A');
+    git(semente, 'commit', '-q', '-m', 'a');
+    git(semente, 'push', '-q', 'origin', 'main');
+    git(base, 'clone', '-q', remoto, repo);
+    for (const [k, v] of [['user.name', 'teste'], ['user.email', 'teste@example.com'], ['core.autocrlf', 'false'], ['core.hooksPath', HOOKS]]) git(repo, 'config', k, v);
+    assert.equal(git(repo, 'switch', '-q', '-c', 'pr/x').ok, true);
+    const sha = git(repo, 'rev-parse', 'main').saida.trim();
+
+    const r = git(repo, 'pack-refs', '--all', '--prune');
+    assert.equal(r.ok, true, `o pack-refs não pode ser recusado: ${r.saida}`);
+    assert.doesNotMatch(r.saida, /confere-main/);
+    assert.equal(git(repo, 'rev-parse', 'main').saida.trim(), sha, 'a main continua lá, agora só no packed-refs');
+    assert.equal(git(repo, 'gc', '--auto', '-q').ok, true, 'a manutenção automática também passa');
+
+    // a main solta e empacotada ao mesmo tempo, no mesmo valor: o estado da poda, mas por um comando que apaga de verdade
+    git(repo, 'update-ref', 'refs/heads/main', sha);
+    assert.equal(git(repo, 'pack-refs', '--all', '--no-prune').ok, true);
+    assert.match(git(repo, 'update-ref', '-d', 'refs/heads/main', sha).saida, /apagar a main/, 'update-ref -d com o valor antigo');
+    assert.match(git(repo, 'branch', '-D', 'main').saida, /apagar a main/, 'branch -D');
+    assert.equal(git(repo, 'rev-parse', 'main').saida.trim(), sha, 'a main segue viva');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('ehPodaDoPackRefs (D63): o git pack-refs entre os 3 ancestrais e o sha no packed-refs; sem um dos dois, sem ps ou com erro, nega', () => {
+  const cadeia = (comando) => (pid) => ({ 10: { ppid: 20, comando: '/bin/sh ../hooks/reference-transaction prepared' }, 20: { ppid: 30, comando }, 30: { ppid: 1, comando: 'zsh' } })[pid] ?? { ppid: 1, comando: '' };
+  const packed = [`# pack-refs with: peeled`, `${A} refs/heads/main`, `${B} refs/heads/outro`];
+  const ve = (antigo, comando, extra = {}) => ehPodaDoPackRefs(antigo, { pai: 10, lerPacked: () => packed, processo: cadeia(comando), ...extra });
+  assert.equal(ve(A, 'git pack-refs --all --prune'), true);
+  assert.equal(ve(A, '/usr/bin/git -c gc.auto=0 pack-refs --all'), true, 'git com caminho e opção');
+  assert.equal(ve(A, 'git update-ref -d refs/heads/main'), false, 'outro comando do git');
+  assert.equal(ve(A, 'git branch -D pack-refs'), false, 'o nome no meio de outro comando não vale');
+  assert.equal(ve(B, 'git pack-refs --all'), false, 'o packed-refs tem a main em outro sha');
+  assert.equal(ve(A, 'git pack-refs --all', { lerPacked: () => { throw new Error('sem arquivo'); } }), false, 'packed-refs ilegível');
+  assert.equal(ve(A, 'git pack-refs --all', { processo: () => ({ ppid: 0, comando: '' }) }), false, 'sem ps');
+  assert.equal(ve(A, 'git pack-refs --all', { processo: (pid) => ({ ppid: pid + 1, comando: pid > 12 ? 'git pack-refs' : 'sh' }), pai: 10 }), false, 'só 3 níveis acima');
 });

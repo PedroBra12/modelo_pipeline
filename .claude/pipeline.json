@@ -15,13 +15,16 @@
     "medio": { "model": "sonnet", "effort": "medium", "tarefa": "código: feature, bug ou refactor dentro de uma pasta" },
     "codigo-seguranca": { "model": "sonnet", "effort": "high", "tarefa": "código que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`) e a integração de fase" },
     "revisao-ponytail": { "model": "sonnet", "effort": "high", "revisor": "ponytail-review", "tarefa": "`ponytail-review` e `ponytail-audit` (em `general-purpose`)" },
+    "autoanalise": { "model": "sonnet", "effort": "medium", "tarefa": "juntar o livro da sessão (`livro-sessao.jsonl`, no scratchpad) com os números do `coleta-agentes.mjs` e gravar o arquivo da sessão" },
     "orquestracao": { "model": "opus", "effort": "xhigh", "tarefa": "`orquestrador` (`.claude/agents/orquestrador.md`), só como agente do chat principal" },
     "forte": { "model": "opus", "effort": "high", "tarefa": "as propostas `Plan` de uma decisão de arquitetura (`decisao.md`)" }
   },
   "revisao": {
-    "sempre": ["revisor-arquitetura", "ponytail-review"],
+    "sempre": [],
+    "grande": { "revisores": ["revisor-arquitetura", "ponytail-review"], "gatilhos": ["banco"] },
     "comportamento": ["qa"],
     "comportamento_caminhos": ["^(apps|packages|src)/"],
+    "comportamento_ignorar": ["\\.(test|spec|cy)\\.[cm]?[jt]sx?$", "(^|/)__tests__/", "(^|/)__mocks__/", "^tests?/"],
     "gatilhos": [
       {
         "nome": "permissao",
@@ -91,6 +94,7 @@
       {
         "nome": "tela",
         "revisores": ["revisor-tela"],
+        "layout": true,
         "caminhos": ["^(apps|packages|src)/(?!.*\\.(test|spec|stories)\\.).+\\.(jsx|tsx|vue|svelte|css|scss|html)$"],
         "conteudo": []
       }

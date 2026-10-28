@@ -5,7 +5,7 @@
 //   node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos [--data AAAA-MM-DD] [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --aplicar-mais <alvo> [--data AAAA-MM-DD] [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela [--raiz <pasta>]
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,12 +16,14 @@ import { TETO } from './guarda-agentes.mjs';
 const RAIZ_PADRAO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GRAVES = new Set(['critico', 'alto', 'must']);
 const MEDIO_MAIS = new Set([...GRAVES, 'medio', 'should', 'defeito']);
+// O que trava a descida (D60): só o achado grave. O médio e o baixo não travam mais; o `defeito` do `qa` é grave aqui.
+const TRAVA_DESCIDA = new Set([...GRAVES, 'defeito']);
 const SEVERIDADES = new Set([...MEDIO_MAIS, 'baixo', 'nice']);
 // `consulta`: subagente que só busca ou lê; o `tipo` dele é um nível (como o `leve`), não o nome do agente (`Explore`,
 // `claude-code-guide`). Não conta como código nem leva modelo e esforço obrigatórios.
 const PAPEIS = new Set(['codigo', 'revisor', 'qa', 'bug', 'integracao', 'consulta']);
 const COM_CODIGO = new Set(['codigo', 'bug', 'integracao']);
-const ACIONADO = new Set(['sempre', 'gatilho', 'julgamento']);
+const ACIONADO = new Set(['sempre', 'grande', 'gatilho', 'julgamento']);
 const MAX_TEXTO = 600;
 // id de pessoa (cliente 12345, lead #987, contato123, titular 0042): não é nome, mas leva a uma pessoa; nenhum texto da sessão o tem
 const ID_DE_PESSOA = /(cliente|lead|contato|titular)\s*#?\d{3,}/i;
@@ -194,7 +196,9 @@ function medir(alvo, posteriores, tamanho, cfg) {
   const janela = posteriores.slice(-tamanho);
   const meus = (a) => idDe(cfg, a.tipo) === alvo.id && `${a.modelo}:${a.esforco}` === par(alvo.entrada);
   const achados = posteriores.flatMap((s) => s.achados.map((a) => ({ ...a, sessao: nomeDe(s) })));
-  const contribui = (a) => a.confirmado !== false && MEDIO_MAIS.has(a.severidade) && (idDe(cfg, a.revisor) === alvo.id || (a.visto_por ?? []).some((n) => idDe(cfg, n) === alvo.id));
+  const dele = (a) => idDe(cfg, a.revisor) === alvo.id || (a.visto_por ?? []).some((n) => idDe(cfg, n) === alvo.id);
+  const contribui = (a) => a.confirmado !== false && MEDIO_MAIS.has(a.severidade) && dele(a);
+  const travaDescida = (a) => a.confirmado !== false && TRAVA_DESCIDA.has(a.severidade) && dele(a);
   const escapes = achados.filter((a) => a.confirmado !== false && MEDIO_MAIS.has(a.severidade) && (a.escapou_de ?? []).some((n) => idDe(cfg, n) === alvo.id));
   const semRodar = escapes.filter((a) => (a.nao_rodou ?? []).some((n) => idDe(cfg, n) === alvo.id));
   const comRodar = escapes.filter((a) => !semRodar.includes(a));
@@ -203,7 +207,7 @@ function medir(alvo, posteriores, tamanho, cfg) {
   const rodadas = posteriores.flatMap((s) => s.agentes.filter(meus)).map((e) => e.rodadas).filter((x) => typeof x === 'number');
   const nUnicos = soma(unicos, qtd);
   return {
-    janela, meus, achados, contribui, escapes, semRodar, comRodar, rodadas,
+    janela, meus, achados, contribui, travaDescida, escapes, semRodar, comRodar, rodadas,
     linha: {
       id: alvo.id, nivel: par(alvo.entrada), fixo: alvo.fixo, sessoes: posteriores.length, sessoesQueRodou: posteriores.filter((s) => s.agentes.some(meus)).length,
       tokens, unicosMedioMais: nUnicos, graves: soma(unicos.filter((a) => GRAVES.has(a.severidade)), qtd), tokensPorUnico: nUnicos === 0 ? null : Math.round(tokens / nUnicos),
@@ -234,7 +238,7 @@ export function analisar(sessoes, ajustes, cfg) {
     const ultimo = ajustes.filter((a) => a.alvo === alvo.chave).at(-1);
     const posteriores = validas.filter((s) => ultimo === undefined || !ultimo.vistas.includes(nomeDe(s)));
     const completa = posteriores.length >= tamanho;
-    const { janela, meus, achados, contribui, escapes, semRodar, comRodar, rodadas, linha } = medir(alvo, posteriores, tamanho, cfg);
+    const { janela, meus, achados, contribui, travaDescida, escapes, semRodar, comRodar, rodadas, linha } = medir(alvo, posteriores, tamanho, cfg);
     r.alvos.push(linha);
     if (alvo.fixo && !alvo.revisor) continue;
     const subir = (motivo, provas, soComJanela = false) => {
@@ -260,13 +264,13 @@ export function analisar(sessoes, ajustes, cfg) {
       const achouAlgo = (s) => s.achados.some((a) => a.confirmado !== false && MEDIO_MAIS.has(a.severidade));
       const limpas = posteriores.filter((s) => s.agentes.some(meus) && s.agentes.some((a) => COM_CODIGO.has(a.papel)) && !(s.gatilho_falso ?? []).some((n) => idDe(cfg, n) === alvo.id)
         && achouAlgo(s)).slice(-tamanho);
-      const apto = !alvo.fixo && limpas.length >= tamanho && limpas.every((s) => !s.achados.some((a) => contribui(a))) && escapes.length === 0;
+      const apto = !alvo.fixo && limpas.length >= tamanho && limpas.every((s) => !s.achados.some((a) => travaDescida(a))) && escapes.length === 0;
       if (apto) {
         const adiar = janela.flatMap((s) => (s.adiar ?? []).filter((d) => idDe(cfg, d.alvo) === alvo.id));
         const d = degrau(alvo, -1);
         if (adiar.length > 0) r.adiados.push({ id: alvo.id, motivo: `descida adiada: ${adiar.at(-1).motivo}` });
         else if (d.erro) r.bloqueios.push({ id: alvo.id, motivo: d.erro });
-        else candidatos.push({ id: alvo.id, secao: alvo.secao, chave: alvo.chave, ...d, tipo: 'menos', motivo: `${tamanho} sessões com código em que ele rodou, sem achado de nível médio ou mais seu e sem escape`, provas: [] });
+        else candidatos.push({ id: alvo.id, secao: alvo.secao, chave: alvo.chave, ...d, tipo: 'menos', motivo: `${tamanho} sessões com código em que ele rodou, sem achado grave seu (crítico, alto, must ou defeito) e sem escape`, provas: [] });
       }
     } else if (linha.mediaRodadas !== null && rodadas.length >= 2 && linha.mediaRodadas >= altas) {
       subir(`média de ${linha.mediaRodadas} rodadas de correção em ${rodadas.length} agentes (limite ${altas})`, [], true);
@@ -448,7 +452,16 @@ function principal(argv) {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const mesmoArquivo = (a, b) => {
+  if (a === b) return true;
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+};
+
+if (mesmoArquivo(process.argv[1], fileURLToPath(import.meta.url))) {
   try {
     principal(process.argv.slice(2));
   } catch (e) {

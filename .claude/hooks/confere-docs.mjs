@@ -8,7 +8,7 @@
 //   (arquivo de uma pasta `gerado/` que o AGENTS.md cita não conta como código);
 // - o pipeline.json está ilegível ou sem pastasDeTrabalho válidas (falha fechado).
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXTENSOES_DE_CODIGO, ehArquivoDeCodigo, lerPastas } from './config.mjs';
@@ -137,7 +137,16 @@ function principal(arquivoDaMensagem) {
   return 1;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const mesmoArquivo = (a, b) => {
+  if (a === b) return true;
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+};
+
+if (process.argv[1] !== undefined && mesmoArquivo(process.argv[1], fileURLToPath(import.meta.url))) {
   try {
     process.exitCode = principal(process.argv[2] ?? '');
   } catch (erro) {

@@ -12,11 +12,12 @@ const arq = (caminho, adicionadas = [], removidas = []) => ({
   linhas: adicionadas.map((texto, i) => ({ n: i + 1, texto })),
   removidas: removidas.map((texto, i) => ({ n: i + 1, texto })),
 });
+const esc = (arquivos, opcoes = {}) => escolher(arquivos, cfg, { esforco: 'alto', ...opcoes });
 const chama = (arquivos, nome, gatilho) => {
-  const r = escolher(arquivos, cfg).obrigatorios.find((x) => x.nome === nome);
+  const r = esc(arquivos).obrigatorios.find((x) => x.nome === nome);
   return r !== undefined && (gatilho === undefined || r.motivos.some((m) => m.gatilho === gatilho));
 };
-const nomesDe = (arquivos) => escolher(arquivos, cfg).obrigatorios.map((r) => r.nome).sort();
+const nomesDe = (arquivos) => esc(arquivos).obrigatorios.map((r) => r.nome).sort();
 const linha = (l, gatilho, revisor = 'revisor-seguranca', caminho = 'src/x/dados.ts') => chama([arq(caminho, [l])], revisor, gatilho);
 
 // ---------- permissao ----------
@@ -112,10 +113,11 @@ test('dado_pessoal: a linha removida também chama a LGPD (tirar o campo, a anon
 
 // ---------- tela ----------
 
-test('tela: arquivo de tela chama o revisor-tela, mas o de teste, de spec e de story não', () => {
-  for (const c of ['src/x/Tela.tsx', 'src/x/Tela.jsx', 'src/test-utils/Botao.tsx', 'src/x/estilo.css', 'apps/web/page.vue', 'src/x/Tela.module.css']) assert.ok(chama([arq(c, ['x'])], 'revisor-tela', 'tela'), c);
+test('tela: arquivo de tela com layout chama o revisor-tela, mas o de teste, de spec e de story não', () => {
+  const linhaDeLayout = ['<div className="x">oi</div>', '.a { display: flex; }'];
+  for (const c of ['src/x/Tela.tsx', 'src/x/Tela.jsx', 'src/test-utils/Botao.tsx', 'src/x/estilo.css', 'apps/web/page.vue', 'src/x/Tela.module.css']) assert.ok(chama([arq(c, linhaDeLayout)], 'revisor-tela', 'tela'), c);
   for (const c of ['src/x/Tela.test.tsx', 'src/x/Tela.spec.jsx', 'src/x/Tela.stories.tsx', 'src/x/Tela.stories.jsx', 'src/x/Botao.test.vue', 'packages/ui/Botao.stories.svelte', 'src/x/estilo.test.css']) {
-    assert.ok(!chama([arq(c, ['x'])], 'revisor-tela', 'tela'), `${c} é teste ou story`);
+    assert.ok(!chama([arq(c, linhaDeLayout)], 'revisor-tela', 'tela'), `${c} é teste ou story`);
   }
 });
 
@@ -169,7 +171,7 @@ test('lockfile não é código: sozinho não chama o sempre, o qa nem gatilho ne
 // ---------- o aviso do confere-lgpd ----------
 
 test('um aviso do confere-lgpd (médio) chama o revisor-lgpd, com o motivo "confere-lgpd: <regra>"; o suprimido e o que passa, não', () => {
-  const r = escolher([arq('src/x.ts', ['const a = 1;', "const perfil = { religiao: 'x' };"])], cfg);
+  const r = esc([arq('src/x.ts', ['const a = 1;', "const perfil = { religiao: 'x' };"])]);
   const lgpd = r.obrigatorios.find((x) => x.nome === 'revisor-lgpd');
   assert.ok(lgpd, 'religião num src/x.ts: campo sensível');
   const m = lgpd.motivos.find((x) => x.gatilho === 'confere-lgpd');
@@ -185,7 +187,7 @@ test('um aviso do confere-lgpd (médio) chama o revisor-lgpd, com o motivo "conf
 
 test('o aviso do confere-lgpd não repete o trecho achado na saída de formatar', async () => {
   const { formatar } = await import('./escolhe-revisores.mjs');
-  const texto = formatar(escolher([arq('src/x.ts', ["const perfil = { religiao: 'segredo-do-teste' };"])], cfg), 'a', 'b');
+  const texto = formatar(esc([arq('src/x.ts', ["const perfil = { religiao: 'segredo-do-teste' };"])]), 'a', 'b');
   assert.match(texto, /confere-lgpd: campo_sensivel_no_codigo/);
   assert.doesNotMatch(texto, /segredo-do-teste/);
 });
@@ -195,31 +197,31 @@ test('o aviso do confere-lgpd não repete o trecho achado na saída de formatar'
 test('o binário roda só as regras de caminho e de binário do confere-lgpd: a imagem nova chama o revisor-lgpd (regra de print) e não dispara gatilho de conteúdo', () => {
   const binario = (caminho) => ({ caminho, binario: true, linhas: [], removidas: [] });
   for (const c of ['src/public/a.png', 'src/x/b.jpg', 'src/x/c.jpeg', 'src/x/d.gif', 'src/x/e.webp', 'src/x/O.PNG', 'docs/print.png']) {
-    const r = escolher([binario(c)], cfg);
+    const r = esc([binario(c)]);
     assert.deepEqual(r.obrigatorios.map((x) => x.nome), ['revisor-lgpd'], `${c}: só a LGPD`);
     assert.deepEqual(r.obrigatorios[0].motivos.map((m) => [m.gatilho, m.por]), [['confere-lgpd', 'imagem_no_repositorio']], c);
   }
   // o ícone, a fonte, o pdf e o vídeo não têm regra de caminho nem são binário desconhecido: nada os chama
   for (const c of ['src/x/f.ico', 'src/x/h.woff', 'src/x/i.woff2', 'src/x/j.ttf', 'src/x/k.otf', 'src/x/m.mp4', 'src/x/n.webm']) {
-    assert.deepEqual(escolher([binario(c)], cfg).obrigatorios, [], c);
+    assert.deepEqual(esc([binario(c)]).obrigatorios, [], c);
   }
   // o pdf cai na regra de arquivo de dados do confere-lgpd (o conteúdo não se confere, e pode ser a base de clientes)
-  assert.deepEqual(escolher([binario('src/x/l.pdf')], cfg).obrigatorios.map((x) => [x.nome, x.motivos.map((m) => m.por)]), [['revisor-lgpd', ['arquivo_de_dados']]]);
+  assert.deepEqual(esc([binario('src/x/l.pdf')]).obrigatorios.map((x) => [x.nome, x.motivos.map((m) => m.por)]), [['revisor-lgpd', ['arquivo_de_dados']]]);
   // o avif não está no "fora" do binario_desconhecido do confere-lgpd: quem o usa põe a extensão lá (a regra diz como)
-  assert.deepEqual(escolher([binario('src/x/g.avif')], cfg).obrigatorios.map((x) => x.motivos.map((m) => m.por)), [['binario_desconhecido']]);
+  assert.deepEqual(esc([binario('src/x/g.avif')]).obrigatorios.map((x) => x.motivos.map((m) => m.por)), [['binario_desconhecido']]);
 });
 
 test('só a imagem removida deixa de chamar o revisor-lgpd; a adicionada, a mudada e a renomeada (mesmo sem mudar: git mv docs/print.png public/print.png publica o print) chamam', () => {
   const imagem = (status) => ({ caminho: 'docs/print.png', binario: true, ...(status === undefined ? {} : { status }), linhas: [], removidas: [] });
-  assert.deepEqual(escolher([imagem('D')], cfg).obrigatorios, [], 'D');
+  assert.deepEqual(esc([imagem('D')]).obrigatorios, [], 'D');
   for (const status of ['A', 'M', 'R100', 'R090', 'R050', undefined]) {
-    assert.deepEqual(escolher([imagem(status)], cfg).obrigatorios.map((x) => [x.nome, x.motivos.map((m) => m.por)]), [['revisor-lgpd', ['imagem_no_repositorio']]], String(status));
+    assert.deepEqual(esc([imagem(status)]).obrigatorios.map((x) => [x.nome, x.motivos.map((m) => m.por)]), [['revisor-lgpd', ['imagem_no_repositorio']]], String(status));
   }
 });
 
 test('o outro binário em pasta de trabalho continua disparando os gatilhos de conteúdo, e o do confere-lgpd (binário desconhecido) também', () => {
   const binario = (caminho) => ({ caminho, binario: true, linhas: [], removidas: [] });
-  const r = escolher([binario('src/x/dados.dat')], cfg);
+  const r = esc([binario('src/x/dados.dat')]);
   assert.deepEqual(r.obrigatorios.map((x) => x.nome).sort(), ['revisor-lgpd', 'revisor-seguranca']);
   assert.ok(r.obrigatorios.find((x) => x.nome === 'revisor-lgpd').motivos.some((m) => m.gatilho === 'confere-lgpd' && m.por === 'binario_desconhecido'));
   assert.deepEqual(nomesDe([binario('docs/dados.dat')]), ['revisor-lgpd'], 'fora da pasta de trabalho só a regra do confere-lgpd');

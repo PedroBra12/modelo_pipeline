@@ -1,6 +1,7 @@
 // Hook pre-commit e pre-merge-commit do git: nada se commita na main; todo trabalho vai num branch pr/<assunto-em-kebab>.
 // Com o HEAD solto (rebase, bisect) deixa passar. Só o usuário passa por cima, com git -c core.hooksPath= <comando>, pelo !.
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const MENSAGEM =
@@ -16,4 +17,13 @@ function principal() {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) principal();
+const mesmoArquivo = (a, b) => {
+  if (a === b) return true;
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+};
+
+if (process.argv[1] !== undefined && mesmoArquivo(process.argv[1], fileURLToPath(import.meta.url))) principal();

@@ -7,7 +7,7 @@
 // publicar ficam com o usuário. O repositório é o `repositorio` de .claude/pipeline.json: enquanto for o marcador,
 // faltar ou for inválido, push, remote add/set-url e escrita em PR são negados (falha fechado).
 // Modo em PIPELINE_GUARDA_GIT: "negar" (padrão), "perguntar" ou "desligado".
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURE, lerRepositorio, urlDoRepositorio } from './config.mjs';
@@ -377,4 +377,13 @@ async function principal() {
   else if (veredito === 'deny') decidir(modo === 'perguntar' && !motivo.startsWith(CONFIGURE) ? 'ask' : 'deny', motivo);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) await principal();
+const mesmoArquivo = (a, b) => {
+  if (a === b) return true;
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+};
+
+if (process.argv[1] !== undefined && mesmoArquivo(process.argv[1], fileURLToPath(import.meta.url))) await principal();

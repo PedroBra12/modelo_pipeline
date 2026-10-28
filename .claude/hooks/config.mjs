@@ -96,15 +96,15 @@ export const urlDoRepositorio = (repo) => new RegExp(`^(https://github\\.com/|gi
 export const ESCADA = ['sonnet:low', 'sonnet:medium', 'sonnet:high', 'opus:medium', 'opus:high', 'opus:xhigh'];
 /** O par mínimo que o ajuste automático respeita, por seção e nome. */
 export const PISOS = {
-  agentes: { 'revisor-seguranca': 'opus:high', 'revisor-arquitetura': 'opus:medium', qa: 'sonnet:medium', 'revisor-tela': 'sonnet:medium' },
+  agentes: { 'revisor-arquitetura': 'opus:medium', qa: 'sonnet:medium', 'revisor-tela': 'sonnet:medium' },
   niveis: { medio: 'sonnet:medium', 'codigo-seguranca': 'sonnet:high', 'revisao-ponytail': 'sonnet:medium' },
 };
 /** Os níveis de código: o `opus` só entra no `Plan` de uma decisão, então o JSON não os põe nele. */
 export const NIVEIS_DE_CODIGO = ['medio', 'codigo-seguranca'];
 /** O que não se ajusta: o par é exatamente este. */
 export const FIXOS = {
-  agentes: { 'leitor-docs': 'haiku:low', 'revisor-lgpd': 'opus:high' },
-  niveis: { leve: 'sonnet:low', orquestracao: 'opus:xhigh', forte: 'opus:high' },
+  agentes: { 'leitor-docs': 'haiku:low', 'revisor-lgpd': 'opus:high', 'revisor-seguranca': 'opus:xhigh' },
+  niveis: { leve: 'sonnet:low', autoanalise: 'sonnet:medium', orquestracao: 'opus:xhigh', forte: 'opus:high' },
 };
 /** A supressão de um achado do `confere-lgpd` (`lgpd-ignora: <regra> -- <motivo>`): o `confere-lgpd` e o gatilho `lgpd_ignora` usam esta mesma regex. */
 export const SUPRESSAO = /lgpd-ignora:\s*([\w ,]+?)\s*--\s*\S.{9,}/;
@@ -123,8 +123,13 @@ export const PISO_GATILHOS = {
   lgpd_regras: { revisores: ['revisor-lgpd'], caminhos: ['^\\.claude/hooks/(lgpd-regras|confere-lgpd)', '^\\.claude/hooks/config\\.mjs$', '^\\.claude/agents/revisor-lgpd\\.md$'], conteudo: ['legadoAte'], remocoes: true, exemplos: ['.claude/hooks/lgpd-regras.mjs'] },
   tela: { revisores: ['revisor-tela'], caminhos: ['^(apps|packages|src)/(?!.*\\.(test|spec|stories)\\.).+\\.(jsx|tsx|vue|svelte|css|scss|html)$'], conteudo: [], exemplos: ['src/x/Tela.jsx'] },
 };
-/** O mínimo de `sempre`, `comportamento` e dos caminhos que tornam o `qa` obrigatório. */
-export const PISO_REVISAO = { sempre: ['revisor-arquitetura', 'ponytail-review'], comportamento: ['qa'], comportamento_caminhos: ['^(apps|packages|src)/'] };
+/** O mínimo de `sempre` (vazio desde a D60), `comportamento` e dos caminhos que tornam o `qa` obrigatório. */
+export const PISO_REVISAO = { sempre: [], comportamento: ['qa'], comportamento_caminhos: ['^(apps|packages|src)/'] };
+/**
+ * A regra da mudança grande (D60): os revisores e os gatilhos (por nome) que a disparam. O JSON pode somar a estes,
+ * nunca tirar. As outras duas causas (2 rotas de `app/` ou mais, um `AGENTS.md` criado) moram no escolhe-revisores.mjs.
+ */
+export const PISO_GRANDE = { revisores: ['revisor-arquitetura', 'ponytail-review'], gatilhos: ['banco'] };
 
 const MODELOS = new Set(['opus', 'sonnet', 'haiku']);
 const ESFORCOS = new Set(['low', 'medium', 'high', 'xhigh']);
@@ -173,6 +178,9 @@ export const lerAgentes = (arquivo = ARQUIVO) => lerEntradas('agentes', arquivo,
 /** Os níveis dos subagentes comuns: `{ nome: { model, effort, tarefa, revisor? } }`. */
 export const lerNiveis = (arquivo = ARQUIVO) => lerEntradas('niveis', arquivo, false);
 
+/** Exemplos de caminho de código (D63): nenhum `comportamento_ignorar` pode casar com um deles, senão o `qa` deixa de ser obrigatório em código. */
+const EXEMPLOS_CODIGO = ['src/x/servidor.ts', 'src/api/x/route.ts', 'apps/web/src/x.tsx', 'packages/core/src/x.ts', 'db/migrations/20260101000000_x.sql'];
+
 /** Um `ignorar` de gatilho é um prefixo de caminho literal (`^pasta/`): letras, dígitos, `_`, `/`, `-` e `\.`. */
 const PREFIXO_LITERAL = /^\^(?:[\w/-]|\\\.)+$/;
 const compila = (lista) => lista.map((t) => new RegExp(t, 'i'));
@@ -180,32 +188,44 @@ const faltam = (tem, minimo) => minimo.filter((m) => !tem.includes(m));
 
 /**
  * O objeto `revisao` já com os regex compilados (flag i). Com `pisos` (padrão), confere o que o código exige: `sempre`
- * e `comportamento` não vazios, cada gatilho mínimo presente e sem tirar revisor, caminho ou conteúdo mínimo.
+ * vazio ou não, `comportamento` e `grande` com o mínimo, cada gatilho mínimo presente e sem tirar revisor, caminho ou conteúdo mínimo.
  */
 export function revisaoDeObjeto(r, { pisos = true } = {}) {
   if (!ehObjeto(r) || !listaDeTextos(r.sempre) || !listaDeTextos(r.comportamento) || !Array.isArray(r.gatilhos)) {
     return falha('revisao em .claude/pipeline.json tem de ter sempre e comportamento (listas de nomes) e gatilhos (lista)');
   }
+  if (r.grande !== undefined && (!ehObjeto(r.grande) || !listaDeTextos(r.grande.revisores) || !listaDeTextos(r.grande.gatilhos))) {
+    return falha('revisao.grande em .claude/pipeline.json tem de ter revisores e gatilhos (listas de nomes)');
+  }
   const ignorar = r.ignorar_conteudo ?? [];
   const porCaminho = r.comportamento_caminhos ?? [];
+  const semQa = r.comportamento_ignorar ?? [];
   if (!listaDeTextos(ignorar) || !regexOk(ignorar)) return falha('revisao.ignorar_conteudo tem de ser uma lista de regex válidas');
   if (!listaDeTextos(porCaminho) || !regexOk(porCaminho)) return falha('revisao.comportamento_caminhos tem de ser uma lista de regex válidas');
+  if (!listaDeTextos(semQa) || !regexOk(semQa)) return falha('revisao.comportamento_ignorar tem de ser uma lista de regex válidas');
   const nomes = new Set();
   for (const g of r.gatilhos) {
     const ruim = !ehObjeto(g) || typeof g.nome !== 'string' || g.nome === '' || nomes.has(g.nome) || !listaDeTextos(g.revisores) || g.revisores.length === 0
       || !listaDeTextos(g.caminhos) || !listaDeTextos(g.conteudo) || !regexOk(g.caminhos) || !regexOk(g.conteudo)
-      || !listaDeTextos(g.ignorar ?? []) || !regexOk(g.ignorar ?? []);
-    if (ruim) return falha(`revisao.gatilhos: gatilho inválido (${ehObjeto(g) ? g.nome : typeof g}): nome único, revisores (lista não vazia), caminhos, conteudo e ignorar (listas de regex válidas)`);
+      || !listaDeTextos(g.ignorar ?? []) || !regexOk(g.ignorar ?? []) || (g.layout !== undefined && typeof g.layout !== 'boolean') || (g.layout === true && g.nome !== 'tela');
+    if (ruim) return falha(`revisao.gatilhos: gatilho inválido (${ehObjeto(g) ? g.nome : typeof g}): nome único, revisores (lista não vazia), caminhos, conteudo e ignorar (listas de regex válidas) e layout (verdadeiro ou falso; verdadeiro só no tela)`);
     nomes.add(g.nome);
   }
   if (pisos) {
-    if (r.sempre.length === 0 || r.comportamento.length === 0) return falha('revisao.sempre e revisao.comportamento não podem ficar vazios');
+    if (r.comportamento.length === 0) return falha('revisao.comportamento não pode ficar vazio');
     const sem = (lista, minimo, o) => { const f = faltam(lista, minimo); return f.length > 0 ? `${o} perdeu ${f.join(', ')}` : null; };
     const lookahead = [...ignorar, ...r.gatilhos.flatMap((g) => g.ignorar ?? [])].find((t) => t.includes('(?'));
+    const semQaCala = EXEMPLOS_CODIGO.find((e) => compila(semQa).some((re) => re.test(e)));
     const problemas = [
+      semQa.some((t) => t.includes('(?')) ? 'revisao.comportamento_ignorar não aceita (? (um lookahead cala quase tudo)' : null,
+      semQaCala === undefined ? null : `revisao.comportamento_ignorar casa com ${semQaCala}, e o qa deixaria de ser obrigatório em código`,
       lookahead === undefined ? null : `ignorar e ignorar_conteudo não aceitam (? (um lookahead cala quase tudo e escapa da conferência): ${lookahead}`,
       ...r.gatilhos.flatMap((g) => (g.ignorar ?? []).filter((t) => !PREFIXO_LITERAL.test(t)).map((t) => `o gatilho ${g.nome}: ignorar tem de ser um prefixo de caminho literal (^pasta/), não ${t}`)),
       sem(r.sempre, PISO_REVISAO.sempre, 'revisao.sempre'),
+      ...(r.grande === undefined ? ['revisao.grande falta'] : [
+        sem(r.grande.revisores, PISO_GRANDE.revisores, 'revisao.grande: revisores'), sem(r.grande.gatilhos, PISO_GRANDE.gatilhos, 'revisao.grande: gatilhos'),
+        ...r.grande.gatilhos.filter((n) => !r.gatilhos.some((g) => g.nome === n)).map((n) => `revisao.grande: o gatilho ${n} não existe em revisao.gatilhos`),
+      ]),
       sem(r.comportamento, PISO_REVISAO.comportamento, 'revisao.comportamento'),
       sem(porCaminho, PISO_REVISAO.comportamento_caminhos, 'revisao.comportamento_caminhos'),
       ...Object.entries(PISO_GATILHOS).flatMap(([nome, min]) => {
@@ -226,11 +246,13 @@ export function revisaoDeObjeto(r, { pisos = true } = {}) {
   return ok({
     sempre: r.sempre,
     comportamento: r.comportamento,
+    grande: r.grande === undefined ? null : { revisores: r.grande.revisores, gatilhos: r.grande.gatilhos },
     comportamento_caminhos: compila(porCaminho),
+    comportamento_ignorar: compila(semQa),
     ignorar: compila(ignorar),
     gatilhos: r.gatilhos.map((g) => ({
       nome: g.nome, revisores: g.revisores, caminhos: compila(g.caminhos), conteudo: compila(g.conteudo), ignorar: compila(g.ignorar ?? []),
-      remocoes: g.remocoes === true, todo_arquivo: g.todo_arquivo === true,
+      remocoes: g.remocoes === true, todo_arquivo: g.todo_arquivo === true, layout: g.layout === true,
     })),
   });
 }
