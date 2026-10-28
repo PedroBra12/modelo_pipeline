@@ -55,7 +55,7 @@ if (alterados.length > 0) {
         decision: 'block',
         reason: `Portão rápido vermelho: \`npm run ${nome}\` falhou. Corrija antes de encerrar (skill pipeline).\n\n${saida}`,
       });
-    } else if ((existsSync(arquivoEsforco) ? readFileSync(arquivoEsforco, 'utf8').trim().toLowerCase() : '') === 'rapido') {
+    } else if (((process.env.PIPELINE_ESFORCO ?? (existsSync(arquivoEsforco) ? readFileSync(arquivoEsforco, 'utf8') : '')).trim().toLowerCase()) === 'rapido') {
       rmSync(listaAlterados, { force: true });
       rmSync(revisaoPedida, { force: true });
     } else if (!existsSync(revisaoPedida)) {

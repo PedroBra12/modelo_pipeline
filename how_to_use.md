@@ -108,25 +108,74 @@ alias c='claude --agent orquestrador --permission-mode bypassPermissions'
 
 ---
 
-## 5. Como pedir tarefas (os 3 níveis de esforço)
+## 5. Como escolher o esforço (`rapido`, `medio`, `alto`): Modo Hard vs. Modo Soft
 
-O pipeline tem **3 níveis de esforço** (`rapido`, `medio` e `alto`) controlados por travas mecânicas nos hooks:
+O pipeline tem **3 níveis de esforço** (`rapido`, `medio` e `alto`):
 
-| Como chamar no chat | Esforço | O que roda | Quando usar |
-|---|---|---|---|
-| Apenas digite a tarefa (ou `/medio <tarefa>`) | **`medio` (padrão)** | Código + portões + `revisor-seguranca`, `ponytail-review` (se mudança grande), `revisor-tela` (se mudou layout), `qa` e autoanálise _(sem `revisor-arquitetura` e `revisor-lgpd`)_ | **Dia a dia (90% das tarefas):** features comuns, correções de bug, refatorações normais |
-| `/rapido <tarefa>` | **`rapido`** | Código + portões mecânicos (`portaoRapido`, `confere-lgpd`, `confere-docs`) _(sem revisores, sem `qa` e sem autoanálise)_ | Ajustes pontuais em partes não essenciais (textos, estilos simples, scripts internos sem risco) |
-| `/alto <tarefa>` | **`alto`** | Código + portões + **todos** os revisores acionados (`revisor-arquitetura` e `revisor-lgpd` inclusive) + `qa` + autoanálise | Mudanças críticas de arquitetura, banco de dados/migrations, permissões, autenticação ou LGPD |
+| Esforço | O que roda | Quando usar |
+|---|---|---|
+| **`medio` (padrão)** | Código + portões + `revisor-seguranca`, `ponytail-review` (se mudança grande), `revisor-tela` (se mudou layout), `qa` e autoanálise _(sem `revisor-arquitetura` e `revisor-lgpd`)_ | **Dia a dia (90% das tarefas):** features comuns, correções de bug, refatorações normais |
+| **`rapido`** | Código + portões mecânicos (`portaoRapido`, `confere-lgpd`, `confere-docs`) _(sem revisores, sem `qa` e sem autoanálise; trava se o diff tocar gatilho de risco)_ | Ajustes pontuais em partes não essenciais (textos, estilos simples, scripts internos sem risco) |
+| **`alto`** | Código + portões + **todos** os revisores acionados (`revisor-arquitetura` e `revisor-lgpd` inclusive) + `qa` + autoanálise | Mudanças críticas de arquitetura, banco de dados/migrations, permissões, autenticação ou LGPD |
 
-### Exemplos práticos no prompt do Claude Code:
+Você pode escolher o esforço de **duas formas**: **Hard** (100% travado por você no sistema operacional/disco, sem passar pela decisão da LLM) ou **Soft** (pedindo no chat com confirmação).
+
+---
+
+### A) Modo HARD (você trava mecanicamente antes ou fora da LLM)
+
+Use quando quiser **garantia absoluta** de que a sessão ou tarefa vai rodar naquele esforço sem depender de a LLM interpretar seu texto:
+
+#### Opção Hard 1 — Pela variável de ambiente `PIPELINE_ESFORCO` ao abrir o Claude Code (mais forte de todas)
+Os 3 hooks ([`guarda-agentes.mjs`](.claude/hooks/guarda-agentes.mjs), [`escolhe-revisores.mjs`](.claude/hooks/escolhe-revisores.mjs) e [`portao.mjs`](.claude/hooks/portao.mjs)) leem `PIPELINE_ESFORCO` **antes** do arquivo `.claude/estado/esforco`. Mesmo que a LLM tente escrever outro valor no arquivo, a variável de ambiente vence durante toda a sessão:
+
+```bash
+# Abre o Claude Code travado em rápido para a sessão inteira:
+PIPELINE_ESFORCO=rapido claude --agent orquestrador --permission-mode bypassPermissions
+
+# Abre travado em médio (padrão):
+PIPELINE_ESFORCO=medio claude --agent orquestrador --permission-mode bypassPermissions
+
+# Abre travado em alto:
+PIPELINE_ESFORCO=alto claude --agent orquestrador --permission-mode bypassPermissions
+```
+
+> **Dica:** adicione 3 aliases no seu `~/.zshrc` ou `~/.bashrc`:
+> ```bash
+> alias c-rapido='PIPELINE_ESFORCO=rapido claude --agent orquestrador --permission-mode bypassPermissions'
+> alias c-medio='PIPELINE_ESFORCO=medio claude --agent orquestrador --permission-mode bypassPermissions'
+> alias c-alto='PIPELINE_ESFORCO=alto claude --agent orquestrador --permission-mode bypassPermissions'
+> ```
+
+#### Opção Hard 2 — Gravando `.claude/estado/esforco` você mesmo com `!` dentro do Claude Code (para trocar no meio da sessão)
+Dentro do prompt do Claude Code, qualquer linha que começa com `!` roda **direto no seu shell humano** (sem passar pela LLM e sem pedir confirmação):
+
+```text
+!mkdir -p .claude/estado && printf 'rapido\n' > .claude/estado/esforco
+```
+Pronto: o arquivo `.claude/estado/esforco` já está gravado no disco. Na sequência, basta mandar sua tarefa normal que a `guarda-agentes.mjs` já bloqueará qualquer tentativa da LLM de abrir revisores ou `qa`, e o `portao.mjs` já liberará no verde de primeira. Para voltar ao padrão depois:
+```text
+!printf 'medio\n' > .claude/estado/esforco
+```
+
+---
+
+### B) Modo SOFT (pelo chat, com guardrails nos hooks)
+
+Se você não travou por variável de ambiente nem pelo `!`, pode pedir direto na conversa usando os comandos `/rapido`, `/medio` ou `/alto`:
 
 - **Usando o padrão (`medio`):**
   > `Crie o filtro por período na listagem de pedidos e adicione os testes.`
-- **Usando o modo rápido (`rapido`):**
+  *(Ou `/medio Crie o filtro...`)*
+- **Usando o modo rápido (`/rapido`):**
   > `/rapido Ajuste o texto do botão de exportação na tela de relatórios.`
-  *(O Claude Code vai exibir um pedido de confirmação na tela para você autorizar o esforço `rapido`, e o script `escolhe-revisores.mjs` vai recusar automaticamente caso o código toque banco, permissão, dado pessoal ou configuração do pipeline).*
-- **Usando o modo alto (`alto`):**
+- **Usando o modo alto (`/alto`):**
   > `/alto Adicione a migration de permissões por filial e aplique a validação na rota de faturamento.`
+
+**Por que mesmo no Modo Soft a LLM não consegue burlar para `rapido` sozinha?**
+1. Enquanto `.claude/estado/esforco` não existir, a [`guarda-agentes.mjs`](.claude/hooks/guarda-agentes.mjs) bloqueia (`deny`) qualquer subagente de código, revisão ou QA.
+2. Quando a LLM roda o comando para gravar `rapido` em `.claude/estado/esforco`, a [`guarda-git.mjs`](.claude/hooks/guarda-git.mjs) intercepta e **abre uma confirmação (`ask`) na sua tela** (*"confirme o esforço rapido em .claude/estado/esforco"*). Sem o seu "Allow", ela não entra no `rapido`.
+3. Mesmo após aprovado o `rapido`, se o código alterado tocar qualquer gatilho de risco (`banco`, `permissao`, `dado_pessoal`, `config_pipeline`, `lgpd_ignora`, `lgpd_regras` ou `confere-lgpd`), o [`escolhe-revisores.mjs`](.claude/hooks/escolhe-revisores.mjs) falha com `exit 2` e obriga a subir para `medio` ou `alto`.
 
 ---
 

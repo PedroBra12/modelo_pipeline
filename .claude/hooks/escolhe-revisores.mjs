@@ -554,8 +554,13 @@ export function formatar(resultado, base, head) {
 
 // ---------- linha de comando ----------
 
-/** O esforço gravado em `.claude/estado/esforco` na pasta `cwd`, ou o padrão (`medio`) se o arquivo não existe ou está vazio. */
-export function lerEsforcoDaPasta(cwd = process.cwd()) {
+/** O esforço em `env.PIPELINE_ESFORCO` ou gravado em `.claude/estado/esforco` na pasta `cwd`, ou o padrão (`medio`) se ausente/vazio. */
+export function lerEsforcoDaPasta(cwd = process.cwd(), env = process.env) {
+  const daEnv = typeof env?.PIPELINE_ESFORCO === 'string' ? env.PIPELINE_ESFORCO.trim().toLowerCase() : '';
+  if (daEnv !== '') {
+    if (!ESFORCOS_PIPELINE.has(daEnv)) throw new Error(`PIPELINE_ESFORCO inválido: "${daEnv}" (use rapido, medio ou alto)`);
+    return daEnv;
+  }
   const arquivo = join(cwd, ARQUIVO_ESFORCO);
   if (!existsSync(arquivo)) return ESFORCO_PADRAO;
   const texto = readFileSync(arquivo, 'utf8').trim().toLowerCase();
