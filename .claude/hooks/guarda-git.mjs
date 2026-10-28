@@ -328,12 +328,25 @@ export function avaliarEntrada(comando, cwd) {
 }
 
 const PEDE_CONFIRMACAO = 'confirme o comando: push ou PR';
+const PEDE_CONFIRMACAO_ESFORCO = 'confirme o esforço rapido em .claude/estado/esforco (dispensa todos os revisores, o qa e a autoanálise, D64)';
+const CAMINHO_ESFORCO = /\.claude[\\/]estado[\\/]esforco(?=$|[\s"';&|><)])/i;
+const ESCRITA_ESFORCO_SEGURO = /^\s*(?:mkdir\s+-p\s+["']?\.claude[\\/]estado["']?\s*&&\s*)?(?:printf\s+(?:['"]%s\\n['"]|['"]%s['"])\s+|echo\s+)(?:['"]?(?:medio|alto)['"]?)\s*>\s*["']?\.claude[\\/]estado[\\/]esforco["']?\s*$/i;
+const LEITURA_OU_LIMPEZA_ESFORCO = /^\s*(?:cat|head|tail|rm(?:\s+-f)?)\s+["']?\.claude[\\/]estado[\\/]esforco["']?\s*$/i;
 
-/** deny quando há motivo para negar; ask quando o comando sobe algo (push, remoto, escrita em PR); senão null. */
+/** Pede confirmação quando o comando toca `.claude/estado/esforco` fora da escrita direta de `medio`/`alto` ou leitura/limpeza (D64). */
+export function pedeConfirmacaoEsforco(comando) {
+  if (typeof comando !== 'string' || !CAMINHO_ESFORCO.test(comando)) return null;
+  if (ESCRITA_ESFORCO_SEGURO.test(comando) || LEITURA_OU_LIMPEZA_ESFORCO.test(comando)) return null;
+  return PEDE_CONFIRMACAO_ESFORCO;
+}
+
+/** deny quando há motivo para negar; ask quando o comando sobe algo (push, remoto, escrita em PR) ou grava `rapido` em `.claude/estado/esforco`; senão null. */
 export function decisao(comando, cwd) {
   const motivo = avaliarEntrada(comando, cwd);
   if (motivo !== null) return { decisao: 'deny', motivo };
   if (ler(comando).some((r) => r.sobe)) return { decisao: 'ask', motivo: PEDE_CONFIRMACAO };
+  const motivoEsforco = pedeConfirmacaoEsforco(comando);
+  if (motivoEsforco !== null) return { decisao: 'ask', motivo: motivoEsforco };
   return { decisao: null, motivo: null };
 }
 

@@ -21,11 +21,11 @@ Leia o pedido e o `AGENTS.md` das pastas que ele toca (e os das pastas acima). E
 | mudança trivial (uma ou duas linhas óbvias, sem lógica nova) | só as seções 3 a 5 abaixo |
 | só uma pergunta | responda; sem portão |
 
-Defina também o **esforço do pipeline (D7)** e grave-o em `.claude/estado/esforco` (`mkdir -p .claude/estado && printf '%s\n' <esforco> > .claude/estado/esforco`):
+Defina também o **esforço do pipeline (D7)** e grave-o em `.claude/estado/esforco` (`mkdir -p .claude/estado && printf '%s\n' <esforco> > .claude/estado/esforco`; atalhos: `/rapido`, `/medio` e `/alto` em `.claude/commands/`):
 - `medio` (**padrão** quando o usuário não pede outro): roda os portões, o `qa` e os revisores acionados pelos gatilhos, **sem** `revisor-arquitetura` e `revisor-lgpd` na revisão do código (`revisor-seguranca`, `ponytail-review` no `grande`, `revisor-tela` no layout novo e `qa` continuam).
-- `rapido` (mudança pontual em parte não essencial, ou quando o usuário pede "rápido"): escreve o código e roda só os portões mecânicos da seção 3 (`portaoRapido`, `confere-lgpd`, `confere-docs`); **sem revisores, sem `qa` e sem autoanálise da sessão**.
-- `alto` (mudança crítica de arquitetura/banco/LGPD, fase inteira, ou quando o usuário pede "alto"): roda todos os revisores acionados (`revisor-arquitetura` e `revisor-lgpd` inclusive), o `qa` e a autoanálise.
-- **Guardrails mecânicos (D7):** o `escolhe-revisores.mjs` lê `.claude/estado/esforco` (ou `--esforco`), a `guarda-agentes.mjs` bloqueia (`deny`) qualquer chamada de agente fora do esforço gravado, e o `portao.mjs` libera no verde sem cobrar revisão quando o esforço é `rapido`.
+- `rapido` (mudança pontual em parte não essencial, quando o usuário pede "rápido" ou `/rapido`): escreve o código e roda só os portões mecânicos da seção 3 (`portaoRapido`, `confere-lgpd`, `confere-docs`) mais o `escolhe-revisores.mjs` para conferir que nenhum gatilho de risco foi tocado; **sem revisores, sem `qa` e sem autoanálise da sessão**.
+- `alto` (mudança crítica de arquitetura/banco/LGPD, fase inteira, ou quando o usuário pede "alto" ou `/alto`): roda todos os revisores acionados (`revisor-arquitetura` e `revisor-lgpd` inclusive), o `qa` e a autoanálise.
+- **Guardrails mecânicos (D7):** (1) a `guarda-agentes.mjs` exige `.claude/estado/esforco` antes de delegar (sem ele só o `leitor-docs` passa) e bloqueia (`deny`) qualquer chamada de agente fora do esforço gravado; (2) a `guarda-git.mjs` e o `confere-lgpd.mjs` pedem confirmação do usuário (`ask`) ao gravar `rapido` em `.claude/estado/esforco`; (3) o `escolhe-revisores.mjs` lê `.claude/estado/esforco` (ou `--esforco`) e, no `rapido`, recusa com erro 2 se o diff acionar gatilho de risco (`banco`, `permissao`, `dado_pessoal`, `config_pipeline`, `lgpd_ignora`, `lgpd_regras`, `confere-lgpd`); (4) o `portao.mjs` libera no verde sem cobrar revisão quando o esforço é `rapido`.
 
 **Pronto quando:** a 1ª linha da resposta diz o caminho e o esforço (`Pipeline: feature · esforço: medio`), `.claude/estado/esforco` está gravado e a lista de tarefas tem os passos do playbook, copiados.
 
@@ -60,7 +60,7 @@ Enquanto o projeto não tiver os comandos dos portões 1 e 2, eles não existem:
 
 ## 4. Revisão e QA
 
-Depois dos portões, o chat principal (o `orquestrador`; subagente não abre outro subagente) roda o script, que lê `.claude/estado/esforco` (ou `--esforco rapido|medio|alto`, padrão `medio`, D7) e dá o **mínimo obrigatório** (no esforço `rapido`, esta seção inteira é dispensada: o script imprime zero obrigatórios e a `guarda-agentes` nega revisores e `qa`):
+Depois dos portões, o chat principal (o `orquestrador`; subagente não abre outro subagente) roda sempre o script, que lê `.claude/estado/esforco` (ou `--esforco rapido|medio|alto`, padrão `medio`, D7) e dá o **mínimo obrigatório** (no esforço `rapido`, o script confere que nenhum gatilho de risco foi tocado — se foi, sai com erro 2 obrigando a subir para `medio` ou `alto` — e imprime zero obrigatórios; a `guarda-agentes` nega revisores e `qa`):
 
 ```
 node .claude/hooks/escolhe-revisores.mjs <base> <head> [--esforco rapido|medio|alto]
