@@ -1,6 +1,6 @@
 // Hook PostToolUse (Edit, Write, MultiEdit, NotebookEdit): anota o arquivo de código alterado,
 // para o portão do Stop (portao.mjs) saber que há o que conferir. Nunca bloqueia.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ehArquivoDeCodigo } from './config.mjs';
@@ -30,4 +30,13 @@ async function principal() {
   if (!ja.includes(rel)) appendFileSync(lista, `${rel}\n`);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) await principal();
+const mesmoArquivo = (a, b) => {
+  if (a === b) return true;
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+};
+
+if (process.argv[1] !== undefined && mesmoArquivo(process.argv[1], fileURLToPath(import.meta.url))) await principal();

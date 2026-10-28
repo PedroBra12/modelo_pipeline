@@ -6,6 +6,7 @@
 // O confere-lgpd roda também sobre os arquivos de cada ref que sobe (commit a commit de <remoto>..<local>, ou de origin/main..<local> quando a ref é
 // nova): é a trava de quem commitou sem o hook (clone à parte, pull --ff-only, PATH com outro node). Achado que bloqueia nega o push.
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { lerRepositorio, urlDoRepositorio } from './config.mjs';
 import { bloqueia, conferirRef, regrasCarregaram, relatorio } from './confere-lgpd.mjs';
@@ -75,4 +76,13 @@ async function principal() {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) await principal();
+const mesmoArquivo = (a, b) => {
+  if (a === b) return true;
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+};
+
+if (process.argv[1] !== undefined && mesmoArquivo(process.argv[1], fileURLToPath(import.meta.url))) await principal();

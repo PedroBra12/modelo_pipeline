@@ -1,10 +1,11 @@
 // O config.mjs: lê e valida o .claude/pipeline.json, campo a campo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { ARQUIVO, CONFIGURE, MARCADOR, ESCADA, PISOS, PISO_GATILHOS, conferirPisos, lerAgentes, lerAjuste, lerLegadoAte, lerNiveis, lerPastas, lerPortao, lerRepositorio, lerRevisao, localizar, revisaoDeObjeto, urlDoRepositorio } from './config.mjs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { ARQUIVO, CONFIGURE, MARCADOR, ESCADA, PISOS, PISO_GATILHOS, PISO_GRANDE, conferirPisos, lerAgentes, lerAjuste, lerLegadoAte, lerNiveis, lerPastas, lerPortao, lerRepositorio, lerRevisao, localizar, revisaoDeObjeto, urlDoRepositorio } from './config.mjs';
 
 /** Roda `fn(caminho)` com um pipeline.json temporário (objeto vira JSON; texto vai como está; undefined = sem arquivo). */
 function comArquivo(conteudo, fn) {
@@ -112,8 +113,10 @@ test('agentes e niveis: o do projeto carrega; nome, model, effort e tools invál
     ['effort inválido', com('agentes', 'qa', { ...q, effort: 'max' }), /agentes\.qa/],
     ['sem tools', com('agentes', 'qa', { model: 'sonnet', effort: 'high' }), /agentes\.qa/],
     ['tarefa não texto', com('agentes', 'qa', { ...q, tarefa: 3 }), /agentes\.qa/],
-    ['abaixo do piso', com('agentes', 'revisor-seguranca', { ...dadosReais().agentes['revisor-seguranca'], model: 'sonnet', effort: 'medium' }), /abaixo do piso opus:high/],
+    ['segurança é fixa, para baixo', com('agentes', 'revisor-seguranca', { ...dadosReais().agentes['revisor-seguranca'], effort: 'high' }), /revisor-seguranca é fixo em opus:xhigh/],
+    ['segurança é fixa, para outro modelo', com('agentes', 'revisor-seguranca', { ...dadosReais().agentes['revisor-seguranca'], model: 'sonnet' }), /revisor-seguranca é fixo em opus:xhigh/],
     ['lgpd é fixo', com('agentes', 'revisor-lgpd', { ...dadosReais().agentes['revisor-lgpd'], model: 'sonnet' }), /revisor-lgpd é fixo em opus:high/],
+    ['nível autoanalise é fixo', com('niveis', 'autoanalise', { model: 'sonnet', effort: 'low' }), /niveis\.autoanalise é fixo em sonnet:medium/],
     ['fixo mudado', com('agentes', 'leitor-docs', { ...dadosReais().agentes['leitor-docs'], model: 'sonnet' }), /fixo em haiku:low/],
     ['revisor-tela abaixo do piso', com('agentes', 'revisor-tela', { ...dadosReais().agentes['revisor-tela'], model: 'sonnet', effort: 'low' }), /agentes\.revisor-tela está em sonnet:low, abaixo do piso sonnet:medium/],
     ['arquitetura em sonnet (o modelo vem do papel)', com('agentes', 'revisor-arquitetura', { ...dadosReais().agentes['revisor-arquitetura'], model: 'sonnet', effort: 'high' }), /sonnet:high, abaixo do piso opus:medium/],
@@ -145,8 +148,20 @@ test('revisao: a do projeto compila e cumpre os pisos; gatilho repetido, regex i
     ['regex inválida', (d) => { g(d, 'banco').caminhos.push('('); }, /gatilho inválido/],
     ['sem revisor', (d) => { g(d, 'banco').revisores = []; }, /gatilho inválido/],
     ['ignorar_conteudo inválido', (d) => { d.ignorar_conteudo = ['(']; }, /ignorar_conteudo/],
-    ['sempre vazio', (d) => { d.sempre = []; }, /não podem ficar vazios/],
-    ['comportamento vazio', (d) => { d.comportamento = []; }, /não podem ficar vazios/],
+    ['comportamento_ignorar inválido', (d) => { d.comportamento_ignorar = ['(']; }, /comportamento_ignorar/],
+    ['comportamento_ignorar que não é lista', (d) => { d.comportamento_ignorar = '\\.md$'; }, /comportamento_ignorar/],
+    ['comportamento_ignorar que cala todo o código', (d) => { d.comportamento_ignorar = ['.']; }, /comportamento_ignorar casa com/],
+    ['comportamento_ignorar que cala os .ts', (d) => { d.comportamento_ignorar = ['\\.ts$']; }, /comportamento_ignorar casa com src\/x\/servidor\.ts/],
+    ['comportamento_ignorar com (?', (d) => { d.comportamento_ignorar = ['(?i)x']; }, /comportamento_ignorar/],
+    ['comportamento_ignorar com lookahead', (d) => { d.comportamento_ignorar = ['^(?!src/)']; }, /comportamento_ignorar não aceita \(\?/],
+    ['grande removido', (d) => { delete d.grande; }, /revisao\.grande falta/],
+    ['revisor tirado do grande', (d) => { d.grande.revisores = ['revisor-arquitetura']; }, /revisao\.grande: revisores perdeu ponytail-review/],
+    ['gatilho banco tirado do grande', (d) => { d.grande.gatilhos = []; }, /revisao\.grande: gatilhos perdeu banco/],
+    ['gatilho do grande que não existe', (d) => { d.grande.gatilhos.push('fantasma'); }, /o gatilho fantasma não existe/],
+    ['grande malformado', (d) => { d.grande = { revisores: 'x' }; }, /revisao\.grande em/],
+    ['layout que não é verdadeiro ou falso', (d) => { g(d, 'tela').layout = 'sim'; }, /gatilho inválido/],
+    ['layout verdadeiro fora do tela', (d) => { g(d, 'permissao').layout = true; }, /gatilho inválido \(permissao\)/],
+    ['comportamento vazio', (d) => { d.comportamento = []; }, /comportamento não pode ficar vazio/],
     ['gatilho de piso removido', (d) => { d.gatilhos = d.gatilhos.filter((x) => x.nome !== 'permissao'); }, /gatilho permissao falta/],
     ['gatilho tela removido', (d) => { d.gatilhos = d.gatilhos.filter((x) => x.nome !== 'tela'); }, /gatilho tela falta/],
     ['revisor-tela tirado do gatilho tela', (d) => { g(d, 'tela').revisores = ['qa']; }, /tela: revisores perdeu revisor-tela/],
@@ -168,7 +183,15 @@ test('revisao: a do projeto compila e cumpre os pisos; gatilho repetido, regex i
   ];
   for (const [rotulo, muda, esperado] of casos) comArquivo(com(muda), (c) => assert.match(lerRevisao(c).erro, esperado, rotulo));
   comArquivo(com((d) => { g(d, 'banco').revisores.push('revisor-lgpd'); g(d, 'banco').caminhos.push('^extra/'); }), (c) => assert.equal(lerRevisao(c).erro, null), 'somar pode');
-  assert.equal(revisaoDeObjeto(com((d) => { d.sempre = []; }).revisao, { pisos: false }).erro, null, 'sem os pisos (a base de um diff) aceita');
+  assert.equal(revisaoDeObjeto(com((d) => { d.sempre = []; delete d.grande; }).revisao, { pisos: false }).erro, null, 'sem os pisos (a base de um diff) aceita');
+  comArquivo(com((d) => { d.sempre = ['revisor-arquitetura']; }), (c) => assert.equal(lerRevisao(c).erro, null), 'o sempre pode ter nomes ou ficar vazio');
+  comArquivo(com((d) => { d.grande.revisores.push('revisor-lgpd'); d.grande.gatilhos.push('permissao'); }), (c) => assert.equal(lerRevisao(c).erro, null), 'o grande também só soma');
+  const projeto = lerRevisao().valor;
+  assert.deepEqual(projeto.sempre, [], 'o sempre do projeto está vazio');
+  assert.deepEqual(projeto.grande, { revisores: PISO_GRANDE.revisores, gatilhos: ['banco'] });
+  assert.equal(projeto.gatilhos.find((x) => x.nome === 'tela').layout, true, 'o tela do projeto tem a marca de layout');
+  assert.equal(projeto.gatilhos.find((x) => x.nome === 'banco').layout, false);
+  comArquivo(com((d) => { delete d.comportamento_ignorar; }), (c) => assert.deepEqual(lerRevisao(c).valor.comportamento_ignorar, []), 'a chave é opcional');
 });
 
 test('ajuste: janela e rodadas_altas do projeto; a escada vem do código e o piso fora dela é erro', () => {
@@ -218,4 +241,14 @@ test('lockfile não é código: package-lock.json, pnpm-lock.yaml, yarn.lock e b
   const { ehArquivoDeCodigo } = await import('./config.mjs');
   for (const n of ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'apps/web/package-lock.json', 'packages/x/pnpm-lock.yaml', 'PACKAGE-LOCK.JSON']) assert.equal(ehArquivoDeCodigo(n), false, n);
   for (const n of ['package.json', 'pnpm-workspace.yaml', 'apps/web/package.json', 'x-package-lock.json.ts', 'my-yarn.lock.ts']) assert.equal(ehArquivoDeCodigo(n), true, n);
+});
+
+test('toda cópia do mesmoArquivo (a que decide se o hook roda) cai para a comparação dos textos quando o realpath falha', () => {
+  const aqui = dirname(fileURLToPath(import.meta.url));
+  const copias = readdirSync(aqui).filter((f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs')).filter((f) => readFileSync(join(aqui, f), 'utf8').includes('const mesmoArquivo'));
+  assert.equal(copias.length, 11, `as cópias: ${copias.join(', ')}`);
+  for (const f of copias) {
+    const texto = readFileSync(join(aqui, f), 'utf8');
+    assert.match(texto, /const mesmoArquivo = \(a, b\) => \{\n  if \(a === b\) return true;\n  try \{\n    return realpathSync\(a\) === realpathSync\(b\);\n  \} catch \{\n    return a === b;\n  \}\n\};/, `${f}: o erro do realpath não pode calar o hook quando os textos já são iguais`);
+  }
 });

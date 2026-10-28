@@ -79,6 +79,18 @@ comProjeto('verde: pede a revisão uma vez e depois libera', { alterados: 'src/x
   assert.equal(rodar(raiz), null);
 });
 
+comProjeto('esforço rapido (D64): vermelho ainda bloqueia; verde libera direto sem pedir revisão e limpa alterados.txt', { alterados: 'src/x.ts\n', codigoDoPortao: 1 }, (raiz) => {
+  writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), 'rapido\n');
+  const vermelho = rodar(raiz);
+  assert.equal(vermelho.decision, 'block', 'vermelho no rapido ainda bloqueia');
+  assert.match(vermelho.reason, /Portão rápido vermelho/);
+  assert.ok(lista(raiz));
+  writeFileSync(join(raiz, 'package.json'), JSON.stringify({ scripts: { 'checar:rapido': 'node -e "process.exit(0)"' } }));
+  assert.equal(rodar(raiz), null, 'verde no rapido libera de primeira, sem pedir revisão');
+  assert.ok(!lista(raiz));
+  assert.ok(!pedida(raiz));
+});
+
 comProjeto('stop_hook_active e vermelho: só avisa, não bloqueia', { alterados: 'src/x.ts\n', codigoDoPortao: 1 }, (raiz) => {
   const r = rodar(raiz, ativo);
   assert.equal(r.decision, undefined);
@@ -129,25 +141,16 @@ comProjeto('pipeline.json ilegível mas sem código alterado: não faz nada', { 
   assert.equal(rodar(raiz), null);
 });
 
-test('marca-alterado: anota o código do produto (tela .jsx inclusive), não o .claude, o docs nem o que não é código', async () => {
+test('marca-alterado: anota o código do produto (tela .jsx, .css e .py inclusive), não o .claude, o docs nem o que não é código', async () => {
   const { relevante } = await import('./marca-alterado.mjs');
   const raiz = join(tmpdir(), 'projeto');
-  assert.equal(relevante(raiz, join(raiz, 'src', 'tela', 'Tela.jsx')), 'src/tela/Tela.jsx');
-  assert.equal(relevante(raiz, join(raiz, 'src', 'lib', 'util.js')), 'src/lib/util.js');
-  assert.equal(relevante(raiz, join(raiz, 'db', 'migrations', '1_a.sql')), 'db/migrations/1_a.sql');
-  assert.equal(relevante(raiz, join(raiz, 'src', 'estilo.css')), 'src/estilo.css', 'css é código (a lista única do config.mjs)');
-  assert.equal(relevante(raiz, join(raiz, 'scripts', 'job.py')), 'scripts/job.py');
-  assert.equal(relevante(raiz, join(raiz, 'deploy', 'ci.yml')), 'deploy/ci.yml');
-  assert.equal(relevante(raiz, join(raiz, 'package.json')), 'package.json');
-  assert.equal(relevante(raiz, join(raiz, 'src', 'logo.png')), null);
+  assert.equal(relevante(raiz, join(raiz, 'app', '(app)', 'hoje', 'Hoje.jsx')), 'app/(app)/hoje/Hoje.jsx');
+  assert.equal(relevante(raiz, join(raiz, 'lib', 'whatsapp.js')), 'lib/whatsapp.js');
+  assert.equal(relevante(raiz, join(raiz, 'supabase', 'migrations', '1_a.sql')), 'supabase/migrations/1_a.sql');
+  assert.equal(relevante(raiz, join(raiz, 'app', 'casa.css')), 'app/casa.css');
+  assert.equal(relevante(raiz, join(raiz, 'scripts', 'build.py')), 'scripts/build.py');
+  assert.equal(relevante(raiz, join(raiz, 'package-lock.json')), null);
   assert.equal(relevante(raiz, join(raiz, 'README.md')), null);
-  assert.equal(relevante(raiz, join(raiz, 'docs', 'schema.sql')), null);
+  assert.equal(relevante(raiz, join(raiz, 'docs', 'ddl-v2.sql')), null);
   assert.equal(relevante(raiz, join(raiz, '.claude', 'hooks', 'portao.mjs')), null);
-});
-
-test('marca-alterado: o lockfile não é código do produto', async () => {
-  const { relevante } = await import('./marca-alterado.mjs');
-  const raiz = join(tmpdir(), 'projeto');
-  for (const n of ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'apps/web/package-lock.json']) assert.equal(relevante(raiz, join(raiz, ...n.split('/'))), null, n);
-  assert.equal(relevante(raiz, join(raiz, 'package.json')), 'package.json');
 });

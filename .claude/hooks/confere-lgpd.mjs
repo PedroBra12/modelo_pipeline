@@ -13,7 +13,7 @@
 // Falha fechado: regra que não carrega nega toda edição e recusa todo commit, até ser corrigida (pelo shell).
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const NIVEIS = { critico: 'crítico', alto: 'alto', medio: 'médio' };
@@ -196,6 +196,25 @@ function negar(motivo) {
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: motivo } }));
 }
 
+/**
+ * O caminho com os links resolvidos, mesmo que o arquivo (e as pastas) ainda não existam: resolve o ancestral mais
+ * próximo que existe e recoloca o resto. O git devolve a raiz já resolvida (no macOS, /private/tmp para /tmp), e
+ * comparar com o caminho sem resolver fazia a guarda sair calada ("fora do repositório") com o arquivo dentro dele.
+ */
+function realDoMaisProximo(caminho) {
+  let pasta = caminho;
+  const resto = [];
+  while (!existsSync(pasta) && dirname(pasta) !== pasta) {
+    resto.unshift(basename(pasta));
+    pasta = dirname(pasta);
+  }
+  try {
+    return join(realpathSync(pasta), ...resto);
+  } catch {
+    return caminho;
+  }
+}
+
 /** A raiz do repositório git do arquivo (vale no worktree), ou null fora de um repositório. */
 function raizDoArquivo(caminho) {
   let pasta = dirname(caminho);
@@ -219,9 +238,10 @@ async function comoHook() {
   const caminho = ti?.file_path ?? ti?.notebook_path;
   if (typeof caminho !== 'string') return negar('confere-lgpd: entrada ilegível, e a edição não passou pela conferência de LGPD.');
   const projeto = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-  const absoluto = resolve(projeto, caminho);
+  const absoluto = realDoMaisProximo(resolve(projeto, caminho));
   // sem git (fora do PATH, GIT_DIR errado), o projeto vale como raiz: a guarda erra para o lado de bloquear
-  const raiz = raizDoArquivo(absoluto) ?? (dentro(projeto, absoluto) ? projeto : null);
+  const projetoReal = realDoMaisProximo(projeto);
+  const raiz = raizDoArquivo(absoluto) ?? (dentro(projetoReal, absoluto) ? projetoReal : null);
   if (raiz === null || !dentro(raiz, absoluto)) return; // fora de um repositório: nada vai para o commit
   const rel = relative(raiz, absoluto).replaceAll('\\', '/');
   if (falhaDasRegras !== null) {
@@ -455,10 +475,11 @@ function aMao(args) {
 
 const mensagem = (erro) => (erro instanceof Error ? erro.message : String(erro));
 const mesmoArquivo = (a, b) => {
+  if (a === b) return true;
   try {
     return realpathSync(a) === realpathSync(b);
   } catch {
-    return false;
+    return a === b;
   }
 };
 

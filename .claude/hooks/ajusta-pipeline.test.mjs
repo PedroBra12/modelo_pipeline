@@ -52,15 +52,18 @@ const ajuste = (alvo, vistas, extra = {}) => ({ alvo, tipo: 'menos', de: 'x:y', 
 test('para menos: um alvo por execução, o mais caro primeiro (opus antes de sonnet, xhigh antes de high); o resto fica na fila', () => {
   const r = analisar(quietas(), [], config());
   assert.equal(r.completa, true);
-  assert.deepEqual(r.descer.map((d) => [d.id, d.de, d.para]), [['agentes.revisor-seguranca', 'opus:xhigh', 'opus:high']]);
-  assert.deepEqual(r.pendentes.map((p) => p.id).sort(), ['agentes.qa', 'agentes.revisor-arquitetura', 'niveis.revisao-ponytail']);
+  assert.deepEqual(r.descer.map((d) => [d.id, d.de, d.para]), [['agentes.revisor-arquitetura', 'opus:high', 'opus:medium']]);
+  assert.deepEqual(r.pendentes.map((p) => p.id).sort(), ['agentes.qa', 'niveis.revisao-ponytail']);
+  assert.equal(r.bloqueios.find((b) => b.id === 'agentes.revisor-seguranca'), undefined, 'a segurança é fixa: não desce e nem aparece como travada');
+  assert.ok(![...r.descer, ...r.pendentes].some((d) => d.id === 'agentes.revisor-seguranca'));
   assert.equal(r.bloqueios.find((b) => b.id === 'agentes.revisor-lgpd'), undefined, 'a LGPD é fixa: não desce e nem aparece como travada');
   assert.ok(![...r.descer, ...r.pendentes].some((d) => d.id === 'agentes.revisor-lgpd'));
   assert.equal(acha(r, 'descer', 'niveis.medio'), undefined, 'o nível de código nunca desce sozinho');
+  assert.ok(![...r.descer, ...r.pendentes, ...r.bloqueios].some((d) => d.id === 'niveis.autoanalise'), 'a autoanálise é fixa, como o leve: não desce');
   assert.match(formatar(r), /Na fila para menos/);
 });
 
-test('para menos, passo a passo: segurança, depois arquitetura (opus), depois qa e ponytail; nunca abaixo do piso', () => {
+test('para menos, passo a passo: arquitetura (opus), depois qa e ponytail; a segurança fixa não desce; nunca abaixo do piso', () => {
   const cfg = config();
   const vistas = [];
   const sessoes = [];
@@ -75,17 +78,31 @@ test('para menos, passo a passo: segurança, depois arquitetura (opus), depois q
     ajustes.push(ajuste(d.chave, arq(sessoes), { ordem: ajustes.length + 1 }));
   }
   assert.deepEqual(vistas, [
-    'revisor-seguranca opus:xhigh->opus:high',
     'revisor-arquitetura opus:high->opus:medium',
     'qa sonnet:high->sonnet:medium',
     'revisao-ponytail sonnet:high->sonnet:medium',
   ]);
 });
 
-test('não desce: achado de nível médio ou mais, escape, sessão sem código ou o alvo rodando no outro par', () => {
-  const comAchado = quietas();
-  comAchado[1].achados.push(achado('revisor-arquitetura'));
-  assert.equal(acha(analisar(comAchado, [], config()), 'descer', 'agentes.revisor-arquitetura'), undefined);
+test('só achado grave trava a descida: médio e baixo deixam descer; alto, must e defeito travam', () => {
+  const travou = (severidade, confirmado) => {
+    const sessoes = quietas();
+    sessoes[1].achados.push(achado('revisor-arquitetura', { severidade, ...(confirmado === undefined ? {} : { confirmado }) }));
+    return [...analisar(sessoes, [], config()).descer, ...analisar(sessoes, [], config()).pendentes].some((d) => d.id === 'agentes.revisor-arquitetura') === false;
+  };
+  for (const grave of ['critico', 'alto', 'must', 'defeito']) assert.equal(travou(grave), true, `${grave} trava`);
+  for (const leve of ['medio', 'should', 'baixo', 'nice']) assert.equal(travou(leve), false, `${leve} deixa descer`);
+  assert.equal(travou('alto', false), false, 'grave não confirmado não trava');
+  const visto = quietas();
+  visto[1].achados.push(achado('revisor-lgpd', { severidade: 'must', visto_por: ['revisor-arquitetura'] }));
+  assert.equal([...analisar(visto, [], config()).descer, ...analisar(visto, [], config()).pendentes].some((d) => d.id === 'agentes.revisor-arquitetura'), false, 'o grave visto por ele também trava');
+  const medioVisto = quietas();
+  medioVisto[1].achados.push(achado('revisor-arquitetura'));
+  const rm = analisar(medioVisto, [], config());
+  assert.ok([...rm.descer, ...rm.pendentes].some((d) => d.id === 'agentes.revisor-arquitetura'), 'o médio dele não trava');
+  assert.equal(rm.alvos.find((x) => x.id === 'agentes.revisor-arquitetura').unicosMedioMais, 1, 'a coluna únicos segue médio ou mais');
+  const semAchado = quietas().map((s) => ({ ...s, achados: [] }));
+  assert.equal(analisar(semAchado, [], config()).descer.length, 0, 'a sessão em que ninguém achou médio ou mais não conta como limpa');
   const comEscape = quietas();
   comEscape[2].achados.push(achado('qa', { severidade: 'defeito', escapou_de: ['revisor-seguranca'] }));
   assert.equal(analisar(comEscape, [], config()).descer.some((d) => d.id === 'agentes.revisor-seguranca'), false, 'o escape trava a descida de quem deixou escapar');
@@ -103,29 +120,29 @@ test('não desce: achado de nível médio ou mais, escape, sessão sem código o
 
 test('um achado visto por mais de um revisor conta para todos: os que se sobrepõem não descem juntos', () => {
   const sessoes = quietas();
-  sessoes[1].achados.push(achado('revisor-arquitetura', { visto_por: ['revisor-seguranca', 'revisor-lgpd'] }));
+  sessoes[1].achados.push(achado('revisor-arquitetura', { severidade: 'alto', visto_por: ['qa', 'revisor-lgpd'] }));
   const r = analisar(sessoes, [], config());
   const nomes = [...r.descer, ...r.pendentes].map((d) => d.id);
-  for (const id of ['agentes.revisor-arquitetura', 'agentes.revisor-seguranca']) assert.ok(!nomes.includes(id), id);
-  assert.ok(nomes.includes('agentes.qa'), 'quem não viu continua apto');
-  assert.equal(r.alvos.find((x) => x.id === 'agentes.revisor-seguranca').unicosMedioMais, 0, 'não é achado único dele, só conta para não descer');
+  for (const id of ['agentes.revisor-arquitetura', 'agentes.qa']) assert.ok(!nomes.includes(id), id);
+  assert.ok(nomes.includes('niveis.revisao-ponytail'), 'quem não viu continua apto');
+  assert.equal(r.alvos.find((x) => x.id === 'agentes.qa').unicosMedioMais, 0, 'não é achado único dele, só conta para não descer');
 });
 
 test('gatilho falso: a sessão não conta como limpa para o alvo, e o relatório propõe estreitar o gatilho', () => {
   const sessoes = quietas();
-  sessoes[2] = { ...sessoes[2], gatilho_falso: ['revisor-seguranca'] };
+  sessoes[2] = { ...sessoes[2], gatilho_falso: ['revisor-arquitetura'] };
   const r = analisar(sessoes, [], config());
-  assert.equal([...r.descer, ...r.pendentes].some((d) => d.id === 'agentes.revisor-seguranca'), false);
-  assert.match(r.estreitar.find((e) => e.id === 'agentes.revisor-seguranca').motivo, /estreite o gatilho/);
+  assert.equal([...r.descer, ...r.pendentes].some((d) => d.id === 'agentes.revisor-arquitetura'), false);
+  assert.match(r.estreitar.find((e) => e.id === 'agentes.revisor-arquitetura').motivo, /estreite o gatilho/);
   assert.match(formatar(r), /Estreitar o gatilho \(nunca automático\)/);
 });
 
 test('adiar: o orquestrador adia uma descida com motivo, o script respeita e relata', () => {
   const sessoes = quietas();
-  sessoes[2] = { ...sessoes[2], adiar: [{ alvo: 'revisor-seguranca', motivo: 'mexemos em permissão na próxima semana' }] };
+  sessoes[2] = { ...sessoes[2], adiar: [{ alvo: 'revisor-arquitetura', motivo: 'mexemos em permissão na próxima semana' }] };
   const r = analisar(sessoes, [], config());
-  assert.deepEqual(r.adiados, [{ id: 'agentes.revisor-seguranca', motivo: 'descida adiada: mexemos em permissão na próxima semana' }]);
-  assert.equal(r.descer[0].id, 'agentes.revisor-arquitetura', 'sem o adiado, o próximo mais caro');
+  assert.deepEqual(r.adiados, [{ id: 'agentes.revisor-arquitetura', motivo: 'descida adiada: mexemos em permissão na próxima semana' }]);
+  assert.equal(r.descer[0].id, 'agentes.qa', 'sem o adiado, o próximo mais caro');
 });
 
 // ---------- janela, linha de base, ajustes anteriores ----------
@@ -411,19 +428,19 @@ test('--aplicar-menos desce um alvo, edita só a linha dele, o cabeçalho e a ta
     const antes = lerArquivo(raiz, '.claude', 'pipeline.json').split('\n');
     const r = cli(raiz, '--aplicar-menos', '--data', '2026-11-04');
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /Aplicado[\s\S]*revisor-seguranca opus:xhigh -> opus:high \(docs\/pipeline\/ajustes\/2026-11-04-revisor-seguranca\.md\)/);
+    assert.match(r.stdout, /Aplicado[\s\S]*revisor-arquitetura opus:high -> opus:medium \(docs\/pipeline\/ajustes\/2026-11-04-revisor-arquitetura\.md\)/);
     const depois = lerArquivo(raiz, '.claude', 'pipeline.json').split('\n');
     assert.equal(depois.filter((l, i) => l !== antes[i]).length, 1, 'uma linha só do pipeline.json');
     const cfg = lerConfig(join(raiz, '.claude', 'pipeline.json'));
-    assert.equal(par(cfg.agentes['revisor-seguranca']), 'opus:high');
-    assert.equal(par(cfg.agentes['revisor-arquitetura']), 'opus:high', 'um alvo por execução');
-    const cab = lerCabecalhoDoArquivo('revisor-seguranca', join(raiz, '.claude', 'agents'));
-    assert.deepEqual([cab.model, cab.effort], ['opus', 'high']);
+    assert.equal(par(cfg.agentes['revisor-arquitetura']), 'opus:medium');
+    assert.equal(par(cfg.agentes['revisor-seguranca']), 'opus:xhigh', 'a segurança é fixa');
+    const cab = lerCabecalhoDoArquivo('revisor-arquitetura', join(raiz, '.claude', 'agents'));
+    assert.deepEqual([cab.model, cab.effort], ['opus', 'medium']);
     const skill = lerArquivo(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md');
     assert.equal(comTabela(skill, cfg), skill, 'a tabela da skill ficou em sincronia');
     const registro = lerAjustes(join(raiz, 'docs', 'pipeline', 'ajustes'));
-    assert.deepEqual(registro.map((a) => [a.alvo, a.tipo, a.de, a.para, a.data, a.vistas]), [['revisor-seguranca', 'menos', 'opus:xhigh', 'opus:high', '2026-11-04', ['2026-11-01-s1.md', '2026-11-02-s2.md', '2026-11-03-s3.md']]]);
-    assert.deepEqual(paresAntigos(raiz, 'revisor-seguranca', ['xhigh']), [], 'nenhuma cópia do par antigo sobra');
+    assert.deepEqual(registro.map((a) => [a.alvo, a.tipo, a.de, a.para, a.data, a.vistas]), [['revisor-arquitetura', 'menos', 'opus:high', 'opus:medium', '2026-11-04', ['2026-11-01-s1.md', '2026-11-02-s2.md', '2026-11-03-s3.md']]]);
+    assert.deepEqual(paresAntigos(raiz, 'revisor-arquitetura', ['high']), [], 'nenhuma cópia do par antigo sobra');
     assert.equal(existsSync(join(raiz, 'docs', 'decisoes.md')), false, 'nada de linha D<n> compartilhada');
   });
 });
@@ -431,7 +448,7 @@ test('--aplicar-menos desce um alvo, edita só a linha dele, o cabeçalho e a ta
 test('--aplicar-menos em sequência: cada execução tira um alvo (o mais caro), sem sobrar cópia do par antigo; o mesmo alvo só desce com sessões novas', () => {
   const real = readFileSync(ARQUIVO, 'utf8');
   comProjeto(quietas(), (raiz) => {
-    const velho = { 'revisor-seguranca': 'xhigh', 'revisor-arquitetura': 'high', qa: 'high', 'revisao-ponytail': 'high' };
+    const velho = { 'revisor-arquitetura': 'high', qa: 'high', 'revisao-ponytail': 'high' };
     const feitos = [];
     for (let i = 0; i < 5; i += 1) {
       const r = cli(raiz, '--aplicar-menos', '--data', '2026-11-04');
@@ -441,9 +458,9 @@ test('--aplicar-menos em sequência: cada execução tira um alvo (o mais caro),
       feitos.push(`${m[1]} ${m[2]}->${m[3]}`);
       assert.deepEqual(paresAntigos(raiz, m[1], [velho[m[1]]]), [], `${m[1]}: sobrou o par antigo`);
     }
-    assert.deepEqual(feitos, ['revisor-seguranca opus:xhigh->opus:high', 'revisor-arquitetura opus:high->opus:medium', 'qa sonnet:high->sonnet:medium', 'revisao-ponytail sonnet:high->sonnet:medium']);
+    assert.deepEqual(feitos, ['revisor-arquitetura opus:high->opus:medium', 'qa sonnet:high->sonnet:medium', 'revisao-ponytail sonnet:high->sonnet:medium']);
     assert.match(cli(raiz, '--aplicar-menos', '--data', '2026-11-04').stdout, /Nenhum ajuste para menos aplicado/, 'sem sessões novas depois dos ajustes ninguém desce de novo');
-    assert.equal(lerAjustes(join(raiz, 'docs', 'pipeline', 'ajustes')).length, 4);
+    assert.equal(lerAjustes(join(raiz, 'docs', 'pipeline', 'ajustes')).length, 3);
     const novas = quietas(lerConfig(join(raiz, '.claude', 'pipeline.json')), 3, 5);
     novas.forEach((s) => grava(raiz, s));
     const depois = cli(raiz, '--aplicar-menos', '--data', '2026-11-08');
@@ -507,7 +524,7 @@ test('sem a janela completa o --aplicar-menos não mexe em nada, e o --relatorio
 
 test('aplicar recusa e não grava se o cabeçalho do agente não tem model: e effort:', () => {
   comProjeto(quietas(), (raiz) => {
-    const a = join(raiz, '.claude', 'agents', 'revisor-seguranca.md');
+    const a = join(raiz, '.claude', 'agents', 'revisor-arquitetura.md');
     writeFileSync(a, readFileSync(a, 'utf8').replace(/^effort:.*\n/m, ''));
     const antes = lerArquivo(raiz, '.claude', 'pipeline.json');
     const r = cli(raiz, '--aplicar-menos');

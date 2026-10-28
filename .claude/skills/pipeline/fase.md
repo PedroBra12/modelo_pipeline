@@ -13,18 +13,18 @@ Para o orquestrador de uma fase do plano do projeto (`docs/plano.md`): o agente 
    - o nível de cada agente (`SKILL.md`, seção 7);
    - o aceite, como lista de comandos e resultados esperados.
    **Pronto quando:** um agente que só leia o handoff e o `AGENTS.md` da pasta dele consegue começar.
-4. **Dividir.** Lance os agentes em paralelo, cada um no seu worktree (`isolation: "worktree"`, um branch por agente, em `pr/<fase>-<assunto-em-kebab>`), com:
+4. **Dividir.** Lance os agentes em paralelo, cada um no seu worktree (`isolation: "worktree"`, um branch por agente, em `pr/<fase>-<assunto-em-kebab>`; o 1º passo do pedido é `git switch -c <branch> <branch da fase>`, porque o worktree nasce da `main` e a `guarda-agentes` nega sem ele, D6), com:
    - o handoff;
    - o modelo e o esforço do nível da tarefa (`SKILL.md`, seção 7);
    - a pasta dele;
    - a ordem "siga a skill `pipeline` (feature ou refactor) só nesta pasta até os portões e o commit (a seção 4 fica com o orquestrador); mudança de contrato se relata".
    **Pronto quando:** todos voltaram, cada um com os portões verdes e o commit no seu branch, e o orquestrador rodou a revisão (seção 4 do `SKILL.md`, com os revisores que o `escolhe-revisores.mjs` imprimiu) sobre eles.
-5. **Integrar.** Cada branch entra na `main` pelo PR dele: o orquestrador traz a `main` ao branch, roda os portões nele, sobe e marca o PR pronto, e o usuário junta, um por vez. Depois, um agente de integração, no nível `codigo-seguranca` (`SKILL.md`, seção 7), num branch `pr/<fase>-integracao`, roda tudo do zero (a montagem do ambiente local e a suíte completa). Por fim, o `qa` confere o aceite, item por item, com a saída real.
+5. **Integrar.** Cada branch entra na `main` pelo PR dele: o orquestrador traz a `main` ao branch, roda os portões nele, sobe e marca o PR pronto, e o usuário junta, um por vez. Depois, um agente de integração, no nível `codigo-seguranca` (`SKILL.md`, seção 7), num branch `pr/<fase>-integracao`, roda tudo do zero (a montagem do ambiente local e a suíte completa). Por fim, o `qa` confere o aceite, item por item, com a saída real, no modo completo, em três fatias (as fatias só existem aqui, D5) e com o prazo que o orquestrador der (`SKILL.md`, seção 4, D4).
    **Pronto quando:** o `qa` aprovou o aceite, ou o que falhou está explicado com o comando que falha.
 6. **Fechar.**
    - `ponytail-audit` nas pastas da fase;
    - `ponytail-debt` para os atalhos (`shortcut:`) deixados;
    - achado que se repetiu entre agentes vira lint, teste ou script (`principle-encode-lessons-in-structure`);
    - a seção "Estado" do `CLAUDE.md` atualizada;
-   - **autoanálise da fase (D2):** grave `docs/pipeline/sessoes/<AAAA-MM-DD>-<fase>.md` no formato do `MODELO.md` (agentes com tokens e rodadas, achados com quem viu e quem deixou escapar, erros do orquestrador, lições) e rode `node .claude/hooks/ajusta-pipeline.mjs --relatorio`; o que ele pedir segue a skill `adjust-pipeline`.
+   - **autoanálise da fase (D2, D6):** o subagente da seção 6 do `SKILL.md` junta o livro da sessão com o `coleta-agentes.mjs` e grava `docs/pipeline/sessoes/<AAAA-MM-DD>-<fase>.md` no formato do `MODELO.md` (agentes com tokens e rodadas, achados com quem viu e quem deixou escapar, erros do orquestrador, lições), e o orquestrador roda `node .claude/hooks/ajusta-pipeline.mjs --relatorio`; o que ele pedir segue a skill `adjust-pipeline`.
    **Pronto quando:** o relatório da fase para o usuário tem a entrega, o aceite, os achados, a dívida, as decisões e a saída da autoanálise, e o usuário juntou todos os PRs da fase.

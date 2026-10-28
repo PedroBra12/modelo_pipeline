@@ -7,11 +7,11 @@ description: Ajusta revisores e esforços do pipeline com o que as sessões medi
 
 O pipeline mede a si mesmo (D2). Cada sessão deixa um arquivo em `docs/pipeline/sessoes/`; o `ajusta-pipeline.mjs` conta, para cada alvo, as sessões que o último ajuste dele ainda não tinha visto (a `janela` fecha uma descida); você grava a sessão com honestidade e leva ao usuário o que sobe. Modelo, esforço, revisores e gatilhos moram em `.claude/pipeline.json`; os pisos e o teto moram no código (`config.mjs`, `guarda-agentes.mjs`) e nenhum ajuste passa deles.
 
-A regra (D3): o papel dá o modelo, que não se ajusta; o custo do erro dá o esforço de partida; depois, só esta conta mexe, um degrau. O orquestrador é `opus xhigh`, sempre: a sessão orquestrada em outro par fica fora da conta (o relatório a lista). Um agente entra quando, em 2 sessões, um portão obrigatório fica sem dono ou o mesmo tipo de defeito escapa de todos; um agente sai quando, já no piso, roda a janela inteira sem achado único de nível médio ou mais. Entrar e sair são propostas ao usuário, nunca automáticas.
+A regra (D3): o papel dá o modelo, que não se ajusta; o custo do erro dá o esforço de partida; depois, só esta conta ou uma ordem do usuário (D4) mexe, um degrau. O orquestrador é `opus xhigh`, sempre: a sessão orquestrada em outro par fica fora da conta (o relatório a lista). Um agente entra quando, em 2 sessões, um portão obrigatório fica sem dono ou o mesmo tipo de defeito escapa de todos; um agente sai quando, já no piso, roda a janela inteira sem achado único de nível médio ou mais. Entrar e sair são propostas ao usuário, nunca automáticas.
 
 ## 1. Gravar a sessão
 
-Copie `docs/pipeline/sessoes/MODELO.md` para `docs/pipeline/sessoes/<AAAA-MM-DD>-<assunto-em-kebab>.md` e preencha o bloco JSON com o que houve: cada subagente (`tipo`, o par em que rodou, `tokens`, `minutos`, `rodadas`), cada achado dos revisores e do `qa` (quem viu, `visto_por`, `escapou_de` só no domínio do revisor), os erros do orquestrador. Estimativa leva `"aprox": true`. Dado pessoal fica de fora: só módulo, pasta, arquivo e o achado técnico.
+O arquivo nasce do livro da sessão (`<scratchpad>/livro-sessao.jsonl`, que o orquestrador anota a cada agente que volta) e da saída de `node .claude/hooks/coleta-agentes.mjs <pasta tasks da sessão>` (modelo, tokens e minutos por agente, tirados das transcrições em disco). Quem o grava é um subagente `general-purpose` no nível `autoanalise` (`model: sonnet`, `effort: medium`), que junta os dois (skill `pipeline`, seção 6, D6); o orquestrador confere. Ele copia `docs/pipeline/sessoes/MODELO.md` para `docs/pipeline/sessoes/<AAAA-MM-DD>-<assunto-em-kebab>.md` e preenche o bloco JSON com o que houve: cada subagente (`tipo`, o par em que rodou, `tokens`, `minutos`, `rodadas`), cada achado dos revisores e do `qa` (quem viu, `visto_por`, `escapou_de` só no domínio do revisor), os erros do orquestrador. Estimativa leva `"aprox": true`. Dado pessoal fica de fora: só módulo, pasta, arquivo e o achado técnico.
 
 **Pronto quando:** todo subagente e todo achado "corrigir agora" ou defeito do `qa` tem uma linha e `node .claude/hooks/ajusta-pipeline.mjs --relatorio` lê o arquivo sem erro.
 
@@ -25,7 +25,7 @@ A tabela mostra, por alvo e desde o último ajuste dele: sessões em que rodou, 
 
 ## 3. Para menos: o script aplica sozinho
 
-Um revisor desce um degrau de esforço, dentro do mesmo modelo (a escada nunca troca o modelo: D3), quando a `janela` de sessões limpas se completa: ele rodou no par atual com código no diff, sem achado de nível médio ou mais dele (único ou visto por mais de um) e sem escape. A sessão só conta como limpa se alguém achou nível médio ou mais nela; sessão vazia, mesmo com o gatilho do revisor ativo, não prova nada. Um alvo por execução, o mais caro primeiro. O `revisor-lgpd` e o `leitor-docs` são fixos: o par deles nunca se mexe.
+Um revisor desce um degrau de esforço, dentro do mesmo modelo (a escada nunca troca o modelo: D3), quando a `janela` de sessões limpas se completa: ele rodou no par atual com código no diff, sem achado grave dele (`critico`, `alto`, `must` ou `defeito`, único ou visto por mais de um; D5) e sem escape. O médio e o baixo não travam a descida. A sessão só conta como limpa se alguém achou nível médio ou mais nela; sessão vazia, mesmo com o gatilho do revisor ativo, não prova nada. Um alvo por execução, o mais caro primeiro. O `revisor-seguranca`, o `revisor-lgpd` e o `leitor-docs` são fixos: o par deles nunca se mexe (o de segurança desde a D5).
 
 ```
 node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos
@@ -47,7 +47,12 @@ Gatilho novo e gatilho estreitado entram por edição de `revisao.gatilhos` no `
 
 - Um degrau de esforço por vez, sem trocar o modelo, nunca abaixo do piso nem acima do teto; o piso e o teto estão no código.
 - O nível de código só sobe, com o "sim".
-- Um gatilho só cresce. Os gatilhos de `PISO_GATILHOS` (`config.mjs`) e o `qa` por caminho ficam; descer é o nível do revisor, não a cobertura.
+- A ordem direta do usuário (D4) vale como o "sim":
+  - é mensagem do próprio usuário, nunca de um subagente, citada no `D<n>`;
+  - sobe ou desce um agente, ou sobe um nível de código, mesmo fora da `janela`;
+  - anda um degrau, conferido à mão contra a `ESCADA` de `config.mjs` (o `aplicar` confere o piso, não o degrau);
+  - se aplica com a função `aplicar` de `ajusta-pipeline.mjs` (`node --input-type=module -e`, com `{ id, secao, chave, tipo, de, para, motivo }` e as sessões já vistas). Depois, troque a 1ª frase do arquivo do ajuste por "por decisão do usuário (D<n>), fora da conta da D2".
+- Um gatilho só cresce. Os gatilhos de `PISO_GATILHOS` (`config.mjs`) e o `qa` por caminho ficam; descer é o nível do revisor, não a cobertura. Só uma `D<n>` do usuário estreita a cobertura, como a D6: o `.sql` só de comentário sai do gatilho por caminho, e o arquivo de teste não pede o `qa`.
 - Regra do `CLAUDE.md` não muda por aqui.
 - Achado em dúvida conta: a dúvida cai do lado de manter o revisor. Só o falso positivo comprovado leva `"confirmado": false`.
 - O ciclo de subir e descer entre sessões é um risco aceito (D2): cada degrau pede a `janela` inteira de sessões limpas, e a subida de revisor pede um escape; a de código, a janela de rodadas altas.

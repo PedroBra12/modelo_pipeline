@@ -1,4 +1,4 @@
-// O escolhe-revisores.mjs: o diff do git vira a lista de revisores obrigatórios (sempre, gatilhos, comportamento).
+// O escolhe-revisores.mjs: o diff do git vira a lista de revisores obrigatórios (sempre, mudança grande, gatilhos, comportamento).
 // A escolha (`escolher`, `formatar`, `interpretarDiff`) é testada dentro do processo, com o diff montado à mão (`em`/`texto`);
 // um git de verdade numa pasta temporária e a linha de comando ficam só onde o git ou a linha de comando é o que se testa
 // (nomes difíceis, binário, merge-base, --trabalho, a regra do head e da base, opções, erros). Os gatilhos um a um estão em
@@ -11,13 +11,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARQUIVO, lerAgentes, lerNiveis, lerPastas, lerRevisao, par, revisaoDeObjeto } from './config.mjs';
-import { escolher, formatar, interpretarDiff, unirRevisao } from './escolhe-revisores.mjs';
+import { escolher, formatar, interpretarDiff, juntarRenomes, rotaDe, unirRevisao } from './escolhe-revisores.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, 'escolhe-revisores.mjs');
 const RAIZ = join(AQUI, '..', '..');
 const config = () => ({ agentes: lerAgentes().valor, niveis: lerNiveis().valor, revisao: lerRevisao().valor, pastas: lerPastas().valor });
 const nomes = (lista) => lista.map((r) => r.nome).sort();
+/** Os revisores da regra `grande` (D60); antes dela eram do `sempre`. */
 const SEMPRE = ['revisor-arquitetura', 'ponytail-review'];
 const PIPELINE = readFileSync(ARQUIVO, 'utf8');
 /** O par de um agente fixo como o pipeline.json de verdade diz agora: o ajuste automático muda esses pares, então o teste não os crava. */
@@ -47,12 +48,13 @@ function diffDe(antes, depois, apagar = []) {
       if (k === -1) novas.push({ n: i + 1, texto });
       else restoA.splice(k, 1);
     });
-    saida.push({ caminho, binario: false, linhas: novas, removidas: restoA.map((texto) => ({ n: a.indexOf(texto) + 1, texto })) });
+    const status = apagar.includes(caminho) ? 'D' : !(caminho in antes) ? 'A' : 'M';
+    saida.push({ caminho, status, binario: false, linhas: novas, removidas: restoA.map((texto) => ({ n: a.indexOf(texto) + 1, texto })) });
   }
   return saida;
 }
-/** A escolha para a mudança de `antes` para `depois` (o mesmo objeto que o --json imprime). */
-const em = (antes, depois, { apagar = [], ...opcoes } = {}) => escolher(diffDe(antes, depois, apagar), config(), opcoes);
+/** A escolha para a mudança de `antes` para `depois` (o mesmo objeto que o --json imprime), em esforço `alto` por padrão nos testes de gatilho. */
+const em = (antes, depois, { apagar = [], esforco = 'alto', ...opcoes } = {}) => escolher(diffDe(antes, depois, apagar), config(), { esforco, ...opcoes });
 const texto = (antes, depois, { apagar = [], ...opcoes } = {}) => formatar(em(antes, depois, { apagar, ...opcoes }), 'HEAD~1', 'HEAD');
 const seguranca = (r) => r.obrigatorios.find((x) => x.nome === 'revisor-seguranca');
 
@@ -80,9 +82,13 @@ function grava(raiz, arquivos) {
 }
 /** Um diff de HEAD~1 para HEAD de `antes` para `depois`. */
 const doisCommits = (antes, depois, apagar = []) => repositorio([{ arquivos: antes }, { arquivos: depois, apagar }]);
-function rodar(raiz, ...args) {
+function rodarSemEsforco(raiz, ...args) {
   const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd: raiz, encoding: 'utf8' });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, json: () => JSON.parse(r.stdout) };
+}
+function rodar(raiz, ...args) {
+  const comEsforco = args.length === 0 || args.includes('--esforco') ? args : ['--esforco', 'alto', ...args];
+  return rodarSemEsforco(raiz, ...comEsforco);
 }
 const com = (r, fn) => {
   try {
@@ -94,25 +100,24 @@ const com = (r, fn) => {
 
 // ---------- a escolha ----------
 
-test('uma migration com grant: arquitetura e ponytail (sempre) mais a segurança, pelos gatilhos banco e permissao, com arquivo e linha', () => {
+test('uma migration com grant: arquitetura e ponytail (grande) mais a segurança, pelos gatilhos banco e permissao, com arquivo e linha', () => {
   const saida = em({}, { 'packages/db/migrations/20261101000000_x.sql': `create table t (id int);\n${GRANT}` });
-  assert.deepEqual(nomes(saida.obrigatorios), [...SEMPRE, 'revisor-seguranca', 'qa'].sort(), 'migration é código: sempre, segurança e o qa pelo caminho');
+  assert.deepEqual(nomes(saida.obrigatorios), [...SEMPRE, 'revisor-seguranca', 'qa'].sort(), 'migration é código e aciona banco (grande): segurança, arquitetura, ponytail e o qa pelo caminho');
   const seg = seguranca(saida);
   assert.equal(seg.nivel, nivel('revisor-seguranca'));
   assert.ok(seg.motivos.some((m) => m.gatilho === 'banco' && m.arquivo === 'packages/db/migrations/20261101000000_x.sql' && m.por === 'caminho'));
   assert.ok(seg.motivos.some((m) => m.gatilho === 'permissao' && m.linha === 2 && /grant/.test(m.por)), 'a linha 2 tem o grant');
 });
 
-test('uma tela pura: arquitetura, ponytail, o revisor-tela e o qa (a tela está em src/); --sem-comportamento tira o qa e o motivo aparece', () => {
+test('uma tela de uma rota só: o revisor-tela e o qa, sem arquitetura nem ponytail (não é grande); --sem-comportamento tira o qa e o motivo aparece', () => {
   const antes = { 'src/x/Tela.jsx': 'export default function T() { return null; }\n' };
   const depois = { 'src/x/Tela.jsx': 'export default function T() { return <p>oi</p>; }\n', 'src/x/tela.css': '.a { color: red; }\n' };
   const t = texto(antes, depois);
-  assert.ok(t.includes(`revisor-arquitetura  ${nivel('revisor-arquitetura')}\n`));
   assert.ok(t.includes(`qa  ${nivel('qa')}\n      comportamento: toca src/x/`));
-  assert.ok(t.includes(`revisor-tela  ${nivel('revisor-tela')}\n      gatilho tela: src/x/Tela.jsx (caminho)`));
-  assert.doesNotMatch(t, /revisor-seguranca|revisor-lgpd/);
+  assert.ok(t.includes(`revisor-tela  ${nivel('revisor-tela')}\n      gatilho tela: src/x/Tela.jsx:1 (layout no JSX: tag, className ou style mudou)`));
+  assert.doesNotMatch(t, /revisor-seguranca|revisor-lgpd|revisor-arquitetura|ponytail-review/);
   const sem = em(antes, depois, { semComportamento: 'só CSS e texto, sem lógica' });
-  assert.deepEqual(nomes(sem.obrigatorios), [...SEMPRE, 'revisor-tela'].sort());
+  assert.deepEqual(nomes(sem.obrigatorios), ['revisor-tela']);
   assert.deepEqual(sem.dispensados, [{ nome: 'qa', motivo: 'só CSS e texto, sem lógica' }]);
   assert.match(texto(antes, depois, { semComportamento: 'só CSS' }), /Dispensado[\s\S]*qa: só CSS/);
 });
@@ -141,10 +146,61 @@ test('markdown, arquivo de teste e linha apagada sem gatilho de remoção não a
   assert.ok(nomes(apagada.obrigatorios).includes('revisor-lgpd'), 'apagar uma linha de dado pessoal também chama a LGPD (dado_pessoal conta remoção: tirar o campo, a anonimização ou a purga é mudança de tratamento)');
 });
 
-test('um .sql fora das pastas de trabalho (docs/) conta pelo conteúdo e pelo gatilho banco', () => {
+test('um .sql fora das pastas de trabalho (docs/) conta pelo conteúdo e pelo gatilho banco (mudança grande)', () => {
   const saida = em({ 'docs/schema-x.sql': '-- a\n' }, { 'docs/schema-x.sql': 'create policy p on t using (true);\n' });
-  assert.deepEqual(nomes(saida.obrigatorios), [...SEMPRE, 'revisor-seguranca'].sort(), '.sql é código em qualquer lugar: o sempre também chama');
+  assert.deepEqual(nomes(saida.obrigatorios), [...SEMPRE, 'revisor-seguranca'].sort(), 'o banco dispara, então é mudança grande (D60)');
   assert.ok(seguranca(saida).motivos.some((m) => m.gatilho === 'permissao' && m.linha === 1));
+});
+
+// ---------- a mudança grande (D60) ----------
+
+const grandesDe = (antes, depois, opcoes) => nomes(em(antes, depois, opcoes).obrigatorios).filter((n) => SEMPRE.includes(n));
+const motivosGrandesDe = (antes, depois, opcoes) => em(antes, depois, opcoes).obrigatorios.find((x) => x.nome === 'revisor-arquitetura')?.motivos;
+
+test('rotaDe: o 1º segmento fora dos grupos; em api/ os dois primeiros; solto em app/ (ou src/app/, apps/<nome>/app/) é "/"', () => {
+  assert.equal(rotaDe('app/(app)/hoje/x.jsx'), 'hoje');
+  assert.equal(rotaDe('src/app/(app)/hoje/sub/y.jsx'), 'hoje');
+  assert.equal(rotaDe('apps/web/src/app/api/lista/hoje/route.js'), 'api/lista');
+  assert.equal(rotaDe('app/api/route.js'), 'api');
+  assert.equal(rotaDe('src/app/globals.css'), '/');
+  assert.equal(rotaDe('app/(app)/layout.jsx'), '/');
+  assert.equal(rotaDe('app/(app)/[modulo]/page.jsx'), '[modulo]');
+});
+
+test('grande, pelas rotas de app/: uma só não imprime arquitetura e ponytail; duas imprimem, com as rotas no motivo; os .md não contam', () => {
+  assert.deepEqual(grandesDe({}, { 'src/app/(app)/hoje/a.js': 'a\n', 'src/app/(app)/hoje/sub/b.js': 'b\n', 'src/app/(app)/hoje/c.md': 'c\n' }), [], 'uma rota');
+  assert.deepEqual(grandesDe({}, { 'src/app/(app)/hoje/a.js': 'a\n', 'src/app/(app)/equipe/b.js': 'b\n' }), [...SEMPRE].sort());
+  assert.ok(motivosGrandesDe({}, { 'src/app/(app)/hoje/a.js': 'a\n', 'src/app/(app)/equipe/b.js': 'b\n' }).some((m) => m.gatilho === 'grande' && /toca 2 rotas de app\/: (hoje, equipe|equipe, hoje)/.test(m.por)));
+  assert.match(texto({}, { 'src/app/(app)/hoje/a.js': 'a\n', 'src/app/(app)/equipe/b.js': 'b\n' }), /grande: toca 2 rotas de app\//);
+  assert.deepEqual(grandesDe({}, { 'src/app/(app)/hoje/a.js': 'a\n', 'src/app/(app)/equipe/leia.md': 'b\n' }), [], 'o .md não é uma rota');
+  assert.deepEqual(grandesDe({}, { 'src/app/api/lista/hoje/route.js': 'a\n', 'src/app/api/lista/outra/route.js': 'b\n' }), [], 'api/lista é uma rota só');
+  assert.deepEqual(grandesDe({}, { 'src/app/api/lista/hoje/route.js': 'a\n', 'src/app/api/push/route.js': 'b\n' }), [...SEMPRE].sort(), 'api/lista e api/push são duas');
+  assert.deepEqual(grandesDe({}, { 'src/app/layout.jsx': 'a\n', 'src/app/(app)/hoje/a.js': 'b\n' }), [...SEMPRE].sort(), 'o arquivo solto em src/app/ é a rota "/"');
+});
+
+test('grande, pelo gatilho banco: uma migration imprime arquitetura e ponytail; um arquivo comum de src/lib/ não', () => {
+  assert.deepEqual(grandesDe({}, { 'packages/db/migrations/20261101000000_x.sql': 'create table t (id int);\n' }), [...SEMPRE].sort());
+  assert.ok(motivosGrandesDe({}, { 'packages/db/migrations/20261101000000_x.sql': 'create table t (id int);\n' }).some((m) => m.gatilho === 'grande' && m.por.startsWith('o gatilho banco disparou em packages/db/migrations/20261101000000_x.sql')));
+  assert.deepEqual(grandesDe({ 'src/lib/x.js': 'a\n' }, { 'src/lib/x.js': 'b\n' }), []);
+});
+
+test('grande, pelo AGENTS.md: criado ou movido de pasta de trabalho imprime; editar um AGENTS.md existente ou criar em docs/ não', () => {
+  assert.deepEqual(grandesDe({}, { 'docs/nova/AGENTS.md': '# nova\n' }), [], 'docs/ não é pasta de trabalho');
+  assert.deepEqual(grandesDe({}, { 'AGENTS.md': '# raiz\n' }), [], 'o da raiz não é de pasta de trabalho');
+  assert.deepEqual(grandesDe({}, { 'src/nova/AGENTS.md': '# nova\n', 'src/nova/x.js': 'a\n' }), [...SEMPRE].sort());
+  assert.ok(motivosGrandesDe({}, { 'src/nova/AGENTS.md': '# nova\n', 'src/nova/x.js': 'a\n' }).some((m) => m.gatilho === 'grande' && /src\/nova\/AGENTS\.md criado/.test(m.por)));
+  assert.deepEqual(grandesDe({ 'src/AGENTS.md': '# a\n', 'src/x.js': 'a\n' }, { 'src/AGENTS.md': '# b\n', 'src/x.js': 'b\n' }), []);
+});
+
+test('juntarRenomes: o par apagado e criado do renome vira um arquivo só; sem par, nada muda', () => {
+  const velho = { caminho: 'a.jsx', status: 'D', removidas: [{ n: 1, texto: 'x' }], linhas: [] };
+  const novo = { caminho: 'b.jsx', status: 'A', removidas: [], linhas: [{ n: 1, texto: 'x' }] };
+  const solto = { caminho: 'c.jsx', status: 'A', removidas: [], linhas: [] };
+  juntarRenomes([velho, novo, solto], 'R100\0a.jsx\0b.jsx\0');
+  assert.deepEqual([novo.status, novo.removidasDoOrigem, velho.renomeadoPara, solto.status], ['M', velho.removidas, 'b.jsx', 'A']);
+  const outro = { caminho: 'd.jsx', status: 'A', removidas: [], linhas: [] };
+  juntarRenomes([outro], 'R90\0nao-existe.jsx\0d.jsx\0');
+  assert.equal(outro.status, 'A');
 });
 
 test('o corte de motivos: no máximo 3 por revisor, com a contagem do resto', () => {
@@ -180,7 +236,7 @@ test('o lgpd-ignora vale em todo arquivo e em toda forma de comentário (a regex
 test('mudar o .claude/pipeline.json chama a segurança e a arquitetura; a regex dele não aciona o dado_pessoal', () => {
   const real = JSON.parse(PIPELINE);
   const saida = em({ '.claude/pipeline.json': JSON.stringify(real, null, 2) }, { '.claude/pipeline.json': JSON.stringify({ ...real, nota: 'celular cpf' }, null, 2) });
-  assert.deepEqual(nomes(saida.obrigatorios), [...SEMPRE, 'revisor-seguranca'].sort(), 'o .json é código: o sempre chama');
+  assert.deepEqual(nomes(saida.obrigatorios), ['revisor-arquitetura', 'revisor-seguranca'], 'o config_pipeline chama segurança e arquitetura');
   assert.ok(seguranca(saida).motivos.every((m) => m.gatilho === 'config_pipeline'));
   assert.ok(!nomes(saida.obrigatorios).includes('revisor-lgpd'));
 });
@@ -191,10 +247,10 @@ test('escolher: um revisor que não existe no pipeline.json é erro, não omiss�
   assert.throws(() => escolher([{ caminho: 'src/lib/x.js', linhas: [], removidas: [] }], cfg), /revisor fantasma \(sempre\) não existe/);
 });
 
-test('formatar mostra o intervalo, os níveis do pipeline.json e o corte', () => {
+test('formatar mostra o intervalo, o esforço, os níveis do pipeline.json e o corte', () => {
   const r = escolher([{ caminho: 'src/auth/papeis.js', linhas: [{ n: 3, texto: 'x' }], removidas: [] }], config());
   const t = formatar(r, 'a', 'b');
-  assert.match(t, /Revisores de a\.\.b: 1 arquivo\(s\) de código\./);
+  assert.match(t, /Revisores de a\.\.b \(esforço medio\): 1 arquivo\(s\) de código\./);
   assert.match(t, /gatilho permissao: src\/auth\/papeis\.js \(caminho\)/);
   assert.match(t, /Obrigatórios \(lance todos; pode acrescentar, nunca tirar\)/);
 });
@@ -222,10 +278,10 @@ test('um branch que afrouxa o ignorar do dado_pessoal pede o revisor-lgpd uma ve
   velha.revisao.gatilhos.find((g) => g.nome === 'dado_pessoal').ignorar = [];
   const arquivos = diffDe({ '.claude/hooks/x.mjs': 'a\n' }, { '.claude/hooks/x.mjs': "const q = 'celular cpf';\n" });
   const doBranch = { ...config(), revisao: unirRevisao(revisaoDeObjeto(velha.revisao).valor, revisaoDeObjeto(real.revisao).valor) };
-  const lgpd = escolher(arquivos, doBranch).obrigatorios.find((r) => r.nome === 'revisor-lgpd');
+  const lgpd = escolher(arquivos, doBranch, { esforco: 'alto' }).obrigatorios.find((r) => r.nome === 'revisor-lgpd');
   assert.ok(lgpd?.motivos.some((m) => m.gatilho === 'dado_pessoal'), 'a base não ignorava o .claude/: afrouxar a regra no mesmo branch não cala o gatilho');
   const jaNaBase = { ...config(), revisao: unirRevisao(revisaoDeObjeto(real.revisao).valor, revisaoDeObjeto(real.revisao).valor) };
-  assert.ok(!nomes(escolher(arquivos, jaNaBase).obrigatorios).includes('revisor-lgpd'), 'com a regra já na base, o próximo branch não pede');
+  assert.ok(!nomes(escolher(arquivos, jaNaBase, { esforco: 'alto' }).obrigatorios).includes('revisor-lgpd'), 'com a regra já na base, o próximo branch não pede');
 });
 
 test('um ignorar que cala um gatilho de proteção, no gatilho ou no global, é recusado já na leitura do revisao', () => {
@@ -272,7 +328,7 @@ test('a configuração é a união da base com o head: um branch não se avalia 
   const b = revisaoDeObjeto(afrouxada.revisao).valor;
   const uniao = unirRevisao(a, b);
   const arquivos = diffDe({ 'src/public/x.js': 'a\n' }, { 'src/public/x.js': `a\n${GRANT}` });
-  const seg = seguranca(escolher(arquivos, { ...config(), revisao: uniao }));
+  const seg = seguranca(escolher(arquivos, { ...config(), revisao: uniao }, { esforco: 'alto' }));
   assert.ok(seg.motivos.some((m) => m.arquivo === 'src/public/x.js' && m.gatilho === 'permissao'), 'o ^src/public/ que o head passou a ignorar (global e no gatilho) não vale: a base não ignorava');
   assert.ok(uniao.gatilhos.find((g) => g.nome === 'banco').conteudo.some((re) => re.source === 'segredo_especial'), 'soma o conteúdo da base');
   assert.ok(!uniao.ignorar.some((re) => re.source === '^src/public/'), 'o que só um lado ignora, ninguém ignora');
@@ -280,25 +336,29 @@ test('a configuração é a união da base com o head: um branch não se avalia 
   assert.deepEqual(uniao.gatilhos.find((g) => g.nome === 'dado_pessoal').ignorar.map((re) => re.source).sort(), ['^\\.claude\\/'].sort(), 'o que os dois ignoram continua ignorado');
 });
 
-test('o gatilho tela: um arquivo de tela (.jsx, .tsx, .vue, .svelte, .css, .scss, .html) de src/, apps/ ou packages/ tocado, criado ou apagado, chama o revisor-tela; código sem tela e o que está fora dessas pastas não chamam (D3)', () => {
+test('o gatilho tela só com layout novo (D60): arquivo criado ou apagado dispara, e o motivo diz qual; no CSS e no JSX só mudança de layout dispara; fora de src/, apps/ ou packages/ não chama', () => {
   const chamaTela = (r) => nomes(r.obrigatorios).includes('revisor-tela');
   for (const caminho of ['src/x/Tela.jsx', 'src/x/tela.css', 'src/globals.css', 'src/[modulo]/page.jsx', 'apps/web/Tela.tsx', 'packages/ui/Botao.vue', 'src/x/Cartao.svelte', 'src/x/estilo.scss', 'src/index.html']) {
-    assert.ok(chamaTela(em({ [caminho]: 'a\n' }, { [caminho]: 'b\n' })), `mexido: ${caminho}`);
     assert.ok(chamaTela(em({}, { [caminho]: 'b\n' })), `criado: ${caminho}`);
     assert.ok(chamaTela(em({ [caminho]: 'a\n' }, {}, { apagar: [caminho] })), `apagado: ${caminho}`);
   }
   const tela = em({}, { 'src/x/Tela.jsx': 'b\n' }).obrigatorios.find((r) => r.nome === 'revisor-tela');
-  assert.deepEqual(tela.motivos.map((m) => [m.gatilho, m.por, m.arquivo]), [['tela', 'caminho', 'src/x/Tela.jsx']]);
+  assert.deepEqual(tela.motivos.map((m) => [m.gatilho, m.por, m.arquivo]), [['tela', 'arquivo novo', 'src/x/Tela.jsx']]);
+  assert.ok(!chamaTela(em({ 'src/x/Tela.jsx': '<p className="a">Texto antigo</p>\n' }, { 'src/x/Tela.jsx': '<p className="a">Texto novo</p>\n' })), 'texto trocado no JSX não dispara');
+  assert.ok(chamaTela(em({ 'src/x/Tela.jsx': '<p className="a">Oi</p>\n' }, { 'src/x/Tela.jsx': '<p className="b">Oi</p>\n' })), 'className trocado no JSX dispara');
+  assert.ok(!chamaTela(em({ 'src/x/tela.css': '.a {\n  color: red;\n}\n' }, { 'src/x/tela.css': '.a {\n  color: blue;\n}\n' })), 'cor trocada no CSS não dispara');
+  assert.ok(chamaTela(em({ 'src/x/tela.css': '.a {\n  margin: 0;\n}\n' }, { 'src/x/tela.css': '.a {\n  margin: 8px;\n}\n' })), 'margin trocado no CSS dispara');
   for (const caminho of ['src/campanhas/acoes.js', 'src/api/lista/route.js', 'src/x/servidor.js', 'scripts/Tela.jsx', 'public/tela.css', 'docs/tela.css', 'src/x/tela.md']) {
     assert.ok(!chamaTela(em({ [caminho]: 'a\n' }, { [caminho]: 'b\n' })), caminho);
+    assert.ok(!chamaTela(em({}, { [caminho]: 'b\n' })), `criado: ${caminho}`);
   }
 });
 
 test('--sem-tela "<motivo>" tira só o revisor-tela (texto, cópia, renome): o motivo vai para "Dispensado"; o qa e os outros ficam; a opção sem efeito é avisada (D3)', () => {
-  const tela = [{ 'src/x/Tela.jsx': 'a\n' }, { 'src/x/Tela.jsx': 'b\n' }];
+  const tela = [{ 'src/x/Tela.jsx': 'export default function T() { return null; }\n' }, { 'src/x/Tela.jsx': 'export default function T() { return <p>oi</p>; }\n' }];
   assert.ok(nomes(em(...tela).obrigatorios).includes('revisor-tela'), 'sem a opção ele é obrigatório');
   const saida = em(...tela, { semTela: 'só troca de texto da tela' });
-  assert.deepEqual(nomes(saida.obrigatorios), [...SEMPRE, 'qa'].sort(), 'só o revisor-tela sai; o qa continua obrigatório');
+  assert.deepEqual(nomes(saida.obrigatorios), ['qa'], 'só o revisor-tela sai; o qa continua obrigatório');
   assert.deepEqual(saida.dispensados, [{ nome: 'revisor-tela', motivo: 'só troca de texto da tela' }]);
   const t = texto(...tela, { semTela: 'só renome' });
   assert.match(t, /Dispensado[\s\S]*revisor-tela: só renome/);
@@ -318,10 +378,9 @@ test('--sem-tela "<motivo>" tira só o revisor-tela (texto, cópia, renome): o m
   assert.doesNotMatch(texto({ 'src/lib/x.js': 'a\n' }, { 'src/lib/x.js': 'b\n' }, { semComportamento: 'x' }), /sem efeito/, 'com código o qa foi dispensado');
 });
 
-test('código é qualquer arquivo com extensão de código em qualquer lugar do repositório, não só nas pastasDeTrabalho; o resto não chama o sempre', () => {
+test('código é qualquer arquivo com extensão de código em qualquer lugar do repositório, não só nas pastasDeTrabalho; o resto tem codigo === 0', () => {
   for (const caminho of ['src/index.ts', 'db/migrations/001.sql', 'package.json', 'scripts/build.py', 'deploy/ci.yml', 'infra/main.go', 'web/estilo.css', 'web/index.html', 'prisma/schema.prisma', 'bin/x.sh', 'Cargo.toml']) {
     const saida = em({}, { [caminho]: 'x\n' });
-    assert.ok(SEMPRE.every((n) => nomes(saida.obrigatorios).includes(n)), `${caminho}: é código`);
     assert.equal(saida.codigo, 1, caminho);
   }
   for (const caminho of ['README.md', 'docs/a.md', 'logo.svg', 'LICENSE', 'data/lista.txt', 'fonte.woff2']) {
@@ -329,6 +388,34 @@ test('código é qualquer arquivo com extensão de código em qualquer lugar do 
     assert.deepEqual(saida.obrigatorios, [], `${caminho}: não é código`);
     assert.equal(saida.codigo, 0, caminho);
   }
+});
+
+const MIGRATION = 'packages/db/migrations/20261101000000_x.sql';
+
+test('um .sql só com comentário mudado (D63) não aciona gatilho por caminho, nem o grande, nem o qa; linha de código, remoção de código ou conteúdo no comentário conta', () => {
+  const base = `-- o que ela faz\ncreate table t (id int);\n\n-- fim\n`;
+  const soCom = em({ [MIGRATION]: base }, { [MIGRATION]: `-- o que ela faz, melhor\ncreate table t (id int);\n  -- outro\n-- fim\n` });
+  assert.deepEqual([soCom.obrigatorios, soCom.condicionais], [[], []], 'comentário neutro não chama revisor nem qa');
+  const comGrant = em({ [MIGRATION]: base }, { [MIGRATION]: `-- novo\ncreate table t (id int);\n${GRANT}-- fim\n` });
+  assert.ok(nomes(comGrant.obrigatorios).includes('revisor-seguranca'));
+  assert.ok(nomes(comGrant.obrigatorios).includes('qa'));
+  const supressao = ['-- lgpd-ignora:', 'regra_x', '-- motivo de teste longo'].join(' ');
+  const comSupressao = em({ [MIGRATION]: base }, { [MIGRATION]: `${supressao}\ncreate table t (id int);\n` });
+  assert.deepEqual(nomes(comSupressao.obrigatorios), ['revisor-lgpd'], 'a supressão num comentário de .sql chama só o revisor-lgpd');
+});
+
+test('comportamento_ignorar (D63): só .md e arquivo de teste não tornam o qa obrigatório; um .js de src/ torna; --comportamento ainda força', () => {
+  const soTeste = em(
+    { 'src/AGENTS.md': 'a\n', 'src/x.test.mjs': 'a\n', 'src/__tests__/y.js': 'a\n' },
+    { 'src/AGENTS.md': 'b\n', 'src/x.test.mjs': 'b\n', 'src/__tests__/y.js': 'b\n' },
+  );
+  assert.ok(!nomes(soTeste.obrigatorios).includes('qa'), 'só .md e teste: o qa não é obrigatório');
+  const forcado = em({ 'src/x.test.mjs': 'a\n' }, { 'src/x.test.mjs': 'b\n' }, { comportamento: true });
+  assert.ok(nomes(forcado.obrigatorios).includes('qa'), '--comportamento força');
+  const comCodigo = em({ 'src/x.test.mjs': 'a\n', 'src/x.js': 'a\n' }, { 'src/x.test.mjs': 'b\n', 'src/x.js': 'b\n' });
+  const qa = comCodigo.obrigatorios.find((r) => r.nome === 'qa');
+  assert.ok(qa, 'um .js de src/ torna o qa obrigatório');
+  assert.match(qa.motivos[0].por, /toca src\/x\.js/);
 });
 
 // ---------- o diff: nomes difíceis, linhas que parecem cabeçalho, aspas, binário, base e árvore de trabalho ----------
@@ -379,7 +466,7 @@ test('um binário numa pasta de trabalho aciona os gatilhos de conteúdo (não d
     git('add', '-A');
     git('commit', '-q', '-m', 'head');
     const saida = rodar(raiz, 'HEAD~1', 'HEAD', '--json').json();
-    assert.deepEqual(nomes(saida.obrigatorios), ['revisor-lgpd', 'revisor-seguranca'], 'o .bin não é código (sem o sempre nem o qa), mas não se lê');
+    assert.deepEqual(nomes(saida.obrigatorios), ['revisor-lgpd', 'revisor-seguranca'], 'o .bin não é código (sem o grande nem o qa), mas não se lê');
     const motivos = saida.obrigatorios.flatMap((r) => r.motivos);
     assert.ok(motivos.some((m) => /binário/.test(m.por) && m.arquivo === 'src/public/dados.bin'));
     assert.ok(!saida.obrigatorios.find((r) => r.nome === 'revisor-seguranca').motivos.some((m) => m.arquivo === 'src/public/logo.png'), 'o logo.png binário não dispara gatilho de conteúdo (a segurança não o vê)');
@@ -410,7 +497,7 @@ test('a base é o merge-base: o que só a main adiantada mudou não entra (git d
     git('add', '-A');
     git('commit', '-q', '-m', 'main adiantada');
     const saida = rodar(raiz, 'main', 'trabalho', '--json').json();
-    assert.deepEqual(nomes(saida.obrigatorios), [...SEMPRE, 'qa'].sort(), 'a migration da main não é da tarefa');
+    assert.deepEqual(nomes(saida.obrigatorios), ['qa'], 'a migration da main não é da tarefa');
     const dois = rodar(raiz, 'trabalho', 'main', '--json').json();
     assert.ok(nomes(dois.obrigatorios).includes('revisor-seguranca'), 'no sentido contrário a migration é a mudança');
   });
@@ -443,12 +530,14 @@ test('a linha de comando: opções, regra do head e da base, erros e saída (um 
   const real = JSON.parse(PIPELINE);
   const semTela = structuredClone(real);
   semTela.revisao.gatilhos = semTela.revisao.gatilhos.filter((g) => g.nome !== 'tela');
-  const semSempre = structuredClone(real);
-  semSempre.revisao.sempre = [];
-  com(doisCommits({ 'src/x/Tela.jsx': 'a\n' }, { 'src/x/Tela.jsx': 'b\n' }), ({ raiz }) => {
+  const semGrande = structuredClone(real);
+  delete semGrande.revisao.grande;
+  const semComportamento = structuredClone(real);
+  semComportamento.revisao.comportamento = [];
+  com(doisCommits({ 'src/x/Tela.jsx': 'export default function T() { return null; }\n' }, { 'src/x/Tela.jsx': 'export default function T() { return <p>oi</p>; }\n' }), ({ raiz }) => {
     const r = rodar(raiz, 'HEAD~1', 'HEAD');
     assert.equal(r.status, 0, r.stderr);
-    assert.ok(r.stdout.includes(`revisor-tela  ${nivel('revisor-tela')}\n      gatilho tela: src/x/Tela.jsx (caminho)`));
+    assert.ok(r.stdout.includes(`revisor-tela  ${nivel('revisor-tela')}\n      gatilho tela: src/x/Tela.jsx:1 (layout no JSX: tag, className ou style mudou)`));
     const sem = rodar(raiz, 'HEAD~1', 'HEAD', '--sem-tela', 'só renome', '--sem-comportamento', 'só texto', '--json');
     assert.equal(sem.status, 0, sem.stderr);
     assert.deepEqual(sem.json().dispensados.map((d) => d.nome).sort(), ['qa', 'revisor-tela']);
@@ -477,10 +566,16 @@ test('a linha de comando: opções, regra do head e da base, erros e saída (um 
     assert.match(r.stderr, /o gatilho tela falta/);
     assert.match(r.stderr, /branch anterior à regra: traga a main \(git merge main\)/);
   });
-  com(doisCommits({ 'src/lib/x.js': 'a\n' }, { 'src/lib/x.js': 'b\n', '.claude/pipeline.json': JSON.stringify(semSempre) }), ({ raiz }) => {
+  com(doisCommits({ 'src/lib/x.js': 'a\n' }, { 'src/lib/x.js': 'b\n', '.claude/pipeline.json': JSON.stringify(semGrande) }), ({ raiz }) => {
+    const r = rodar(raiz, 'HEAD~1', 'HEAD');
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /revisao\.grande falta/);
+    assert.match(r.stderr, /traga a main/, 'o branch anterior à D60 não tem a regra grande');
+  });
+  com(doisCommits({ 'src/lib/x.js': 'a\n' }, { 'src/lib/x.js': 'b\n', '.claude/pipeline.json': JSON.stringify(semComportamento) }), ({ raiz }) => {
     const r = rodar(raiz, 'HEAD~1', 'HEAD');
     assert.equal(r.status, 2, 'o head que afrouxa abaixo do piso do código não se avalia');
-    assert.match(r.stderr, /não podem ficar vazios/);
+    assert.match(r.stderr, /não pode ficar vazio/);
     assert.doesNotMatch(r.stderr, /traga a main/, 'outro erro de piso não acrescenta a dica');
   });
 });
@@ -501,5 +596,64 @@ test('referência que não existe: "a referência <x> não existe"; a main que a
     assert.match(semMain.stderr, /crie a main pelo GitHub e traga com git pull, ver README/);
     assert.doesNotMatch(rodar(raiz, 'naoexiste', 'HEAD').stderr, /README/, 'a dica é só da main');
     assert.match(rodar(raiz, 'origin/main', 'HEAD').stderr, /crie a main pelo GitHub/, 'origin/main também');
+  });
+});
+
+// ---- os três esforços do pipeline: rapido, medio (padrão) e alto (D64) ----
+
+test('três esforços (D64): medio é o padrão e dispensa revisor-arquitetura e revisor-lgpd; rapido dispensa todos os revisores e o qa; alto mantém todos', () => {
+  const diffCompleto = {
+    'packages/db/migrations/20261101000000_x.sql': `create table t (id int);\n${GRANT}`,
+    'src/contatos/x.js': "export const q = 'select cpf from pessoas';\n",
+    'src/x/Tela.jsx': 'export default function T() { return <p>oi</p>; }\n',
+  };
+  com(doisCommits({}, diffCompleto), ({ raiz }) => {
+    // padrão (sem --esforco e sem .claude/estado/esforco): medio
+    const medio = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--json').json();
+    assert.equal(medio.esforco, 'medio');
+    assert.deepEqual(nomes(medio.obrigatorios), ['ponytail-review', 'qa', 'revisor-seguranca', 'revisor-tela']);
+    assert.deepEqual(medio.dispensados.map((d) => [d.nome, d.motivo]).sort(), [
+      ['revisor-arquitetura', 'esforço medio (D64)'],
+      ['revisor-lgpd', 'esforço medio (D64)'],
+    ]);
+    assert.match(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD').stdout, /Revisores de HEAD~1\.\.HEAD \(esforço medio\)/);
+
+    // rapido: dispensa todos os obrigatórios e condicionais
+    const rapido = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'rapido', '--json').json();
+    assert.equal(rapido.esforco, 'rapido');
+    assert.deepEqual(rapido.obrigatorios, []);
+    assert.deepEqual(rapido.condicionais, []);
+    assert.deepEqual(rapido.dispensados.map((d) => d.nome).sort(), ['ponytail-review', 'qa', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-seguranca', 'revisor-tela']);
+    assert.ok(rapido.dispensados.every((d) => d.motivo === 'esforço rapido (D64)'));
+
+    // alto: mantém todos
+    const alto = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'alto', '--json').json();
+    assert.equal(alto.esforco, 'alto');
+    assert.deepEqual(nomes(alto.obrigatorios), ['ponytail-review', 'qa', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-seguranca', 'revisor-tela']);
+    assert.deepEqual(alto.dispensados, []);
+  });
+  // qa condicional (.claude/hooks) também sai no rapido
+  const rapidoCond = em({ '.claude/hooks/x.mjs': 'a\n' }, { '.claude/hooks/x.mjs': 'b\n' }, { esforco: 'rapido' });
+  assert.deepEqual([rapidoCond.obrigatorios, rapidoCond.condicionais], [[], []]);
+  assert.ok(rapidoCond.dispensados.some((d) => d.nome === 'qa' && d.motivo === 'esforço rapido (D64)'));
+});
+
+test('três esforços (D64): lê .claude/estado/esforco quando --esforco não é passado; --esforco vence o arquivo; valor inválido é erro 2', () => {
+  com(doisCommits({}, { 'src/contatos/x.js': "export const q = 'select cpf from pessoas';\n" }), ({ raiz }) => {
+    mkdirSync(join(raiz, '.claude', 'estado'), { recursive: true });
+    writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), 'alto\n');
+    assert.ok(nomes(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--json').json().obrigatorios).includes('revisor-lgpd'), 'arquivo em alto mantém revisor-lgpd');
+    assert.deepEqual(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'rapido', '--json').json().obrigatorios, [], '--esforco na linha de comando vence o arquivo');
+    writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), 'rapido\n');
+    assert.deepEqual(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--json').json().obrigatorios, [], 'arquivo em rapido zera os obrigatórios');
+    writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), 'invalido\n');
+    const r = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD');
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /\.claude\/estado\/esforco inválido/);
+    for (const args of [['--esforco'], ['--esforco', '--json'], ['--esforco', 'maximo']]) {
+      const invalido = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', ...args);
+      assert.equal(invalido.status, 2, args.join(' '));
+      assert.match(invalido.stderr, /--esforco pede rapido, medio ou alto/);
+    }
   });
 });

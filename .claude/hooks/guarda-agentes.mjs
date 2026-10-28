@@ -3,12 +3,17 @@
 // que o cabeçalho de .claude/agents/<nome>.md repete; acima do TETO (aqui no código) a chamada pede a confirmação do
 // usuário. Só passam com o `subagent_type` igual ao `name:` do cabeçalho e sem outro arquivo em .claude/agents que possa
 // responder pelo mesmo nome. O orquestrador só roda como agente do chat principal, então como subagente se nega, e o
-// chat principal só delega em opus xhigh (D3): outro esforço ou modelo nega, par ilegível pede confirmação, e o subagente
+// chat principal só delega em opus xhigh (D45): outro esforço ou modelo nega, par ilegível pede confirmação, e o subagente
 // que chama a ferramenta Agent (a entrada traz agent_id) se nega. Fora
 // dos agentes fixos, a chamada traz model e effort (o cabeçalho não preenche), outro opus pede a confirmação do usuário,
-// o esforço só vai de low a high e o haiku se nega. Pipeline.json ausente ou ilegível nega, em JSON.
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+// o esforço só vai de low a high e o haiku se nega. Pipeline.json ausente ou ilegível nega, em JSON. Para todo subagente,
+// o que vai a ele (o pedido mais os arquivos fora do repositório que o pedido cita por caminho) tem teto de 50 mil
+// tokens, estimados pelo tamanho ÷ 3: acima disso nega (D60). O subagente com isolation worktree nasce da main, e o
+// pedido ou o pacote tem de dizer o 1º passo, git switch -c (ou git checkout -b), senão nega (D63). O esforço do
+// pipeline em .claude/estado/esforco (D64: rapido, medio ou alto) barra na guarda os agentes que aquele esforço não
+// roda: rapido nega todos os revisores e o qa; medio nega revisor-arquitetura e revisor-lgpd; valor inválido nega.
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // dentro do try: um config.mjs quebrado (conflito de merge) não pode deixar o hook sair sem negar
@@ -21,11 +26,12 @@ try {
 }
 
 const AGENTES = join(resolve(dirname(fileURLToPath(import.meta.url)), '..'), 'agents');
+const RAIZ_DO_PROJETO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CAMPOS = ['name', 'model', 'effort', 'tools'];
 
 /**
  * O teto dos agentes fixos: o modelo (trecho do nome), o esforço máximo e as ferramentas exatas. O `pipeline.json` pode
- * descer abaixo do teto (o ajuste automático); acima dele a chamada pede a confirmação do usuário (D2).
+ * descer abaixo do teto (o ajuste automático); acima dele a chamada pede a confirmação do usuário (D44).
  */
 export const TETO = {
   'revisor-seguranca': { model: 'opus', effort: 'xhigh', tools: 'Read, Grep, Glob' },
@@ -100,8 +106,153 @@ function decidirFixo(tipo, bruto, entrada, cabecalho, vigente) {
   return passa;
 }
 
-/** O que fazer com a chamada de subagente. `lerCabecalho(tipo)` devolve o cabeçalho do agente fixo (ver lerCabecalhoDoArquivo), ou nada. */
-export function decidirAgente(entrada, lerCabecalho, agentes = TETO) {
+// ---------- o teto do que vai ao subagente (D60) ----------
+
+/** O teto, em tokens, do pedido mais os arquivos fora do repositório que ele cita (D60). */
+export const TETO_TOKENS = 50000;
+/** Quantos caracteres (ou bytes) valem um token na estimativa. */
+export const CARACTERES_POR_TOKEN = 3;
+// caminho absoluto no texto: começa em "/" depois de algo que não é de caminho (nem de caminho relativo, URL ou `../`) e
+// vai até espaço, aspas, crase, parêntese ou <>. Qualquer outro caractere vale (acento inclusive). Limite: o caminho com espaço se corta no espaço.
+const CAMINHO_NO_TEXTO = /(?<![\p{L}\p{N}_.~)\]-])\/[^\s"'`()<>]+/gu;
+
+/** Tira do fim do caminho a pontuação do texto (`.`, `,`, `;`, `:`) e o `:linha` ou `:linha-linha`, até não mudar mais. */
+function semOFim(caminho) {
+  let atual = caminho;
+  for (;;) {
+    const novo = atual.replace(/[.,;:]+$/, '').replace(/:\d+(?:-\d+)?$/, '');
+    if (novo === atual) return atual;
+    atual = novo;
+  }
+}
+
+/** Os caminhos absolutos do texto, sem repetir, sem a pontuação nem o `:linha` do fim. */
+export function caminhosCitados(texto) {
+  const achados = new Set();
+  for (const [bruto] of texto.matchAll(CAMINHO_NO_TEXTO)) achados.add(semOFim(bruto));
+  return [...achados].filter((c) => c.length > 1);
+}
+
+/**
+ * O arquivo em `citado` que conta para o teto: `{ real, bytes }` (o caminho resolvido pelo `realpath`), ou null se não
+ * existe, é pasta ou fica dentro da raiz do projeto (o arquivo do repositório é leitura do próprio agente). Erro de
+ * leitura = null. `raiz` e o `realpath` valem dos dois lados: no macOS o /tmp é /private/tmp.
+ */
+export function tamanhoDoArquivo(citado, raiz = RAIZ_DO_PROJETO) {
+  try {
+    const real = realpathSync(citado);
+    const estado = statSync(real);
+    if (!estado.isFile()) return null;
+    const dentro = realpathSync(raiz);
+    if (real === dentro || real.startsWith(dentro + sep)) return null;
+    return { real, bytes: estado.size };
+  } catch {
+    return null;
+  }
+}
+
+/** Nega o pedido que, com os arquivos fora do repositório que ele cita, passa do teto. `lerTamanho(caminho)` é o `tamanhoDoArquivo`. */
+export function decidirTeto(entrada, lerTamanho = tamanhoDoArquivo) {
+  const prompt = typeof entrada?.prompt === 'string' ? entrada.prompt : '';
+  const vistos = new Map();
+  for (const citado of caminhosCitados(prompt)) {
+    const arquivo = lerTamanho(citado);
+    if (arquivo !== null && arquivo !== undefined && !vistos.has(arquivo.real)) vistos.set(arquivo.real, arquivo.bytes);
+  }
+  const bytes = [...vistos.values()].reduce((t, b) => t + b, 0);
+  const tokens = Math.ceil((prompt.length + bytes) / CARACTERES_POR_TOKEN);
+  if (tokens <= TETO_TOKENS) return passa;
+  return nega(`o que vai ao subagente estima ${tokens} tokens (pedido de ${prompt.length} caracteres e ${vistos.size} arquivo(s) fora do repositório com ${bytes} bytes, tamanho ÷ ${CARACTERES_POR_TOKEN}), acima do teto de ${TETO_TOKENS} (D60). Resuma para a função deste agente; num revisor com diff grande, passe o mapa (arquivos, linhas, o que mudou) e deixe que ele leia o código`);
+}
+
+// ---------- o worktree nasce da main (D63) ----------
+
+const PRIMEIRO_PASSO = /\bgit\s+(?:switch\s+-c|checkout\s+-b)\b/;
+
+/** O texto de um arquivo (até 2 MB), ou '' se não lê. */
+export function textoDoArquivo(real) {
+  try {
+    return readFileSync(real, 'utf8').slice(0, 2 * 1024 * 1024);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * O subagente com `isolation: worktree` nasce da `main`, não do branch da tarefa (D63): o pedido, ou um arquivo de pacote
+ * (os que o teto lê: caminho absoluto fora do repositório, 1º nível), tem de dizer o 1º passo, `git switch -c` ou
+ * `git checkout -b`. Sem `isolation: worktree` não muda nada. Limite: a frase só se confere, não o branch que ela nomeia.
+ */
+export function decidirWorktree(entrada, lerTamanho = tamanhoDoArquivo, lerTexto = textoDoArquivo) {
+  if (entrada?.isolation !== 'worktree') return passa;
+  const prompt = typeof entrada?.prompt === 'string' ? entrada.prompt : '';
+  if (PRIMEIRO_PASSO.test(prompt)) return passa;
+  for (const citado of caminhosCitados(prompt)) {
+    const arquivo = lerTamanho(citado);
+    if (arquivo !== null && arquivo !== undefined && PRIMEIRO_PASSO.test(lerTexto(arquivo.real))) return passa;
+  }
+  return nega('o worktree do agente nasce da main (D63): diga no pedido ou no pacote o 1º passo, `git switch -c <branch> <branch da tarefa>` (ou `... main`)');
+}
+
+// ---------- o esforço do pipeline em .claude/estado/esforco (D64) ----------
+
+export const ESFORCOS_PIPELINE = new Set(['rapido', 'medio', 'alto']);
+export const FORA_DO_RAPIDO = new Set(['revisor-seguranca', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-tela', 'qa']);
+export const FORA_DO_MEDIO = new Set(['revisor-arquitetura', 'revisor-lgpd']);
+
+/**
+ * O esforço do pipeline em `.claude/estado/esforco` (ou `env.PIPELINE_ESFORCO`): `'rapido'`, `'medio'`, `'alto'`,
+ * `undefined` se o arquivo não existe ou está vazio, ou o texto inválido (para quem decide negar fechado).
+ */
+export function lerEsforcoDoEstado(raiz = process.env.CLAUDE_PROJECT_DIR ?? RAIZ_DO_PROJETO, env = process.env) {
+  const daEnv = texto(env?.PIPELINE_ESFORCO);
+  if (daEnv !== undefined) return daEnv;
+  const arquivo = join(raiz, '.claude', 'estado', 'esforco');
+  if (!existsSync(arquivo)) return undefined;
+  try {
+    return texto(readFileSync(arquivo, 'utf8'));
+  } catch {
+    return '<ilegível>';
+  }
+}
+
+/**
+ * Nega os agentes que não cabem no esforço do pipeline (D64): `rapido` nega todos os revisores (fixos e `ponytail-review`)
+ * e o `qa`; `medio` nega `revisor-arquitetura` e `revisor-lgpd`; `alto` e `undefined` (sem estado gravado) deixam passar;
+ * qualquer outro valor nega fechado.
+ */
+export function decidirEsforcoPipeline(entrada, esforco) {
+  if (esforco === undefined) return passa;
+  if (!ESFORCOS_PIPELINE.has(esforco)) {
+    return nega(`o esforço do pipeline em .claude/estado/esforco é inválido: "${esforco}" (use rapido, medio ou alto, D64)`);
+  }
+  const tipo = texto(entrada?.subagent_type);
+  if (esforco === 'rapido') {
+    if (tipo !== undefined && FORA_DO_RAPIDO.has(tipo)) {
+      return nega(`esforço rapido (D64): ${tipo} não roda no rápido (sem revisores nem qa; mude .claude/estado/esforco se o usuário pediu outro esforço)`);
+    }
+    if (/\bponytail-review\b/i.test(`${entrada?.description ?? ''} ${entrada?.prompt ?? ''}`)) {
+      return nega('esforço rapido (D64): ponytail-review não roda no rápido (sem revisores nem qa; mude .claude/estado/esforco se o usuário pediu outro esforço)');
+    }
+  } else if (esforco === 'medio' && tipo !== undefined && FORA_DO_MEDIO.has(tipo)) {
+    return nega(`esforço medio (D64): ${tipo} só roda no esforço alto (mude .claude/estado/esforco para alto se o usuário pediu)`);
+  }
+  return passa;
+}
+
+/**
+ * O que fazer com a chamada de subagente. `lerCabecalho(tipo)` devolve o cabeçalho do agente fixo (ver lerCabecalhoDoArquivo),
+ * ou nada. `lerTamanho` mede um arquivo citado no pedido (ver `tamanhoDoArquivo`) e `lerTexto` o lê (a regra do worktree).
+ * O esforço do pipeline (D64), o teto de tokens e a regra do worktree valem para todo subagente que passou nas outras regras, e o deny deles vence o ask.
+ */
+export function decidirAgente(entrada, lerCabecalho, agentes = TETO, lerTamanho = tamanhoDoArquivo, lerTexto = textoDoArquivo, esforco = undefined) {
+  const doTipo = decidirTipo(entrada, lerCabecalho, agentes);
+  return doTipo.decisao === 'deny'
+    ? doTipo
+    : juntarDecisoes(doTipo, decidirEsforcoPipeline(entrada, esforco), decidirTeto(entrada, lerTamanho), decidirWorktree(entrada, lerTamanho, lerTexto));
+}
+
+function decidirTipo(entrada, lerCabecalho, agentes) {
   const bruto = entrada?.subagent_type;
   const tipo = texto(bruto);
   if (tipo === 'fork') return nega('fork herda o modelo do chat principal; use um subagente com model');
@@ -122,7 +273,7 @@ export function decidirAgente(entrada, lerCabecalho, agentes = TETO) {
   return nega(`model "${model}" desconhecido: passe sonnet`);
 }
 
-// ---------- o chat principal em opus xhigh (D3) ----------
+// ---------- o chat principal em opus xhigh (D45) ----------
 
 const SEM_PAR = { model: undefined, effort: undefined };
 /** Quanto do fim do registro da sessão se lê: ele passa de 1 MB e o hook tem 10 s. */
@@ -141,8 +292,8 @@ export function decidirOrquestrador(par) {
   const erros = [];
   if (effort !== undefined && effort !== esforcoEsperado) erros.push(`o esforço do chat principal é ${effort} (digite /effort ${esforcoEsperado})`);
   if (model !== undefined && !model.includes(modeloEsperado)) erros.push(`o modelo do chat principal é ${model} (digite /model ${modeloEsperado})`);
-  if (erros.length > 0) return nega(`o orquestrador roda sempre em ${modeloEsperado} ${esforcoEsperado} (D3): ${erros.join('; ')}`);
-  if (model === undefined || effort === undefined) return { decisao: 'ask', motivo: `não deu para ler o modelo ou o esforço do chat principal; confirme que o chat está em ${modeloEsperado} ${esforcoEsperado}, D3` };
+  if (erros.length > 0) return nega(`o orquestrador roda sempre em ${modeloEsperado} ${esforcoEsperado} (D45): ${erros.join('; ')}`);
+  if (model === undefined || effort === undefined) return { decisao: 'ask', motivo: `não deu para ler o modelo ou o esforço do chat principal; confirme que o chat está em ${modeloEsperado} ${esforcoEsperado}, D45` };
   return passa;
 }
 
@@ -154,7 +305,7 @@ const PESO = { deny: 2, ask: 1 };
 export function decidirChamador(entrada) {
   const id = entrada?.agent_id;
   if (typeof id !== 'string' || id.trim() === '') return null;
-  return nega('subagente não abre subagente: só o chat principal, o orquestrador, delega (D3)');
+  return nega('subagente não abre subagente: só o chat principal, o orquestrador, delega (D45)');
 }
 
 /** Junta decisões: deny vence ask, que vence passar; as de mesmo peso somam os motivos. */
@@ -255,11 +406,22 @@ async function principal() {
   try {
     const { valor, erro } = config.lerAgentes();
     if (erro !== null) return saida('deny', `pipeline.json ilegível: ${erro}`);
-    resultado = juntarDecisoes(decidirOrquestrador(parDoChat(completo, process.env)), decidirAgente(dados, lerCabecalhoDoArquivo, valor));
+    const esforco = lerEsforcoDoEstado();
+    resultado = juntarDecisoes(decidirOrquestrador(parDoChat(completo, process.env)), decidirAgente(dados, lerCabecalhoDoArquivo, valor, tamanhoDoArquivo, textoDoArquivo, esforco));
   } catch (e) {
     return saida('deny', `cabeçalho ilegível: não foi possível ler .claude/agents (${e instanceof Error ? e.message : e})`);
   }
   if (resultado.decisao !== null) saida(resultado.decisao, resultado.motivo);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) await principal();
+// realpath dos dois lados: no macOS o /tmp é /private/tmp, e o import.meta.url vem resolvido (o hook ficaria mudo, e mudo é "passou")
+const mesmoArquivo = (a, b) => {
+  if (a === b) return true;
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+};
+
+if (mesmoArquivo(process.argv[1], fileURLToPath(import.meta.url))) await principal();

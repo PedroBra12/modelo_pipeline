@@ -1,7 +1,8 @@
 // Hook Stop: se houve código alterado (marca-alterado.mjs) e o portão rápido existe no package.json,
 // roda `npm run <portaoRapido>` (o nome vem de .claude/pipeline.json; o padrão é checar:rapido).
 // Vermelho: devolve o erro para o Claude corrigir antes de encerrar.
-// Verde: pede uma vez a revisão do pipeline (skill pipeline) e depois libera.
+// Verde: pede uma vez a revisão do pipeline (skill pipeline) e depois libera — exceto no esforço `rapido`
+// (`.claude/estado/esforco`, D64), em que o portão rápido verde já libera direto (sem revisores nem qa).
 // Sem o script no package.json, não faz nada. Com o pipeline.json ilegível, só avisa: o portão nunca bloqueia por isso.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -12,6 +13,7 @@ const raiz = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
 const estado = join(raiz, '.claude', 'estado');
 const listaAlterados = join(estado, 'alterados.txt');
 const revisaoPedida = join(estado, 'revisao-pedida');
+const arquivoEsforco = join(estado, 'esforco');
 const responder = (saida) => process.stdout.write(JSON.stringify(saida));
 
 let entrada = '';
@@ -53,6 +55,9 @@ if (alterados.length > 0) {
         decision: 'block',
         reason: `Portão rápido vermelho: \`npm run ${nome}\` falhou. Corrija antes de encerrar (skill pipeline).\n\n${saida}`,
       });
+    } else if ((existsSync(arquivoEsforco) ? readFileSync(arquivoEsforco, 'utf8').trim().toLowerCase() : '') === 'rapido') {
+      rmSync(listaAlterados, { force: true });
+      rmSync(revisaoPedida, { force: true });
     } else if (!existsSync(revisaoPedida)) {
       // vale também na parada que segue um bloqueio vermelho: o marcador garante que o pedido sai uma vez só
       writeFileSync(revisaoPedida, '');
