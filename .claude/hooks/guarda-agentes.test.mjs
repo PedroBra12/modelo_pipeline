@@ -180,7 +180,7 @@ test('sonnet passa; opus e fable fora dos agentes fixos pedem a confirmação co
 
 test('o hook de ponta a ponta: nega a entrada ilegível, o fork e o orquestrador, pede o opus fora dos agentes fixos, deixa o sonnet e os agentes fixos', () => {
   const hook = (entrada) => {
-    const r = spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8', env: { ...process.env, PIPELINE_ESFORCO: 'alto' } });
     return r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput;
   };
   const chamada = (tool_input) => entradaDoHook(tool_input);
@@ -210,7 +210,7 @@ function hookCom(pipeline, tipo = 'qa') {
     cpSync(AGENTES, join(raiz, 'agents'), { recursive: true });
     if (pipeline !== null) writeFileSync(join(raiz, 'pipeline.json'), pipeline);
     const entrada = entradaDoHook({ subagent_type: tipo, description: 'x' });
-    const r = spawnSync(process.execPath, [join(raiz, 'hooks', 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [join(raiz, 'hooks', 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8', env: { ...process.env, PIPELINE_ESFORCO: 'alto' } });
     return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
   } finally {
     rmSync(raiz, { recursive: true, force: true });
@@ -587,7 +587,7 @@ test('decidirChamador: quem separa o subagente do chat principal é o agent_id; 
 test('o hook de ponta a ponta confere o chat principal: opus xhigh passa; outro esforço ou modelo nega; o que não deu para ler pede confirmação; vale para toda chamada de Agent', () => {
   const hook = (entrada, env = {}) => {
     const { CLAUDE_EFFORT, ...resto } = process.env;
-    const r = spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8', env: { ...resto, ...env } });
+    const r = spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8', env: { PIPELINE_ESFORCO: 'alto', ...resto, ...env } });
     return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
   };
   const leitor = { subagent_type: 'leitor-docs', description: 'x' };
@@ -714,7 +714,7 @@ test('tamanhoDoArquivo (o fs de verdade): conta o arquivo fora da raiz pelo real
 });
 
 test('o hook de ponta a ponta nega o pedido acima do teto e deixa passar o pequeno', () => {
-  const rodar = (prompt) => spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entradaDoHook({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', prompt }), encoding: 'utf8' });
+  const rodar = (prompt) => spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entradaDoHook({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', prompt }), encoding: 'utf8', env: { ...process.env, PIPELINE_ESFORCO: 'alto' } });
   assert.equal(rodar('curto').stdout, '');
   const r = JSON.parse(rodar(grande(LIMITE + 1)).stdout);
   assert.equal(r.hookSpecificOutput.permissionDecision, 'deny');
@@ -752,7 +752,7 @@ test('worktree (D63): sem isolation, ou com outro valor, nada muda', () => {
 });
 
 test('worktree (D63): o hook de ponta a ponta nega o subagente isolado sem a frase e deixa passar com ela', () => {
-  const rodar = (prompt) => spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entradaDoHook({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', isolation: 'worktree', prompt }), encoding: 'utf8' });
+  const rodar = (prompt) => spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entradaDoHook({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', isolation: 'worktree', prompt }), encoding: 'utf8', env: { ...process.env, PIPELINE_ESFORCO: 'alto' } });
   const r = JSON.parse(rodar('escreva o código').stdout);
   assert.equal(r.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(r.hookSpecificOutput.permissionDecisionReason, /D63/);
@@ -761,7 +761,13 @@ test('worktree (D63): o hook de ponta a ponta nega o subagente isolado sem a fra
 
 // ---------- o esforço do pipeline em .claude/estado/esforco (D64) ----------
 
-test('esforço do pipeline (D64): rapido nega todos os revisores (fixos e ponytail-review) e o qa; medio nega arquitetura e lgpd; alto e undefined deixam passar; inválido nega fechado', () => {
+test('esforço do pipeline (D64): ausente só permite leitor-docs; rapido nega todos os revisores (fixos e ponytail-review) e o qa; medio nega arquitetura e lgpd; alto e undefined deixam passar; inválido nega fechado', () => {
+  assert.deepEqual(decidirEsforcoPipeline({ subagent_type: 'leitor-docs' }, '<ausente>'), passa, 'ausente deixa leitor-docs');
+  for (const tipo of ['general-purpose', 'qa', 'revisor-seguranca', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-tela']) {
+    const r = decidirEsforcoPipeline({ subagent_type: tipo, model: 'sonnet', effort: 'high' }, '<ausente>');
+    assert.equal(r.decisao, 'deny', `ausente nega ${tipo}`);
+    assert.match(r.motivo, /defina primeiro o esforço do pipeline em \.claude\/estado\/esforco/);
+  }
   for (const tipo of ['revisor-seguranca', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-tela', 'qa']) {
     const r = decidirEsforcoPipeline({ subagent_type: tipo }, 'rapido');
     assert.equal(r.decisao, 'deny', `rapido nega ${tipo}`);
@@ -792,8 +798,23 @@ test('esforço do pipeline (D64): rapido nega todos os revisores (fixos e ponyta
 test('esforço do pipeline (D64): lerEsforcoDoEstado e o hook de ponta a ponta respeitam .claude/estado/esforco e PIPELINE_ESFORCO', () => {
   const raiz = mkdtempSync(join(tmpdir(), 'esforco-estado-'));
   try {
-    assert.equal(lerEsforcoDoEstado(raiz, {}), undefined, 'sem arquivo e sem env');
+    assert.equal(lerEsforcoDoEstado(raiz, {}), '<ausente>', 'sem arquivo e sem env');
+    const semEstado = (tool_input) => {
+      const { PIPELINE_ESFORCO, ...resto } = process.env;
+      const r = spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], {
+        input: entradaDoHook(tool_input),
+        encoding: 'utf8',
+        env: { ...resto, CLAUDE_PROJECT_DIR: raiz },
+      });
+      return r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput;
+    };
+    assert.equal(semEstado({ subagent_type: 'leitor-docs', description: 'x' }), null, 'sem estado: leitor-docs passa');
+    assert.equal(semEstado({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x' })?.permissionDecision, 'deny', 'sem estado: general-purpose nega');
+    assert.match(semEstado({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x' }).permissionDecisionReason, /defina primeiro o esforço do pipeline/);
+
     mkdirSync(join(raiz, '.claude', 'estado'), { recursive: true });
+    writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), '   \n');
+    assert.equal(lerEsforcoDoEstado(raiz, {}), '<ausente>', 'arquivo vazio também é ausente');
     writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), '  MEDIO \n');
     assert.equal(lerEsforcoDoEstado(raiz, {}), 'medio');
     assert.equal(lerEsforcoDoEstado(raiz, { PIPELINE_ESFORCO: 'rapido' }), 'rapido', 'env vence o arquivo');

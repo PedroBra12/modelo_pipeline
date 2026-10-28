@@ -17,6 +17,15 @@ import { regrasCarregaram, varrer } from './confere-lgpd.mjs';
 export const ESFORCOS_PIPELINE = new Set(['rapido', 'medio', 'alto']);
 export const ESFORCO_PADRAO = 'medio';
 export const FORA_DO_MEDIO = new Set(['revisor-arquitetura', 'revisor-lgpd']);
+export const GATILHOS_BLOQUEADOS_NO_RAPIDO = new Set([
+  'banco',
+  'permissao',
+  'dado_pessoal',
+  'config_pipeline',
+  'lgpd_ignora',
+  'lgpd_regras',
+  'confere-lgpd',
+]);
 const ARQUIVO_ESFORCO = '.claude/estado/esforco';
 
 const REFERENCIA = /^[A-Za-z0-9_][A-Za-z0-9_./~^@{}:-]*$/; // nunca começa com "-": não vira opção do git
@@ -498,6 +507,13 @@ export function escolher(todos, cfg, { comportamento = false, semComportamento, 
     }
   }
   if (esforco === 'rapido') {
+    const bloqueados = [
+      ...[...GATILHOS_BLOQUEADOS_NO_RAPIDO].filter((nome) => (dosGatilhos.get(nome)?.length ?? 0) > 0),
+      ...(doConfereLgpd.length > 0 ? ['confere-lgpd'] : []),
+    ];
+    if (bloqueados.length > 0) {
+      throw new Error(`esforço rapido não é permitido quando o diff aciona gatilho de risco (${[...new Set(bloqueados)].join(', ')}): use medio ou alto (D64)`);
+    }
     for (const r of [...obrigatorios.splice(0), ...condicionais.splice(0)]) dispensados.push({ nome: r.nome, motivo: 'esforço rapido (D64)' });
   } else if (esforco === 'medio') {
     for (let i = 0; i < obrigatorios.length; i += 1) {

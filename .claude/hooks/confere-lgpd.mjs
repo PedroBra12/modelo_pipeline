@@ -192,8 +192,8 @@ function decodificar(bytes) {
   return bytes.toString('utf8');
 }
 
-function negar(motivo) {
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: motivo } }));
+function negar(motivo, decisao = 'deny') {
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decisao, permissionDecisionReason: motivo } }));
 }
 
 /**
@@ -250,6 +250,13 @@ async function comoHook() {
   }
   const novos = [ti.content, ti.new_string, ti.new_source, ...(Array.isArray(ti.edits) ? ti.edits.map((e) => e?.new_string) : [])];
   const texto = novos.filter((t) => typeof t === 'string').join('\n');
+  if (rel === '.claude/estado/esforco') {
+    const esforco = texto.trim().toLowerCase();
+    if (esforco !== 'medio' && esforco !== 'alto') {
+      return negar('Guarda do pipeline: confirme o esforço rapido em .claude/estado/esforco (dispensa todos os revisores, o qa e a autoanálise, D64).', 'ask');
+    }
+    return;
+  }
   const disco = existsSync(absoluto) && statSync(absoluto).isFile() ? decodificar(readFileSync(absoluto)) : null;
   const { ancora, relAncora } = ancoraDe(raiz, rel);
   // o que a edição troca sai do arquivo: o que fica no resto gasta o orçamento do legado (a cópia de uma linha antiga bloqueia)

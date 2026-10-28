@@ -10,8 +10,9 @@
 // o que vai a ele (o pedido mais os arquivos fora do repositório que o pedido cita por caminho) tem teto de 50 mil
 // tokens, estimados pelo tamanho ÷ 3: acima disso nega (D60). O subagente com isolation worktree nasce da main, e o
 // pedido ou o pacote tem de dizer o 1º passo, git switch -c (ou git checkout -b), senão nega (D63). O esforço do
-// pipeline em .claude/estado/esforco (D64: rapido, medio ou alto) barra na guarda os agentes que aquele esforço não
-// roda: rapido nega todos os revisores e o qa; medio nega revisor-arquitetura e revisor-lgpd; valor inválido nega.
+// pipeline em .claude/estado/esforco (D64: rapido, medio ou alto) é obrigatório antes de delegar (sem ele só passa o
+// leitor-docs) e barra na guarda os agentes que aquele esforço não roda: rapido nega todos os revisores e o qa; medio
+// nega revisor-arquitetura e revisor-lgpd; valor inválido nega.
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -202,31 +203,37 @@ export const FORA_DO_MEDIO = new Set(['revisor-arquitetura', 'revisor-lgpd']);
 
 /**
  * O esforço do pipeline em `.claude/estado/esforco` (ou `env.PIPELINE_ESFORCO`): `'rapido'`, `'medio'`, `'alto'`,
- * `undefined` se o arquivo não existe ou está vazio, ou o texto inválido (para quem decide negar fechado).
+ * `'<ausente>'` se o arquivo não existe ou está vazio, ou o texto inválido (para quem decide negar fechado).
  */
 export function lerEsforcoDoEstado(raiz = process.env.CLAUDE_PROJECT_DIR ?? RAIZ_DO_PROJETO, env = process.env) {
   const daEnv = texto(env?.PIPELINE_ESFORCO);
   if (daEnv !== undefined) return daEnv;
   const arquivo = join(raiz, '.claude', 'estado', 'esforco');
-  if (!existsSync(arquivo)) return undefined;
+  if (!existsSync(arquivo)) return '<ausente>';
   try {
-    return texto(readFileSync(arquivo, 'utf8'));
+    return texto(readFileSync(arquivo, 'utf8')) ?? '<ausente>';
   } catch {
     return '<ilegível>';
   }
 }
 
 /**
- * Nega os agentes que não cabem no esforço do pipeline (D64): `rapido` nega todos os revisores (fixos e `ponytail-review`)
- * e o `qa`; `medio` nega `revisor-arquitetura` e `revisor-lgpd`; `alto` e `undefined` (sem estado gravado) deixam passar;
+ * Nega os agentes que não cabem no esforço do pipeline (D64): sem `.claude/estado/esforco` (`'<ausente>'`) só o
+ * `leitor-docs` passa; `rapido` nega todos os revisores (fixos e `ponytail-review`) e o `qa`; `medio` nega
+ * `revisor-arquitetura` e `revisor-lgpd`; `alto` e `undefined` (chamada interna sem o 6º argumento) deixam passar;
  * qualquer outro valor nega fechado.
  */
 export function decidirEsforcoPipeline(entrada, esforco) {
   if (esforco === undefined) return passa;
+  const tipo = texto(entrada?.subagent_type);
+  if (esforco === '<ausente>') {
+    return tipo === 'leitor-docs'
+      ? passa
+      : nega('defina primeiro o esforço do pipeline em .claude/estado/esforco (rapido, medio ou alto, D64) antes de delegar');
+  }
   if (!ESFORCOS_PIPELINE.has(esforco)) {
     return nega(`o esforço do pipeline em .claude/estado/esforco é inválido: "${esforco}" (use rapido, medio ou alto, D64)`);
   }
-  const tipo = texto(entrada?.subagent_type);
   if (esforco === 'rapido') {
     if (tipo !== undefined && FORA_DO_RAPIDO.has(tipo)) {
       return nega(`esforço rapido (D64): ${tipo} não roda no rápido (sem revisores nem qa; mude .claude/estado/esforco se o usuário pediu outro esforço)`);
