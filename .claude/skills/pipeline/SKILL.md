@@ -40,7 +40,7 @@ Defina também o **esforço do pipeline (D7)** e grave-o em `.claude/estado/esfo
   - **Teto de 50 mil tokens (D5):** o pedido e os arquivos fora do repositório que ele cita por caminho absoluto (o pacote) somam no máximo 50 mil tokens, estimados pelo tamanho ÷ 3; a `guarda-agentes` nega acima disso. Passou, resuma para a função daquele agente: o que ele precisa para executar, não tudo o que você sabe. A retomada por `SendMessage`, que a guarda não vê, segue o mesmo teto.
   - **Agente de código (D8):** é o `desenvolvedor`, sempre em worktree. O pacote dele se chama `desenvolvedor-<assunto>.md` (o `--repetidas` o acha pelo nome) e não repete o que o `.claude/agents/desenvolvedor.md` já diz (regras, portões, commit, relatório). Ele lê só o que o pacote aponta e diz no relatório o que leu a mais.
   - **1º preenchimento do `desenvolvedor` (D8).** Num projeto que adotou o modelo (o `CLAUDE.md` já sem `# <Nome do projeto>`), a `guarda-agentes` nega o `desenvolvedor` com a parte do projeto vazia. Antes da 1ª chamada:
-    - rode `node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor`, que gera o bloco das regras do domínio;
+    - rode `node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor`, que gera o bloco das regras do domínio (sem ele, a guarda também nega);
     - acrescente entre os marcadores do projeto os comandos de "Como rodar" e a linguagem e os testes do `docs/arquitetura.md`, um item `- ` por linha, copiado igual à fonte e terminado em `[CLAUDE.md]` ou `[docs/arquitetura.md]`;
     - nada de resumo de pasta, que é do `AGENTS.md`; até 600 tokens.
     O preenchimento sai sem perguntar e vai no relatório. Depois, a parte do projeto só muda no fechamento (skill `adjust-pipeline`, seção 6).
