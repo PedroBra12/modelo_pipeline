@@ -99,25 +99,39 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   também para toda menção a `.claude/agents` (sem caixa, com `./`, `//` ou `\` no meio): fora de um segmento que só lê, nega com "subagente não mexe em `.claude/agents/` pelo shell (D8)". Com `.claude`
                   em outro ponto do comando (`cd .claude`, `git -C .claude`), o `agents/` solto também conta; `apps/agents/` não. É a mesma máquina do segmento que só lê (`analisar`, `avaliarEntrada` e `decisao`
                   levam `agente` como último parâmetro), então `cat`, `grep`, `head`, `git show main:.claude/agents/x.md` passam, e `ls`, `cp`, `sed -i`, `git add` e `git checkout -- .claude/agents` negam. Sem `agent_id`
-                  (o orquestrador), nada muda. Testes em `guarda-git.agentes.test.mjs`.
+                  (o orquestrador), nada muda. Testes em `guarda-git.agentes.test.mjs`. Também contam como menção a `.claude/agents` as três opções do `ajusta-pipeline.mjs` que gravam o agente sem citar a pasta
+                  (`--sincronizar-desenvolvedor`, `--aplicar-menos` e `--aplicar-mais`): com `agent_id`, `node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos` nega. **A negação vale em qualquer modo:** o
+                  `PIPELINE_GUARDA_GIT=desligado` não a some e o `perguntar` não a vira em `ask` (o `principal` lê a entrada antes do `desligado`; `negaAgentes` é a conta só da pasta de agentes); o resto continua
+                  com o modo. A `guarda-pasta-agentes` é importada dentro de um `try`, como a `guarda-agentes` faz com o `config.mjs`: se não carrega (arquivo quebrado), a `guarda-git` nega tudo, em qualquer modo e com ou sem
+                  `agent_id` ("guarda-pasta-agentes.mjs ilegível"), em vez de cair num erro que não nega nada. Com o `desligado` a entrada ilegível também nega (sem ler a entrada não se sabe se é subagente).
                 - Lê a linha continuada (`\` e a crase) separada e junta, tira as aspas dos argumentos sem espaço (a
                   aspa vazia fica), acha o programa depois de `xargs`, `timeout`, `cmd /c`, lê também o comando entre
                   aspas passado a outro shell (`bash -c`, `cmd /c`, `pwsh -Command`) e nega o `-EncodedCommand`.
                 - Modo em `PIPELINE_GUARDA_GIT`: `negar` (padrão), `perguntar` (o `deny` vira `ask`, menos a falta de
-                  repositório configurado), `desligado` (sai antes de tudo).
+                  repositório configurado), `desligado` (não confere nada, menos a negação da pasta de agentes ao subagente, D8.7, que vale em qualquer modo).
                 - **O limite**: a guarda segura o erro e o atalho do agente, não um agente hostil. `sh x.sh` (um script que o agente escreveu antes) passa por qualquer regra de texto, e a trava
-                  definitiva é uma checagem obrigatória no GitHub, que é decisão do usuário. Um link ou uma junção para a pasta `.git` passa pelo `Write` (a `guarda-git-arquivos` lê o nome do caminho, não o destino do link).
+                  definitiva é uma checagem obrigatória no GitHub, que é decisão do usuário. O link ou a junção para a pasta `.git` feito pelo shell, e escrito pelo `Write`, é conferido pela `guarda-git-arquivos` (que resolve o caminho de verdade, ver abaixo).
               - `guarda-git-arquivos.mjs`: PreToolUse em Edit, Write, MultiEdit e NotebookEdit (`.claude/hooks/guarda-git-arquivos.mjs`), a mesma porta da `guarda-git` pelas ferramentas de edição.
                 `motivoDoCaminho(caminho, cwd)` nega o caminho dentro de `.git/` (config, `config.worktree`, `hooks/`…) e o próprio arquivo `.git` (o ponteiro de um worktree). O caminho se lê a
                 partir do `cwd` da entrada, com `..` resolvido, `\` virado `/` e pelo nome de cada pasta: `.GIT`, `.git.`, `.git ` e `GIT~1` também negam, e `.gitignore`, `.github/` e
                 `.claude/hooks/git/` passam. Sem caminho legível (JSON quebrado, `file_path` e `notebook_path` ausentes), nega. Mesma saída da `guarda-git` (`hookSpecificOutput`,
                 `permissionDecision: deny`) e mesmo `PIPELINE_GUARDA_GIT` (`perguntar` vira `ask`, `desligado` sai antes de tudo). Ligado no `.claude/settings.json` com `onFailure: "block"`; testes em
-                `guarda-git-arquivos.test.mjs` e `settings.test.mjs`.
+                `guarda-git-arquivos.test.mjs` e `settings.test.mjs`. **O link simbólico:** além do caminho como está escrito, confere o caminho de verdade (o `realpath` do ancestral mais próximo que existe, mais o resto;
+                o link solto se segue pelo `readlink`; o ciclo de links nega), então `lnk/config` com `lnk` apontando para a pasta do git nega. E o hook roda mesmo quando o script é chamado por um caminho com link
+                (no macOS, `/var` é link para `/private/var`): a comparação do `process.argv[1]` com o `import.meta.url` usa o `realpathSync` dos dois lados, como a `guarda-agentes` (a comparação crua deixava o hook mudo, e mudo é "passou").
               - `guarda-pasta-agentes.mjs`: PreToolUse em Edit, Write, MultiEdit e NotebookEdit (D8.7), ao lado da `guarda-git-arquivos`. O subagente (a entrada traz `agent_id`, texto não vazio) não edita `.claude/agents/`:
                 `motivoDaEntrada(entrada)` nega com "subagente não edita `.claude/agents/` (D8)" o caminho que tem um segmento `.claude` seguido de `agents`, sem caixa, em qualquer profundidade (também em
                 `.claude/worktrees/*/`), lido a partir do `cwd` da entrada, com `..` resolvido, `\` virado `/` e pelo nome de cada pasta (`.claude.`, `.claude ` e `CLAUDE~1` também). Com `agent_id` e sem caminho
-                legível, nega; sem `agent_id` (o orquestrador, que edita os agentes), não age. Sem modo: o `PIPELINE_GUARDA_GIT` não a desliga. `ehSubagente` é importado pela `guarda-git`. Ligada no `.claude/settings.json`
-                com `onFailure: "block"`; testes em `guarda-pasta-agentes.test.mjs` e `settings.test.mjs`. O link para a pasta passa (o nome do caminho é o que se lê, como na `guarda-git-arquivos`).
+                legível, nega; sem `agent_id` (o orquestrador, que edita os agentes), não age, **menos com a entrada que não é JSON, que nega mesmo sem `agent_id`** (sem ler a entrada não se sabe quem é). Sem modo: o `PIPELINE_GUARDA_GIT`
+                não a desliga. `ehSubagente` é importado pela `guarda-git` (dentro de um `try`). Ligada no `.claude/settings.json` com `onFailure: "block"`; testes em `guarda-pasta-agentes.test.mjs` e `settings.test.mjs`.
+                **O link simbólico:** confere o caminho como está escrito e o de verdade (o `realpath` do ancestral mais próximo que existe, mais o resto, `caminhoReal`; o link solto se segue pelo `readlink`; o ciclo nega),
+                então `lnk/agents/x.md` com `lnk` apontando para `.claude` nega no `Edit` e no `Write`. O hook também age quando o script é chamado por um caminho com link (o `/var` do macOS): a comparação do
+                `process.argv[1]` com o `import.meta.url` usa o `realpathSync` dos dois lados (`mesmoArquivo`, como a `guarda-agentes`).
+                **O que a trava não segura (D8.7), por desenho:**
+                - **A trava do `Bash` é léxica.** Passam as aspas partidas (`a""gents`), a variável (`$D/agents`), o glob (`.cl*/agents`), o link simbólico feito e usado pelo shell, `git apply`, `git checkout <ref> -- .claude`
+                  e `git stash pop`.
+                - **A cópia dos hooks do git no worktree do agente roda do próprio worktree** (o `core.hooksPath` é relativo), e o agente pode editá-la.
+                - **A rede:** toda mudança em `.claude/hooks/` aciona o `config_pipeline` (revisor), e o orquestrador confere a lista de arquivos de cada branch antes do merge.
               - `desenvolvedor.mjs`: não é hook; módulo puro (só `node:*`, não lê arquivo) do agente de código `.claude/agents/desenvolvedor.md` (D8).
                 O arquivo tem três zonas: o cabeçalho e o texto fixo (do modelo), o bloco entre `<!-- regras:inicio -->` e `<!-- regras:fim -->`
                 (gerado) e a parte do projeto entre `<!-- projeto:inicio -->` e `<!-- projeto:fim -->` (vazia no modelo; o orquestrador a preenche
@@ -261,14 +275,15 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 log, erro e URL, `select *` em tabela de pessoas, coluna pessoal e dado sensível no banco, SQL
                 concatenado, dado pessoal para IA, analytics, webhook e HTTP de fora, consentimento marcado,
                 `localStorage`, cookie, geolocalização e cache sem prazo.
-              - `git/pre-commit`: roda o `confere-ramo`, o `confere-lgpd --indice`, recusa o commit num worktree ligado (o `--git-dir` absoluto difere do `--git-common-dir`, ou o git não diz) que tem o
+              - `git/pre-commit`: roda o `confere-ramo`, o `confere-lgpd --indice`, recusa o commit num worktree de agente (o topo do repositório, `git rev-parse --show-toplevel` absoluto e resolvido, dentro de um segmento `.claude/worktrees/`, sem caixa, o mesmo critério da `guarda-git`; o que o git não diz também recusa; o checkout do orquestrador, mesmo sendo um worktree ligado, commita) que tem o
                 `.claude/agents/desenvolvedor.md` no índice, em qualquer caixa e mudado, criado, apagado ou renomeado ("o `desenvolvedor.md` só se commita no checkout do orquestrador (D8)"; D8.7) e, quando o commit toca `.claude/`, o `CLAUDE.md` ou o
                 `docs/arquitetura.md` (as fontes do `desenvolvedor.md`), os testes do pipeline: sempre o
                 `node --test` sobre a lista expandida `.claude/hooks/*.test.mjs` (sem as variáveis `GIT_*` do commit nem o
                 `NODE_TEST_CONTEXT`, que os testes não podem herdar). Nunca o script `test:pipeline` de um `package.json`: um commit
                 podia trocá-lo por `exit 0` (o atalho `test:pipeline` vale só para quem roda os testes à mão). Falhou, ou não há teste nenhum (o `node --test` sem arquivo sairia verde), o commit é
                 recusado (falha fechado). O `git/pre-merge-commit` roda o `confere-ramo` e o `confere-lgpd --indice` (o git não roda o
-                pre-commit num merge quando este hook existe). Os cinco hooks de `git/` começam com `unset NODE_OPTIONS`, logo depois
+                pre-commit num merge quando este hook existe) e recusa, com o mesmo critério do pre-commit (topo do repositório dentro de `.claude/worktrees/`), o merge que traz o
+                `.claude/agents/desenvolvedor.md` para o índice ("Merge recusado: o desenvolvedor.md só se commita no checkout do orquestrador (D8)"); o avanço rápido (fast-forward) não cria commit e não passa por hook nenhum. Os cinco hooks de `git/` começam com `unset NODE_OPTIONS`, logo depois
                 do shebang: o ambiente do comando não escolhe o que o node carrega. Quem muda a regra do pipeline passa nos testes dela.
                 - `escolhe-revisores.mjs <base> <head> | --trabalho [--esforco rapido|medio|alto] [--comportamento] [--sem-comportamento "<motivo>"] [--sem-tela "<motivo>"] [--json]`:
                 não é hook; é o script que a seção 4 da skill `pipeline` manda rodar. Lê o esforço de `--esforco` ou de `.claude/estado/esforco` (`lerEsforcoDaPasta`, padrão `medio`, D7; valor inválido sai com 2): `medio` dispensa `revisor-arquitetura` e `revisor-lgpd` (com `motivo: "esforço medio (D64)"` em `dispensados`); `rapido` dispensa todos os revisores e o `qa` (`"esforço rapido (D64)"`); `alto` mantém todos. Lê o diff arquivo por arquivo
@@ -297,7 +312,7 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 diff que não casa com a lista de nomes saem com 2, não com omissão; quando o head não tem um gatilho do
                 `PISO_GATILHOS` ou a regra `grande` (branch que saiu antes da regra), a mensagem acrescenta "branch anterior à regra: traga a
                 main (git merge main)".
-              - `coleta-agentes.mjs <pasta> [--desde <ISO>] [--json]`: não é hook; só lê, sem rede (D6). A autoanálise tira daqui os números dos subagentes (`agentId`, `modelo`, `tokens`, `minutos`, `inicio`, `fim`, `pedidos` e `primeiroPedido`) das transcrições `tasks/*.output` da sessão e, em campos separados no JSON e no texto (D8.9), o `contexto1` (medido: `input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens` do 1º `usage`, sem o `output_tokens`; `null` sem `usage`) e o `pacote1` (estimado: os tokens, tamanho ÷ `CARACTERES_POR_TOKEN`, dos arquivos de fora do repositório que o 1º pedido cita por caminho absoluto, com o `caminhosCitados` e o `tamanhoDoArquivo` da `guarda-agentes.mjs`, que o `lerAgente` e o `coletar` recebem como medidor injetável; 0 sem citação, `null` sem pedido); testes em `coleta-agentes.test.mjs`.
+              - `coleta-agentes.mjs <pasta> [--desde <ISO>] [--json]`: não é hook; só lê, sem rede (D6). A autoanálise tira daqui os números dos subagentes (`agentId`, `modelo`, `tokens`, `minutos`, `inicio`, `fim`, `pedidos` e `primeiroPedido`; o pedido é a mensagem `user` que não é resultado de ferramenta **nem a que o Claude Code injeta, a de texto que começa por `<system-reminder>`**, então o agente comum sai com `pedidos: 1`, não "retomado") das transcrições `tasks/*.output` da sessão e, em campos separados no JSON e no texto (D8.9), o `contexto1` (medido: `input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens` do 1º `usage`, sem o `output_tokens`; `null` sem `usage`) e o `pacote1` (estimado: os tokens, tamanho ÷ `CARACTERES_POR_TOKEN`, dos arquivos de fora do repositório que o 1º pedido cita por caminho absoluto, com o `caminhosCitados` e o `tamanhoDoArquivo` da `guarda-agentes.mjs`, que o `lerAgente` e o `coletar` recebem como medidor injetável; 0 sem citação, `null` sem pedido); testes em `coleta-agentes.test.mjs`.
               - `ajusta-pipeline.mjs [--relatorio] [--aplicar-menos] [--aplicar-mais <alvo>] [--sincronizar-tabela] [--sincronizar-desenvolvedor] [--data
                 AAAA-MM-DD] [--json] [--raiz <pasta>]`: não é hook; é a conta da skill `adjust-pipeline` (D2). O `--sincronizar-desenvolvedor` (D8), no molde do
                 `--sincronizar-tabela`, roda o `sincronizar` do `desenvolvedor.mjs` sobre `.claude/agents/desenvolvedor.md` com o `CLAUDE.md` da raiz, grava só
@@ -402,12 +417,12 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 `node --test` (vermelho recusa, verde passa, sem teste nenhum recusa, e o script `test:pipeline` de um `package.json` não
                 vale), com `NODE_TEST_CONTEXT=child` e `NODE_OPTIONS` quebrado no ambiente do commit, e o que não toca `.claude/` não roda
                 nada; confere que os cinco hooks de `git/` começam com `unset NODE_OPTIONS`. Também: o `CLAUDE.md` e o `docs/arquitetura.md` rodam os testes como `.claude/` (e `docs/outro.md`, `sub/CLAUDE.md`
-                não); e, com um worktree ligado de verdade (`git worktree add`), o commit com o `desenvolvedor.md` no índice é recusado (criado, mudado, apagado, renomeado e outra caixa), o dos outros agentes
-                passa, e o do checkout principal passa.
+                não); e, com um worktree ligado de verdade (`git worktree add`) dentro de `.claude/worktrees/` (também `.Claude/Worktrees`), o commit com o `desenvolvedor.md` no índice é recusado (criado, mudado, apagado, renomeado e outra caixa), o dos outros agentes
+                passa, o do checkout principal passa e o de um worktree de fora de `.claude/worktrees/` (o checkout do orquestrador) passa; o merge que traz o `desenvolvedor.md` é recusado no worktree do agente (o que traz outro arquivo passa) e passa no de fora.
               - O `escolhe-revisores.desenvolvedor.test.mjs` testa a exceção da D8.8: dentro do processo (`soParteDoProjeto` e `escolher` com `textoAntes` e `textoDepois` anexados à mão: só a parte do projeto não
                 aciona; cabeçalho, parte fixa, `regras`, marcador, criado, apagado, renomeado, binário e texto que falta acionam) e num git de verdade (`base...head`, inclusive com a base andando, e `--trabalho`).
               - O `guarda-pasta-agentes.test.mjs` testa o `motivoDaEntrada` (caminhos que negam e que passam, relativo ao `cwd`, `agent_id` ausente, vazio ou em branco, sem caminho legível) e o hook de ponta
-                a ponta nas quatro ferramentas.
+                a ponta nas quatro ferramentas, inclusive o script chamado por um link e o caminho com link para `.claude` e para `agents/` (pastas de verdade, `spawnSync`). O `guarda-git-arquivos.test.mjs` tem os mesmos dois casos de link, para o `.git`.
               - O `settings.test.mjs` confere que o `.claude/settings.json` liga a `guarda-agentes` (matcher `Agent`) e
                 a `guarda-git` (Bash e PowerShell), a `guarda-git-arquivos` e a `guarda-pasta-agentes` (Edit, Write, MultiEdit e NotebookEdit), as quatro com `onFailure: "block"`, que todo hook ligado existe e que
                 a sessão abre como o agente `orquestrador` (`agent`), no modelo e no esforço do

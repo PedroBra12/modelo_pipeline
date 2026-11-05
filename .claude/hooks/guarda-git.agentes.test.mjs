@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -46,6 +46,12 @@ const NEGA = [
   // a troca de pasta antes: o caminho relativo da pasta de agentes
   'cd .claude && sed -i s/a/b/ agents/qa.md',
   'git -C .claude checkout main -- agents/qa.md',
+  // o ajusta-pipeline grava o agente sem citar a pasta
+  'node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor --raiz /tmp/principal',
+  'node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos',
+  'node .claude/hooks/ajusta-pipeline.mjs --aplicar-mais docs/pipeline/ajustes/x.md',
+  'node .claude/hooks/ajusta-pipeline.mjs --raiz /tmp/principal --aplicar-mais=x',
+  'node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela && node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos',
 ];
 const LIBERA = [
   'cat .claude/agents/qa.md',
@@ -76,6 +82,12 @@ const LIBERA = [
   'cp x .claude/agents-antigos/y.md',
   'npm test',
   'git status',
+  // o ajusta-pipeline que não grava agente, e a opção só citada (lida ou em mensagem)
+  'node .claude/hooks/ajusta-pipeline.mjs --relatorio',
+  'node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela',
+  'node .claude/hooks/ajusta-pipeline.mjs --repetidas docs/pipeline --json',
+  'git commit -m "docs: explica o --aplicar-menos e o --sincronizar-desenvolvedor"',
+  'grep -n aplicar-mais .claude/hooks/ajusta-pipeline.mjs',
 ];
 
 for (const c of NEGA) test(`subagente (agent_id) nega: ${c}`, () => assert.notEqual(avaliarEntrada(c, PROJETO, true), null));
@@ -107,7 +119,44 @@ test('o hook de ponta a ponta: o agent_id da entrada liga a regra, que vale tamb
   assert.equal(hook({ tool_input }), null, 'sem agent_id');
   assert.equal(hook({ tool_input, agent_id: '' }), null, 'agent_id vazio não é subagente');
   assert.equal(hook({ tool_input, agent_id: '  ' }), null, 'agent_id em branco não é subagente');
-  assert.equal(hook({ tool_input, agent_id: 'a1', agent_type: 'desenvolvedor' }, { PIPELINE_GUARDA_GIT: 'perguntar' })?.permissionDecision, 'ask');
-  assert.equal(hook({ tool_input, agent_id: 'a1' }, { PIPELINE_GUARDA_GIT: 'desligado' }), null, 'o modo desligado desliga a guarda inteira');
+  assert.equal(hook({ tool_input, agent_id: 'a1', agent_type: 'desenvolvedor' }, { PIPELINE_GUARDA_GIT: 'perguntar' })?.permissionDecision, 'deny', 'o modo perguntar não afrouxa a trava dos agentes');
+  assert.equal(hook({ tool_input, agent_id: 'a1' }, { PIPELINE_GUARDA_GIT: 'desligado' })?.permissionDecision, 'deny', 'o modo desligado não desliga a trava dos agentes');
+  assert.equal(hook({ tool_input, agent_id: 'a1' }, { PIPELINE_GUARDA_GIT: 'perguntar' }).permissionDecisionReason.includes('subagente'), true);
   assert.equal(hook({ tool_input: { command: 'cat .claude/agents/qa.md' }, agent_id: 'a1' }), null);
+});
+
+test('os modos perguntar e desligado seguem valendo para o resto: sem agent_id, e para o subagente fora da pasta de agentes', () => {
+  const hook = (entrada, ambiente) => {
+    const r = spawnSync(process.execPath, [join(HOOKS, 'guarda-git.mjs')], { input: JSON.stringify({ tool_name: 'Bash', cwd: PROJETO, ...entrada }), encoding: 'utf8', env: { ...process.env, ...ambiente } });
+    return r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput;
+  };
+  const tool_input = { command: 'cp /tmp/x .claude/agents/desenvolvedor.md' };
+  assert.equal(hook({ tool_input }, { PIPELINE_GUARDA_GIT: 'desligado' }), null, 'sem agent_id, desligado');
+  assert.equal(hook({ tool_input, agent_id: '' }, { PIPELINE_GUARDA_GIT: 'desligado' }), null, 'agent_id vazio, desligado');
+  const forca = { command: 'git push --force' };
+  assert.equal(hook({ tool_input: forca, agent_id: 'a1' }, { PIPELINE_GUARDA_GIT: 'desligado' }), null, 'o subagente com o desligado: o que não é da pasta de agentes se desliga');
+  assert.equal(hook({ tool_input: forca, agent_id: 'a1' }, { PIPELINE_GUARDA_GIT: 'perguntar' })?.permissionDecision, 'ask', 'o subagente com o perguntar: o resto pergunta');
+});
+
+test('a guarda-pasta-agentes que não carrega: com ou sem agent_id, em qualquer modo, a guarda-git nega tudo (o import não derruba o hook)', () => {
+  const raiz = realpathSync(mkdtempSync(join(tmpdir(), 'guarda-git-sem-pasta-')));
+  try {
+    const hooks = copiarHooks(raiz, CONFIG_PADRAO);
+    mkdirSync(join(raiz, '.git'));
+    writeFileSync(join(hooks, 'guarda-pasta-agentes.mjs'), 'export const quebrado = ;\n');
+    const roda = (entrada, ambiente = {}) => {
+      const r = spawnSync(process.execPath, [join(hooks, 'guarda-git.mjs')], { input: JSON.stringify({ tool_name: 'Bash', cwd: raiz, ...entrada }), encoding: 'utf8', env: { ...process.env, ...ambiente } });
+      return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
+    };
+    for (const agent_id of [undefined, 'a1']) {
+      for (const modo of [undefined, 'perguntar', 'desligado']) {
+        const r = roda({ tool_input: { command: 'git status' }, agent_id }, modo === undefined ? {} : { PIPELINE_GUARDA_GIT: modo });
+        assert.equal(r.status, 0);
+        assert.equal(r.saida?.permissionDecision, 'deny', `${agent_id}/${modo}`);
+        assert.match(r.saida.permissionDecisionReason, /guarda-pasta-agentes\.mjs/);
+      }
+    }
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
 });

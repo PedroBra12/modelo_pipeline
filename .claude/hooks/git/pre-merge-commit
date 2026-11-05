@@ -2,6 +2,15 @@
 unset NODE_OPTIONS  # o ambiente do comando não escolhe o que o node carrega dentro do hook
 # Hook pre-merge-commit do git: o merge feito na main é commit na main (o confere-ramo o recusa), e o que o merge traz passa
 # pelo confere-lgpd como num commit (o git não roda o pre-commit no merge quando este hook existe).
+# O .claude/agents/desenvolvedor.md que o merge traz só entra no checkout do orquestrador, como no pre-commit (D8): o merge feito num
+# worktree de agente (o topo do repositório dentro de .claude/worktrees/) com esse arquivo no índice é recusado.
 # Ligado por: git config core.hooksPath .claude/hooks/git
 node "$(dirname "$0")/../confere-ramo.mjs" || exit 1
+if git diff --cached --no-renames --name-only | grep -qix '\.claude/agents/desenvolvedor\.md'; then
+  topo=$(cd "$(git rev-parse --show-toplevel)" 2>/dev/null && pwd -P)
+  if [ -z "$topo" ] || printf '%s/\n' "$topo" | grep -qiE '[\\/]\.claude[\\/]worktrees[\\/]'; then
+    echo "Merge recusado: o desenvolvedor.md só se commita no checkout do orquestrador (D8)." >&2
+    exit 1
+  fi
+fi
 exec node "$(dirname "$0")/../confere-lgpd.mjs" --indice

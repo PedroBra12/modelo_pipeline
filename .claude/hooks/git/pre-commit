@@ -10,10 +10,10 @@ unset NODE_OPTIONS  # o ambiente do comando não escolhe o que o node carrega de
 node "$(dirname "$0")/../confere-ramo.mjs" || exit 1
 node "$(dirname "$0")/../confere-lgpd.mjs" --indice || exit 1
 if git diff --cached --no-renames --name-only | grep -qix '\.claude/agents/desenvolvedor\.md'; then
-  # worktree ligado = o --git-dir (absoluto) difere do --git-common-dir; o que o git não diz também recusa
-  git_dir=$(cd "$(git rev-parse --git-dir)" 2>/dev/null && pwd -P)
-  git_comum=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)
-  if [ -z "$git_dir" ] || [ -z "$git_comum" ] || [ "$git_dir" != "$git_comum" ]; then
+  # o worktree do agente = o topo do repositório (absoluto, resolvido) dentro de um segmento .claude/worktrees/, o critério da guarda-git;
+  # o checkout do orquestrador, mesmo sendo um worktree ligado, fica de fora. O que o git não diz também recusa
+  topo=$(cd "$(git rev-parse --show-toplevel)" 2>/dev/null && pwd -P)
+  if [ -z "$topo" ] || printf '%s/\n' "$topo" | grep -qiE '[\\/]\.claude[\\/]worktrees[\\/]'; then
     echo "Commit recusado: o desenvolvedor.md só se commita no checkout do orquestrador (D8)." >&2
     exit 1
   fi
