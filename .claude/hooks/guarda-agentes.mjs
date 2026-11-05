@@ -121,10 +121,22 @@ function decidirFixo(tipo, bruto, entrada, cabecalho, vigente) {
 
 // ---------- o desenvolvedor (D8) ----------
 
-/** O agente, o CLAUDE.md e o docs/arquitetura.md do projeto, para a `problemas` do desenvolvedor.mjs. Erro de leitura sobe. */
+/**
+ * O agente, o CLAUDE.md e o docs/arquitetura.md do projeto, mais o leitor `ajuste(data)`, para a `problemas` do
+ * desenvolvedor.mjs. Erro de leitura dos três primeiros sobe. O `ajuste` só lê `docs/pipeline/ajustes/<data>-desenvolvedor.md`
+ * de uma data AAAA-MM-DD citada e devolve `null` se a data é inválida ou o arquivo não existe ou não lê (a guarda nega).
+ */
 export function lerFontesDoDesenvolvedor(raiz = RAIZ_DO_PROJETO) {
   const ler = (...rel) => readFileSync(join(...rel), 'utf8');
-  return { agente: ler(AGENTES, `${CODIGO}.md`), fontes: { 'CLAUDE.md': ler(raiz, 'CLAUDE.md'), 'docs/arquitetura.md': ler(raiz, 'docs', 'arquitetura.md') } };
+  const ajuste = (data) => {
+    if (typeof data !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data)) return null;
+    try {
+      return ler(raiz, 'docs', 'pipeline', 'ajustes', `${data}-desenvolvedor.md`);
+    } catch {
+      return null;
+    }
+  };
+  return { agente: ler(AGENTES, `${CODIGO}.md`), fontes: { 'CLAUDE.md': ler(raiz, 'CLAUDE.md'), 'docs/arquitetura.md': ler(raiz, 'docs', 'arquitetura.md'), ajuste } };
 }
 
 /** A chamada do `desenvolvedor`: tudo o que a D8 manda conferir, nesta ordem. `lerFontes` é o `lerFontesDoDesenvolvedor`. */
