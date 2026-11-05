@@ -57,7 +57,7 @@ test('sem package.json: o commit que toca .claude/ com um teste vermelho é recu
     const r = commit('.claude/hooks/x.test.mjs', TESTE_VERMELHO);
     assert.equal(r.ok, false);
     assert.match(r.saida, /teste do pipeline vermelho/);
-    assert.match(r.saida, /Commit recusado: o commit toca \.claude\/ e os testes do pipeline \(node --test\) falharam/);
+    assert.match(r.saida, /Commit recusado: o commit toca \.claude\/, o CLAUDE\.md ou o docs\/arquitetura\.md e os testes do pipeline \(node --test\) falharam/);
   });
 });
 
@@ -72,7 +72,7 @@ test('sem nenhum teste em .claude/hooks o commit que toca .claude/ é recusado (
   com(projeto(), ({ commit }) => {
     const r = commit('.claude/x.json', '{}\n');
     assert.equal(r.ok, false);
-    assert.match(r.saida, /Commit recusado: o commit toca \.claude\/ e não há testes do pipeline/);
+    assert.match(r.saida, /Commit recusado: o commit toca \.claude\/, o CLAUDE\.md ou o docs\/arquitetura\.md e não há testes do pipeline/);
   });
 });
 
@@ -122,4 +122,112 @@ test('o pre-commit não tem o ramo do npm run test:pipeline', () => {
   const texto = readFileSync(join(HOOKS, 'git', 'pre-commit'), 'utf8');
   assert.doesNotMatch(texto, /npm run/);
   assert.doesNotMatch(texto, /grep -qs/);
+});
+
+// ---------- o CLAUDE.md e o docs/arquitetura.md também rodam os testes do pipeline (D8) ----------
+
+test('o commit que toca o CLAUDE.md ou o docs/arquitetura.md roda os testes do pipeline: vermelhos recusam, verdes passam', () => {
+  for (const rel of ['CLAUDE.md', 'docs/arquitetura.md']) {
+    com(projeto(), ({ commit }) => {
+      assert.equal(commit('.claude/hooks/x.test.mjs', TESTE_VERMELHO, { semHooks: true }).ok, true, 'prepara: o teste vermelho já está no repositório');
+      const r = commit(rel, '# fonte do desenvolvedor\n');
+      assert.equal(r.ok, false, `${rel} com teste vermelho`);
+      assert.match(r.saida, /teste do pipeline vermelho/);
+      assert.match(r.saida, /Commit recusado: o commit toca .*CLAUDE\.md.* e os testes do pipeline \(node --test\) falharam/);
+    });
+    com(projeto(), ({ commit }) => {
+      assert.equal(commit('.claude/hooks/x.test.mjs', TESTE_VERDE, { semHooks: true }).ok, true);
+      const r = commit(rel, '# fonte do desenvolvedor\n');
+      assert.equal(r.ok, true, `${rel} com teste verde: ${r.saida}`);
+    });
+  }
+});
+
+test('o CLAUDE.md sem nenhum teste em .claude/hooks é recusado (falha fechado); outro .md e arquivo de nome parecido não rodam os testes', () => {
+  com(projeto(), ({ commit }) => {
+    const r = commit('CLAUDE.md', '# x\n');
+    assert.equal(r.ok, false);
+    assert.match(r.saida, /Commit recusado: o commit toca .*CLAUDE\.md.* e não há testes do pipeline/);
+  });
+  com(projeto(), ({ commit }) => {
+    assert.equal(commit('.claude/hooks/x.test.mjs', TESTE_VERMELHO, { semHooks: true }).ok, true, 'prepara: o teste vermelho já está no repositório');
+    assert.equal(commit('README.md', '# x\n', { semHooks: true }).ok, true); // o confere-docs (commit-msg) lê o README.md do repositório
+    for (const rel of ['docs/outro.md', 'docs/arquitetura.md.txt', 'sub/CLAUDE.md', 'docs/sub/arquitetura.md', 'claude.md.txt']) {
+      const r = commit(rel, 'a\n');
+      assert.equal(r.ok, true, `${rel}: ${r.saida}`);
+    }
+  });
+});
+
+// ---------- o desenvolvedor.md só se commita no checkout do orquestrador (D8.7) ----------
+
+const RECUSA_DEV = /Commit recusado: o `?desenvolvedor\.md`? só se commita no checkout do orquestrador \(D8\)/;
+
+/** O projeto com um teste verde e, se `existente`, o desenvolvedor.md já commitados, e um worktree ligado `pr/x` (o do agente). `noWt` roda o git nele. */
+function projetoComWorktree({ existente = false } = {}) {
+  const p = projeto();
+  assert.equal(p.commit('README.md', '# x\n', { semHooks: true }).ok, true); // o confere-docs lê o README.md do repositório, que o worktree herda
+  if (existente) assert.equal(p.commit('.claude/agents/desenvolvedor.md', 'a\n', { semHooks: true }).ok, true);
+  assert.equal(p.commit('.claude/hooks/x.test.mjs', TESTE_VERDE, { semHooks: true }).ok, true);
+  const wt = mkdtempSync(join(tmpdir(), 'pre-commit-wt-'));
+  assert.equal(p.git(['worktree', 'add', '-q', '-b', 'pr/x', wt]).ok, true);
+  const noWt = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'core.autocrlf=false', ...args], { cwd: wt, encoding: 'utf8', env: ambiente() });
+    return { ok: r.status === 0, saida: `${r.stdout}${r.stderr}` };
+  };
+  /** Grava `rel` no worktree, põe tudo no índice e tenta commitar. */
+  const commitaNoWt = (rel, texto) => {
+    mkdirSync(dirname(join(wt, rel)), { recursive: true });
+    writeFileSync(join(wt, rel), texto);
+    noWt('add', '-A');
+    return noWt('commit', '-q', '-m', 'x: muda');
+  };
+  return { ...p, wt, noWt, commitaNoWt };
+}
+const comWorktree = (p, fn) => {
+  try {
+    fn(p);
+  } finally {
+    rmSync(p.wt, { recursive: true, force: true });
+    rmSync(p.raiz, { recursive: true, force: true });
+  }
+};
+
+test('o worktree ligado recusa o commit com o .claude/agents/desenvolvedor.md no índice (qualquer caixa), com a mensagem da D8', () => {
+  comWorktree(projetoComWorktree(), ({ commitaNoWt, noWt }) => {
+    const criado = commitaNoWt('.claude/agents/desenvolvedor.md', 'a\n');
+    assert.equal(criado.ok, false);
+    assert.match(criado.saida, RECUSA_DEV);
+    noWt('reset', '-q', '--hard');
+    assert.match(commitaNoWt('.claude/agents/DESENVOLVEDOR.md', 'b\n').saida, RECUSA_DEV, 'outra caixa');
+    noWt('reset', '-q', '--hard');
+    assert.match(commitaNoWt('.Claude/Agents/Desenvolvedor.md', 'b\n').saida, RECUSA_DEV, 'outra caixa, na pasta');
+  });
+});
+
+test('o worktree ligado recusa mudar, apagar e renomear o desenvolvedor.md que já está no repositório', () => {
+  comWorktree(projetoComWorktree({ existente: true }), ({ commitaNoWt, noWt }) => {
+    assert.match(commitaNoWt('.claude/agents/desenvolvedor.md', 'b\n').saida, RECUSA_DEV, 'mudado');
+    noWt('reset', '-q', '--hard');
+    noWt('rm', '-q', '.claude/agents/desenvolvedor.md');
+    assert.match(noWt('commit', '-q', '-m', 'x: apaga').saida, RECUSA_DEV, 'apagado');
+    noWt('reset', '-q', '--hard');
+    noWt('mv', '.claude/agents/desenvolvedor.md', 'docs-dev.md');
+    assert.match(noWt('commit', '-q', '-m', 'x: renomeia').saida, RECUSA_DEV, 'renomeado para fora: o caminho velho está no índice');
+  });
+});
+
+test('o worktree ligado commita os outros agentes, nomes parecidos e o resto; o checkout principal commita o desenvolvedor.md', () => {
+  comWorktree(projetoComWorktree(), ({ commitaNoWt }) => {
+    for (const rel of ['.claude/agents/qa.md', '.claude/agents/desenvolvedor.md.txt', 'docs/agents/desenvolvedor.md', 'src/y.txt']) {
+      const r = commitaNoWt(rel, 'a\n');
+      assert.equal(r.ok, true, `${rel}: ${r.saida}`);
+    }
+  });
+  comWorktree(projetoComWorktree(), ({ commit }) => {
+    const r = commit('.claude/agents/desenvolvedor.md', 'a\n');
+    assert.equal(r.ok, true, r.saida);
+    const mudado = commit('.claude/agents/desenvolvedor.md', 'b\n');
+    assert.equal(mudado.ok, true, mudado.saida);
+  });
 });
