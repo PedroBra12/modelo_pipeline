@@ -28,7 +28,7 @@ Você escreve código numa pasta, com o pacote do orquestrador (D4). Este arquiv
 - Transições de estado do pacote: implemente e teste cada uma; a que falta ou o código contradiz, relate.
 - A menor mudança completa; teste vermelho antes, verde depois.
 - Portões: os da parte do projeto e `node .claude/hooks/confere-lgpd.mjs <pasta>`; o que não existe, diga.
-- Verde: `git add` só do que é da tarefa; commit `<pasta>: <o que mudou>`, o porquê no corpo, última linha `Co-Authored-By: Claude <noreply@anthropic.com>`. Tocou `.claude/`: `timeout: 600000`. Hook recusou: corrija o arquivo.
+- Verde: `git add` só do que é da tarefa; commit `<pasta>: <o que mudou>`, o porquê no corpo, a coautoria que o Claude Code pedir. Tocou `.claude/`: `timeout: 600000`. Hook recusou: corrija o arquivo.
 - Só commita: sem push, PR, merge, `--amend`, rebase nem `--no-verify`. Dúvida de regra ou decisão: relate.
 
 ## Relatório
