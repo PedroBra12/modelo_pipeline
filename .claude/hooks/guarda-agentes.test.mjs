@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARQUIVO, FIXOS, lerAgentes, lerNiveis } from './config.mjs';
 import { CABECALHO, sincronizar } from './desenvolvedor.mjs';
-import { TETO, TETO_TOKENS, SO_NO_CHAT, CODIGO, caminhosCitados, decidirAgente, decidirEsforcoPipeline, decidirTeto, tamanhoDoArquivo, decidirChamador, decidirOrquestrador, juntarDecisoes, lerCabecalhoDoArquivo, lerEsforcoDoEstado, lerParDoRegistro, lerRegistroDoArquivo, parDoChat } from './guarda-agentes.mjs';
+import { TETO, TETO_TOKENS, SO_NO_CHAT, CODIGO, caminhosCitados, decidirAgente, lerFontesDoDesenvolvedor, decidirEsforcoPipeline, decidirTeto, tamanhoDoArquivo, decidirChamador, decidirOrquestrador, juntarDecisoes, lerCabecalhoDoArquivo, lerEsforcoDoEstado, lerParDoRegistro, lerRegistroDoArquivo, parDoChat } from './guarda-agentes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const AGENTES = join(AQUI, '..', 'agents');
@@ -47,7 +47,13 @@ const passa = { decisao: null, motivo: null };
 
 // O desenvolvedor (D8): o agente de verdade, e um CLAUDE.md inventado que ainda não foi adotado.
 const AGENTE = readFileSync(join(AGENTES, 'desenvolvedor.md'), 'utf8');
-const fontesDe = ({ adotado = false, agente = AGENTE } = {}) => () => ({ agente, fontes: { 'CLAUDE.md': adotado ? '# Projeto Ficticio\n' : '# <Nome do projeto>\n', 'docs/arquitetura.md': '# Arquitetura\n' } });
+// `ajuste(data)` é o leitor do registro `docs/pipeline/ajustes/<data>-desenvolvedor.md`: só o de 2026-01-01 existe.
+const ITEM_DO_AJUSTE = '`npm run checar:rapido`: tipos e testes.';
+const ajusteFalso = (data) => (data === '2026-01-01' ? `# Ajuste\n\n- entra: ${ITEM_DO_AJUSTE}\n` : null);
+const fontesDe = ({ adotado = false, agente = AGENTE, claude } = {}) => () => ({
+  agente,
+  fontes: { 'CLAUDE.md': claude ?? (adotado ? '# Projeto Ficticio\n' : '# <Nome do projeto>\n'), 'docs/arquitetura.md': '# Arquitetura\n', ajuste: ajusteFalso },
+});
 const fontesDoModelo = fontesDe();
 
 test('fork é negado, mesmo com model e effort', () => {
@@ -841,6 +847,7 @@ const dev = (entrada = {}, lerFontes = fontesDoModelo, esforco = undefined) => d
   { description: 'codigo', subagent_type: 'desenvolvedor', model: 'sonnet', effort: 'medium', isolation: 'worktree', prompt: '1º passo: `git switch -c pr/x pr/y`', ...entrada },
   ler, TETO, undefined, undefined, esforco, lerFontes,
 );
+const REGRAS_DO_MODELO = '## Regras que não se negociam\n\n2. **Um `AGENTS.md` por pasta de trabalho** a.\n4. **Dado inventado** b.\n5. **Local primeiro:** c.\n6. **Segredos** d.\n7. **Recurso pago** e.\n';
 const comItem = (item) => sincronizar(AGENTE, '# <Nome do projeto>\n\n## Regras que não se negociam\n\n2. **Um `AGENTS.md` por pasta de trabalho** a.\n4. **Dado inventado** b.\n5. **Local primeiro:** c.\n6. **Segredos** d.\n7. **Recurso pago** e.\n').replace('<!-- projeto:inicio -->', `<!-- projeto:inicio -->\n${item}\n`);
 
 test('desenvolvedor (D8): passa com effort low, medium ou high e model ausente ou sonnet', () => {
@@ -869,13 +876,55 @@ test('desenvolvedor (D8): nega o agente com problema no corpo ou no cabeçalho, 
 });
 
 test('desenvolvedor (D8, Q9): adotado e vazio nega e manda preencher; os outros três estados passam', () => {
-  const cheio = comItem('- `npm run checar:rapido`: tipos e testes.');
+  const cheio = comItem(`- ${ITEM_DO_AJUSTE} [ajuste 2026-01-01]`);
   const negou = dev({}, fontesDe({ adotado: true }));
   assert.equal(negou.decisao, 'deny');
   assert.match(negou.motivo, /preencha a parte do projeto \(skill `pipeline`, seção 2; `node \.claude\/hooks\/ajusta-pipeline\.mjs --sincronizar-desenvolvedor`\)/);
   assert.deepEqual(dev({}, fontesDe({ adotado: true, agente: cheio })), passa, 'adotado e preenchido');
   assert.deepEqual(dev({}, fontesDe({ adotado: false })), passa, 'não adotado e vazio');
   assert.deepEqual(dev({}, fontesDe({ adotado: false, agente: cheio })), passa, 'não adotado e preenchido');
+});
+
+test('desenvolvedor (D8): o item sem fonte, ou com fonte que não confere, nega com o item no motivo (CLAUDE.md, arquitetura e ajuste)', () => {
+  const projeto = (linha) => dev({}, fontesDe({ adotado: true, agente: comItem(linha) }));
+  assert.deepEqual(projeto(`- ${ITEM_DO_AJUSTE} [ajuste 2026-01-01]`), passa);
+  for (const [rotulo, linha, motivo] of [
+    ['sem marca', '- um item que ninguém mandou', /item sem fonte.*um item que ninguém/],
+    ['ajuste com data sem registro', `- ${ITEM_DO_AJUSTE} [ajuste 2026-02-02]`, /fonte não confere.*2026-02-02/],
+    ['ajuste com outro texto', '- outro texto [ajuste 2026-01-01]', /fonte não confere.*outro texto/],
+    ['arquitetura sem a linha', '- Linguagem: Java. [docs/arquitetura.md]', /fonte não confere.*arquitetura/],
+  ]) {
+    const r = projeto(linha);
+    assert.equal(r.decisao, 'deny', rotulo);
+    assert.match(r.motivo, motivo, rotulo);
+  }
+});
+
+test('desenvolvedor (D8): adotado com regra do domínio no CLAUDE.md e sem o bloco dominio no agente nega e manda sincronizar', () => {
+  const claude = `# Projeto Ficticio\n\n${REGRAS_DO_MODELO}8. **Isolamento** entre donos de dado.\n\n## Como rodar\n`;
+  const semBloco = comItem(`- ${ITEM_DO_AJUSTE} [ajuste 2026-01-01]`);
+  const negou = dev({}, fontesDe({ claude, agente: semBloco }));
+  assert.equal(negou.decisao, 'deny');
+  assert.match(negou.motivo, /falta o bloco das regras do domínio: rode `node \.claude\/hooks\/ajusta-pipeline\.mjs --sincronizar-desenvolvedor`/);
+  assert.deepEqual(dev({}, fontesDe({ claude, agente: sincronizar(semBloco, claude) })), passa, 'com o bloco');
+  assert.deepEqual(dev({}, fontesDe({ claude: claude.replace('8. **Isolamento** entre donos de dado.\n', ''), agente: semBloco })), passa, 'sem regra do domínio');
+});
+
+test('lerFontesDoDesenvolvedor: o leitor do ajuste só lê o registro da data citada (AAAA-MM-DD) e devolve null se não lê', () => {
+  const raiz = mkdtempSync(join(tmpdir(), 'guarda-fontes-'));
+  try {
+    mkdirSync(join(raiz, 'docs', 'pipeline', 'ajustes'), { recursive: true });
+    writeFileSync(join(raiz, 'CLAUDE.md'), '# P\n');
+    writeFileSync(join(raiz, 'docs', 'arquitetura.md'), '# A\n');
+    writeFileSync(join(raiz, 'docs', 'pipeline', 'ajustes', '2026-03-04-desenvolvedor.md'), '- entra: x\n');
+    writeFileSync(join(raiz, 'docs', 'pipeline', 'ajustes', 'outro.md'), 'segredo');
+    const { fontes } = lerFontesDoDesenvolvedor(raiz);
+    assert.equal(fontes.ajuste('2026-03-04'), '- entra: x\n');
+    assert.equal(fontes.ajuste('2026-03-05'), null, 'registro que não existe');
+    for (const ruim of ['../ajustes/outro', '2026-3-4', '../../CLAUDE.md', '', undefined]) assert.equal(fontes.ajuste(ruim), null, `${ruim}`);
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
 });
 
 test('desenvolvedor (D8): com worktree só passa o desenvolvedor; general-purpose, tipo ausente, fixo e qualquer tipo com worktree negam; general-purpose sem worktree passa', () => {

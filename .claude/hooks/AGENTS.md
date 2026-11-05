@@ -126,14 +126,20 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 arquivo (exatamente um par de cada marcador, em ordem, ou `{ erro }` dizendo qual). `extrairRegras(claudeMd)` olha só a seção
                 `## Regras que não se negociam` e acha cada regra pelo título em negrito, sem o `:` do fim (`TITULOS_FIXOS`: `Um \`AGENTS.md\` por pasta de
                 trabalho`, `Dado inventado`, `Local primeiro`, `Segredos`, `Recurso pago`; título fixo ausente ou repetido é erro com o nome); o item
-                sem título de `TITULOS_DO_MODELO` é do domínio. `sincronizar(texto, claudeMd)` regrava o bloco `regras` e, se o `CLAUDE.md` já
-                foi adotado (`adotado`: a 1ª linha deixou de ser `# <...>`), o bloco `dominio`; mantém o resto e o fim de linha, e é idempotente.
+                sem título de `TITULOS_DO_MODELO` é do domínio. O item continua na linha de 3 espaços ou mais ou com tab (sublista aninhada, 4 espaços)
+                e na linha em branco seguida de linha assim (o branco do fim sai); linha não vazia da seção que não é item nem continuação é erro, com a
+                linha no texto (nada some em silêncio). `sincronizar(texto, claudeMd)` regrava o bloco `regras` e, se o `CLAUDE.md` já
+                foi adotado (`adotado`: a 1ª linha, sem o BOM, deixou de ser `# <...>`), o bloco `dominio`; mantém o resto e o fim de linha, e é idempotente.
                 `vazia` diz se a parte do projeto, sem comentários, não tem nada; `mesmaParteFixa(antes, depois)` diz se tudo fora do conteúdo
                 do projeto é igual byte a byte (a conta da exceção do `escolhe-revisores`, D8.8). `problemas(texto, fontes)`
                 é o que a guarda chama: o cabeçalho, os marcadores, os tetos (tamanho em bytes ÷ `CARACTERES_POR_TOKEN` = 3, o mesmo da guarda:
                 corpo 1.500, parte fixa 900 e parte do projeto 600 tokens), o formato da parte do projeto fora do bloco `dominio` (só linhas
-                vazias ou itens `- ` de até 240 caracteres, sem título, cerca de código, comentário nem marcador) e a fonte (o item que termina em
-                `[CLAUDE.md]` ou `[docs/arquitetura.md]` tem de ser igual a uma linha dela). Não compara o bloco `regras` nem o `dominio` com o
+                vazias ou itens `- ` de até 240 caracteres, sem título, cerca de código, comentário nem marcador), a presença do bloco `dominio` (com o
+                `CLAUDE.md` adotado e regras do domínio na extração, a falta dos marcadores é problema: "falta o bloco das regras do domínio: rode
+                `--sincronizar-desenvolvedor`"; só presença, o texto não se compara) e a fonte: fora do bloco `dominio`, todo item `- ` termina numa marca,
+                senão é "item sem fonte". `[CLAUDE.md]` ou `[docs/arquitetura.md]`: o texto (sem `- ` e sem a marca, com `trim`) é igual a uma linha da
+                fonte. `[ajuste AAAA-MM-DD]`: `fontes.ajuste(data)` (injetável; devolve o texto de `docs/pipeline/ajustes/AAAA-MM-DD-desenvolvedor.md` ou
+                `null`) tem uma linha `- entra: <texto>` com o mesmo texto (com `trim`). Marca que não confere é "fonte não confere". Não compara o bloco `regras` nem o `dominio` com o
                 `CLAUDE.md`: isso é do teste, para a guarda não barrar o agente no meio da sessão. Testes em `desenvolvedor.test.mjs`.
               - `guarda-agentes.mjs`: PreToolUse na ferramenta `Agent`. A função pura `decidirAgente(entrada,
                 lerCabecalho, agentes, lerTamanho, lerTexto, esforco, lerFontes)` devolve `deny`, `ask` ou `null`; `lerCabecalho(tipo)` dá o `name`, o `model`, o
@@ -164,7 +170,8 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   "worktree"`, traz `effort` (obrigatório, de `low` a `high`; sem ele nega, sem cair no `medium` do cabeçalho), o `model` está ausente ou é `sonnet`
                   (outro nega, sem `ask`), `problemas(agente, fontes)` do `desenvolvedor.mjs` vem vazio e não ocorre de o projeto já ter adotado o `CLAUDE.md`
                   (a 1ª linha não é `# <...>`) com a parte do projeto vazia (nega com "preencha a parte do projeto"). `lerFontesDoDesenvolvedor` lê o agente, o
-                  `CLAUDE.md` e o `docs/arquitetura.md` (injetável, 7º argumento do `decidirAgente`); arquivo que não lê nega. O `desenvolvedor.mjs` é importado
+                  `CLAUDE.md` e o `docs/arquitetura.md` (injetável, 7º argumento do `decidirAgente`); arquivo que não lê nega. Dá também `fontes.ajuste(data)`, que só lê
+                  o registro `docs/pipeline/ajustes/<data>-desenvolvedor.md` da data citada (AAAA-MM-DD; outra forma não lê) e devolve `null` se não existe ou não lê, o que nega o item. O `desenvolvedor.mjs` é importado
                   dentro de um `try`, como o `config.mjs`: se quebra, todo pedido de `Agent` nega ("desenvolvedor.mjs ilegível"). Depois valem, como para todos,
                   o esforço do pipeline (D7: o `desenvolvedor` passa em todos), o teto de 50 mil tokens (D5) e o `git switch -c` (D6).
                 - O `orquestrador` (`SO_NO_CHAT`) só roda como agente do chat principal (`claude --agent orquestrador`):
@@ -348,7 +355,8 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 que o `marca-alterado.mjs` anota (código do produto pela lista única, `.jsx`, `.css` e `.py` inclusive; nunca `.claude/` nem `docs/`).
               - O `desenvolvedor.test.mjs` confere o `desenvolvedor.mjs` com textos inventados (`partes` com 0 ou 2 pares, ordem trocada e CRLF; o cabeçalho com campo a
                 mais, repetido, `tools` errado e chave entre aspas; os tetos; a extração com título ausente, repetido e o item do domínio; `sincronizar`
-                idempotente; `mesmaParteFixa`; o lint de formato e de fonte) e o arquivo de verdade: o `.claude/agents/desenvolvedor.md` sem problema,
+                idempotente; `mesmaParteFixa`; a regra com sublista aninhada, 4 espaços, tab e branco, e a linha solta, para uma regra fixa e para a do domínio; o BOM; a presença do bloco `dominio`;
+                o lint de formato e de fonte, com o item sem marca, os três tipos de marca e o registro do ajuste) e o arquivo de verdade: o `.claude/agents/desenvolvedor.md` sem problema,
                 com os blocos iguais ao que o `CLAUDE.md` dá (se falha, rode `--sincronizar-desenvolvedor`), a parte do projeto vazia enquanto o `CLAUDE.md`
                 for o do modelo, o bloco `dominio` igual à extração num `CLAUDE.md` adotado (fonte falsa) e o `CARACTERES_POR_TOKEN` igual ao da guarda.
               - O `guarda-agentes.test.mjs` usa um `lerCabecalho` falso e também lê os cabeçalhos de verdade de

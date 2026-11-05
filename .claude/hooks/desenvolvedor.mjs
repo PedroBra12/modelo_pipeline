@@ -84,12 +84,14 @@ function dominioDe(projeto) {
   return { antes: projeto.slice(0, de - DOMINIO_INI.length), conteudo: projeto.slice(de, ate), depois: projeto.slice(ate + DOMINIO_FIM.length), de, ate };
 }
 
-/** Verdadeiro se o CLAUDE.md já foi preenchido: a 1ª linha deixou de ser o `# <Nome do projeto>` do modelo. */
-export const adotado = (claudeMd) => !/^#\s*<[^>]*>\s*$/.test(linhasDe(claudeMd)[0] ?? '');
+/** Verdadeiro se o CLAUDE.md já foi preenchido: a 1ª linha (sem o BOM) deixou de ser o `# <Nome do projeto>` do modelo. */
+export const adotado = (claudeMd) => !/^#\s*<[^>]*>\s*$/.test(linhasDe(claudeMd.replace(/^\uFEFF/, ''))[0] ?? '');
 
 /**
- * As regras da seção `## Regras que não se negociam` do CLAUDE.md: `{ fixas, dominio }` (cada item, com os subitens de 3
- * espaços, como texto literal), ou `{ erro }` se um título fixo falta ou se repete. O item sem título conhecido é do domínio.
+ * As regras da seção `## Regras que não se negociam` do CLAUDE.md: `{ fixas, dominio }` (cada item, com tudo o que o continua,
+ * como texto literal), ou `{ erro }` se um título fixo falta ou se repete, ou se a seção tem linha solta. O item sem título
+ * conhecido é do domínio. O item continua na linha de 3 espaços ou mais ou com tab (sublista aninhada inclusive) e na linha em
+ * branco seguida de linha assim; o branco do fim sai. Linha não vazia que não é item nem continuação é erro, com a linha no texto.
  */
 export function extrairRegras(claudeMd) {
   const linhas = linhasDe(claudeMd);
@@ -97,13 +99,17 @@ export function extrairRegras(claudeMd) {
   if (ini === -1) return { erro: 'o CLAUDE.md não tem a seção "## Regras que não se negociam"' };
   const fim = linhas.findIndex((l, i) => i > ini && /^##\s/.test(l));
   const itens = [];
-  let aberto = false;
+  let brancos = 0;
   for (const linha of linhas.slice(ini + 1, fim === -1 ? undefined : fim)) {
-    if (/^\d+\. /.test(linha)) {
+    if (linha.trim() === '') {
+      if (itens.length > 0) brancos += 1;
+    } else if (/^\d+\. /.test(linha)) {
       itens.push({ titulo: /^\d+\. \*\*(.+?)\*\*/.exec(linha)?.[1].replace(/:$/, '').trim(), linhas: [linha.trimEnd()] });
-      aberto = true;
-    } else if (aberto && /^ {3}\S/.test(linha)) itens.at(-1).linhas.push(linha.trimEnd());
-    else aberto = false;
+      brancos = 0;
+    } else if (itens.length > 0 && /^(?: {3}|\t)/.test(linha)) {
+      for (; brancos > 0; brancos -= 1) itens.at(-1).linhas.push('');
+      itens.at(-1).linhas.push(linha.trimEnd());
+    } else return { erro: `linha solta na seção "## Regras que não se negociam" do CLAUDE.md, que não é item nem continua um (3 espaços ou mais, ou tab): "${linha.trim()}"` };
   }
   for (const titulo of TITULOS_FIXOS) {
     const n = itens.filter((i) => i.titulo === titulo).length;
@@ -158,9 +164,45 @@ export function mesmaParteFixa(antes, depois) {
 const corta = (t) => (t.length > 40 ? `${t.slice(0, 40)}...` : t);
 const semLista = (l) => l.trim().replace(/^(?:[-*+]|\d+\.)\s+/, '');
 
+const MARCA_DE_FONTE = /^- (.*\S)\s*\[(CLAUDE\.md|docs\/arquitetura\.md)\]$/;
+const MARCA_DE_AJUSTE = /^- (.*\S)\s*\[ajuste (\d{4}-\d{2}-\d{2})\]$/;
+
+/** O texto do registro do ajuste de `data`, ou `null` se não há leitor, o registro não existe ou a leitura falha. */
+function registroDoAjuste(fontes, data) {
+  try {
+    const texto = typeof fontes?.ajuste === 'function' ? fontes.ajuste(data) : null;
+    return typeof texto === 'string' ? texto : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Os problemas de fonte de um item "- ..." da parte do projeto fora do bloco `dominio`: sem marca, ou com marca que não confere. */
+function problemaDeFonte(linha, fontes) {
+  const doc = MARCA_DE_FONTE.exec(linha);
+  if (doc !== null) {
+    const fonte = fontes?.[doc[2]];
+    if (typeof fonte !== 'string') return [`a fonte ${doc[2]} do item "${corta(doc[1])}" não foi lida`];
+    if (!linhasDe(fonte).some((f) => semLista(f) === doc[1].trim())) return [`a fonte não confere: o item "${corta(doc[1])}" diz vir de ${doc[2]}, mas nenhuma linha de lá é igual`];
+    return [];
+  }
+  const ajuste = MARCA_DE_AJUSTE.exec(linha);
+  if (ajuste !== null) {
+    const registro = registroDoAjuste(fontes, ajuste[2]);
+    const entra = (l) => /^- entra:/.test(l.trim()) && l.trim().slice('- entra:'.length).trim() === ajuste[1].trim();
+    if (registro === null || !linhasDe(registro).some(entra)) {
+      return [`a fonte não confere: o item "${corta(ajuste[1])}" diz vir do ajuste ${ajuste[2]}, mas docs/pipeline/ajustes/${ajuste[2]}-desenvolvedor.md não existe ou não tem a linha "- entra: " com o mesmo texto`];
+    }
+    return [];
+  }
+  return [`item sem fonte: "${corta(linha.slice(2).trim())}" não termina em [CLAUDE.md], [docs/arquitetura.md] nem [ajuste AAAA-MM-DD]`];
+}
+
 /**
  * Os problemas do agente, em frases (lista vazia = nada a dizer): o cabeçalho, os marcadores, os tetos, o formato da parte
- * do projeto fora do bloco `dominio` e a fonte de cada item marcado. `fontes` é `{ 'CLAUDE.md': texto, 'docs/arquitetura.md': texto }`.
+ * do projeto fora do bloco `dominio`, a presença do bloco `dominio` e a fonte de cada item (toda linha `- ` fora do bloco tem marca).
+ * `fontes` é `{ 'CLAUDE.md': texto, 'docs/arquitetura.md': texto, ajuste(data) }`, com `ajuste` devolvendo o texto de
+ * `docs/pipeline/ajustes/<data>-desenvolvedor.md` ou `null`.
  * Não compara os blocos gerados com o CLAUDE.md: isso é do teste (D8: não barrar o agente no meio da sessão).
  */
 export function problemas(texto, fontes) {
@@ -173,6 +215,10 @@ export function problemas(texto, fontes) {
   }
   const d = dominioDe(p.projeto);
   if (d.erro !== undefined) return [...achados, d.erro];
+  const claudeMd = fontes?.['CLAUDE.md'];
+  if (d.sem && typeof claudeMd === 'string' && adotado(claudeMd) && (extrairRegras(claudeMd).dominio?.length ?? 0) > 0) {
+    achados.push('falta o bloco das regras do domínio: rode `node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor`');
+  }
   const livre = d.sem ? p.projeto : d.antes + d.depois;
   for (const linha of linhasDe(livre)) {
     const l = linha.trimEnd();
@@ -180,12 +226,7 @@ export function problemas(texto, fontes) {
     if (!/^- \S/.test(l)) achados.push(`a parte do projeto só aceita itens "- ...": "${corta(l.trim())}" não é (sem título, cerca de código, comentário nem marcador)`);
     else if (l.length > MAX_ITEM) achados.push(`um item da parte do projeto passa de ${MAX_ITEM} caracteres: "${corta(l)}"`);
     else if (/<!--|-->|```/.test(l)) achados.push(`um item da parte do projeto tem comentário ou cerca de código: "${corta(l)}"`);
-    const marca = /^- (.*\S)\s*\[(CLAUDE\.md|docs\/arquitetura\.md)\]$/.exec(l);
-    if (marca !== null) {
-      const fonte = fontes?.[marca[2]];
-      if (typeof fonte !== 'string') achados.push(`a fonte ${marca[2]} do item "${corta(marca[1])}" não foi lida`);
-      else if (!linhasDe(fonte).some((f) => semLista(f) === marca[1].trim())) achados.push(`o item "${corta(marca[1])}" diz vir de ${marca[2]}, mas nenhuma linha de lá é igual`);
-    }
+    if (/^- \S/.test(l)) achados.push(...problemaDeFonte(l, fontes));
   }
   return achados;
 }
