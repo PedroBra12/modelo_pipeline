@@ -64,10 +64,12 @@ const AGENTS_SOLTO = /(?:^|[\s'"=])agents(?:[\\/]|(?=\s|$|['"]))/i;
 // o ajusta-pipeline grava o agente sem citar a pasta: o --sincronizar-desenvolvedor, o --aplicar-menos e o --aplicar-mais contam como menção a ela
 const AJUSTA_AGENTES = /--(?:sincronizar-desenvolvedor|aplicar-menos|aplicar-mais)(?![\w-])/i;
 const MOTIVO_DOS_AGENTES = 'subagente não mexe em `.claude/agents/` pelo shell (D8): só lê (cat, grep, rg, head, tail, wc, echo, git grep/log/show/diff, sem gravar em arquivo nem parêntese); a mudança ali se relata ao orquestrador';
+const MARCADOR_DO_HEREDOC = /GIT_CONFIG_HEREDOC/;
 /** O que cita só a pasta de agentes, no comando inteiro: o `agents` solto só conta onde o comando também fala de `.claude`. */
 const citaAgentes = (comando) => {
   const comClaude = /\.claude\b/i.test(comando);
-  return (texto) => NOME_DE_AGENTES.test(texto) || AJUSTA_AGENTES.test(texto) || (comClaude && AGENTS_SOLTO.test(texto));
+  // o marcador do heredoc (marcarHeredocs) só nasce quando o corpo citou a pasta: lê-lo como menção impede o heredoc de esconder a trava
+  return (texto) => NOME_DE_AGENTES.test(texto) || AJUSTA_AGENTES.test(texto) || MARCADOR_DO_HEREDOC.test(texto) || (comClaude && AGENTS_SOLTO.test(texto));
 };
 /** A pasta de agentes e, junto, os nomes da configuração dos hooks do git. */
 const mencionaAgentes = (comando) => {

@@ -2,11 +2,12 @@
 // CLAUDE.md, o `sincronizar` e o lint da parte do projeto; mais o arquivo de verdade em .claude/agents/.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CABECALHO, CARACTERES_POR_TOKEN, TITULOS_DO_MODELO, TITULOS_FIXOS, adotado, extrairRegras, mesmaParteFixa, partes, problemas, sincronizar, vazia } from './desenvolvedor.mjs';
-import { CARACTERES_POR_TOKEN as DA_GUARDA } from './guarda-agentes.mjs';
+import { CARACTERES_POR_TOKEN as DA_GUARDA, lerFontesDoDesenvolvedor } from './guarda-agentes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const RAIZ = join(AQUI, '..', '..');
@@ -330,8 +331,18 @@ test('problemas: projeto adotado, com regra do domínio e sem os marcadores domi
   // sem regra do domínio, não adotado ou com a extração em erro: sem exigência
   assert.deepEqual(problemas(semBloco, { ...fontes, 'CLAUDE.md': claude({ dominio: '' }) }), [], 'adotado sem regra do domínio');
   assert.deepEqual(problemas(semBloco, { ...fontes, 'CLAUDE.md': claude({ adotar: false }) }), [], 'não adotado');
-  assert.ok(!problemas(semBloco, { ...fontes, 'CLAUDE.md': '# Projeto Ficticio\n' }).some((x) => /bloco das regras/.test(x)), 'extração em erro');
+  assert.deepEqual(problemas(semBloco, { ...fontes, 'CLAUDE.md': '# <Nome do projeto>\n' }), [], 'não adotado, mesmo com a extração em erro');
   assert.ok(problemas(semBloco, { ...fontes, 'CLAUDE.md': `﻿${adot}` }).some((x) => /bloco das regras/.test(x)), 'com BOM');
+});
+
+test('problemas: adotado e com a extração das regras em erro, o erro vira problema (a regra 8 com subitem de 2 espaços não libera o agente sem o bloco)', () => {
+  const ruim = claude({ dominio: '8. **Isolamento** entre donos de dado.\n  - subitem com 2 espaços.\n' });
+  const erro = extrairRegras(ruim).erro;
+  assert.match(erro, /linha solta/);
+  const semBloco = agente(`\n${item('a')}\n`);
+  const achados = problemas(semBloco, { ...FONTES, 'CLAUDE.md': ruim });
+  assert.ok(achados.includes(erro), `o erro da extração, com a frase dele: ${achados.join(' | ')}`);
+  assert.ok(!problemas(semBloco, { ...FONTES, 'CLAUDE.md': ruim.replace('# Projeto Ficticio', '# <Nome do projeto>') }).includes(erro), 'não adotado: sem exigência');
 });
 
 test('problemas: a comparação do bloco de regras com o CLAUDE.md não é da guarda (D8.2)', () => {
@@ -344,7 +355,8 @@ test('problemas: a comparação do bloco de regras com o CLAUDE.md não é da gu
 
 test('o .claude/agents/desenvolvedor.md de verdade: sem problema, com os blocos iguais ao que o CLAUDE.md dá e a parte do projeto vazia no modelo', () => {
   const texto = lerReal('.claude', 'agents', 'desenvolvedor.md');
-  const fontes = { 'CLAUDE.md': lerReal('CLAUDE.md'), 'docs/arquitetura.md': lerReal('docs', 'arquitetura.md') };
+  // as fontes de verdade, com o leitor de docs/pipeline/ajustes/ (o `ajuste`): o item `[ajuste AAAA-MM-DD]` de um projeto adotado confere aqui como na guarda
+  const fontes = lerFontesDoDesenvolvedor(RAIZ).fontes;
   assert.deepEqual(problemas(texto, fontes), []);
   assert.equal(sincronizar(texto, fontes['CLAUDE.md']), texto, 'rode: node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor');
   assert.equal(texto.startsWith(CABECALHO), true);
@@ -353,6 +365,25 @@ test('o .claude/agents/desenvolvedor.md de verdade: sem problema, com os blocos 
   if (!adotado(fontes['CLAUDE.md'])) {
     assert.equal(vazia(texto), true, 'o modelo traz a parte do projeto vazia');
     assert.ok(!texto.includes('dominio:inicio'));
+  }
+});
+
+test('os arquivos de verdade num projeto adotado: o item [ajuste AAAA-MM-DD] confere com o registro (- entra: igual) e falha sem ele', () => {
+  const raiz = mkdtempSync(join(tmpdir(), 'desenvolvedor-fontes-'));
+  try {
+    const adot = claude({ dominio: '' });
+    writeFileSync(join(raiz, 'CLAUDE.md'), adot);
+    mkdirSync(join(raiz, 'docs', 'pipeline', 'ajustes'), { recursive: true });
+    writeFileSync(join(raiz, 'docs', 'arquitetura.md'), ARQ);
+    const texto = agente('\n- `npm run checar:rapido`: tipos e testes. [ajuste 2026-02-03]\n', adot);
+    const fontes = () => lerFontesDoDesenvolvedor(raiz).fontes;
+    assert.ok(problemas(texto, fontes()).some((x) => /a fonte não confere/.test(x)), 'sem o registro');
+    writeFileSync(join(raiz, 'docs', 'pipeline', 'ajustes', '2026-02-03-desenvolvedor.md'), '# Ajuste\n\n- entra: `npm run checar:rapido`: tipos e testes.\n');
+    assert.deepEqual(problemas(texto, fontes()), [], 'com o registro');
+    writeFileSync(join(raiz, 'docs', 'pipeline', 'ajustes', '2026-02-03-desenvolvedor.md'), '# Ajuste\n\n- entra: outro texto\n');
+    assert.ok(problemas(texto, fontes()).some((x) => /a fonte não confere/.test(x)), 'registro com outro texto');
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
   }
 });
 

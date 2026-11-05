@@ -52,7 +52,7 @@ const ITEM_DO_AJUSTE = '`npm run checar:rapido`: tipos e testes.';
 const ajusteFalso = (data) => (data === '2026-01-01' ? `# Ajuste\n\n- entra: ${ITEM_DO_AJUSTE}\n` : null);
 const fontesDe = ({ adotado = false, agente = AGENTE, claude } = {}) => () => ({
   agente,
-  fontes: { 'CLAUDE.md': claude ?? (adotado ? '# Projeto Ficticio\n' : '# <Nome do projeto>\n'), 'docs/arquitetura.md': '# Arquitetura\n', ajuste: ajusteFalso },
+  fontes: { 'CLAUDE.md': claude ?? (adotado ? `# Projeto Ficticio\n\n${REGRAS_DO_MODELO}` : '# <Nome do projeto>\n'), 'docs/arquitetura.md': '# Arquitetura\n', ajuste: ajusteFalso },
 });
 const fontesDoModelo = fontesDe();
 
@@ -908,6 +908,13 @@ test('desenvolvedor (D8): adotado com regra do domínio no CLAUDE.md e sem o blo
   assert.match(negou.motivo, /falta o bloco das regras do domínio: rode `node \.claude\/hooks\/ajusta-pipeline\.mjs --sincronizar-desenvolvedor`/);
   assert.deepEqual(dev({}, fontesDe({ claude, agente: sincronizar(semBloco, claude) })), passa, 'com o bloco');
   assert.deepEqual(dev({}, fontesDe({ claude: claude.replace('8. **Isolamento** entre donos de dado.\n', ''), agente: semBloco })), passa, 'sem regra do domínio');
+});
+
+test('desenvolvedor (D8): adotado, a regra 8 com subitem de 2 espaços (extração em erro) e sem o bloco dominio, a guarda nega com a frase do erro', () => {
+  const claude = `# Projeto Ficticio\n\n${REGRAS_DO_MODELO}8. **Isolamento** entre donos de dado.\n  - subitem com 2 espaços.\n\n## Como rodar\n`;
+  const r = dev({}, fontesDe({ claude, agente: comItem(`- ${ITEM_DO_AJUSTE} [ajuste 2026-01-01]`) }));
+  assert.equal(r.decisao, 'deny');
+  assert.match(r.motivo, /linha solta na seção "## Regras que não se negociam"/);
 });
 
 test('lerFontesDoDesenvolvedor: o leitor do ajuste só lê o registro da data citada (AAAA-MM-DD) e devolve null se não lê', () => {
