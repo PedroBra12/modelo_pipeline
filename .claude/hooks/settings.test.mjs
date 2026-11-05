@@ -36,6 +36,16 @@ test('o matcher de edição chama a guarda-git-arquivos, com onFailure block, na
   assert.equal(arquivos.hook.onFailure, 'block');
 });
 
+test('o matcher de edição chama a guarda-pasta-agentes (D8.7), com onFailure block, nas quatro ferramentas de escrita, ao lado da guarda-git-arquivos', () => {
+  const pasta = entradaDo('guarda-pasta-agentes.mjs');
+  assert.ok(pasta, 'falta a entrada da guarda-pasta-agentes');
+  assert.deepEqual(pasta.matcher.sort(), ['Edit', 'MultiEdit', 'NotebookEdit', 'Write']);
+  assert.equal(pasta.hook.onFailure, 'block');
+  assert.equal(pasta.hook.type, 'command');
+  assert.match(pasta.hook.command, /^node "\$CLAUDE_PROJECT_DIR\/\.claude\/hooks\/guarda-pasta-agentes\.mjs"$/);
+  assert.deepEqual(pasta.matcher.sort(), entradaDo('guarda-git-arquivos.mjs').matcher.sort());
+});
+
 test('todo hook do settings.json aponta para um script que existe, e o PostToolUse e o Stop estão ligados', () => {
   const aqui = dirname(fileURLToPath(import.meta.url));
   const comandos = Object.values(SETTINGS.hooks ?? {}).flatMap((entradas) => entradas.flatMap((e) => (e.hooks ?? []).map((h) => h.command)));

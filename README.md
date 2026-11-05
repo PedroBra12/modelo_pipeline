@@ -43,7 +43,7 @@ O modelo separa quem **planeja e julga** (`opus`) de quem **localiza documentaç
 |---|---|---|
 | [`orquestrador`](.claude/agents/orquestrador.md) | `opus` | Agente do chat principal: planeja pelos `AGENTS.md`, divide tarefas por pasta/worktree, delega código ao `sonnet`, roda os revisores que o `escolhe-revisores.mjs` manda, o QA, o PR e a autoanálise. Nunca roda como subagente |
 | [`leitor-docs`](.claude/agents/leitor-docs.md) | `haiku` | Batedor de leitura: usa `Grep`/`Glob` em `docs/` e nos `AGENTS.md` e devolve só os arquivos e linhas onde o orquestrador deve focar |
-| `general-purpose` (código) | `sonnet` | Escreve código, testes e migrações em worktree isolado (`isolation: "worktree"`), só na sua pasta, no nível `leve`, `medio` ou `codigo-seguranca` |
+| [`desenvolvedor`](.claude/agents/desenvolvedor.md) | `sonnet` | Escreve código, testes e migrações, sempre em worktree isolado (`isolation: "worktree"`), só na sua pasta, no esforço do nível `leve`, `medio` ou `codigo-seguranca`. Roda sem o `CLAUDE.md`: leva as regras de código na parte fixa e o que é do projeto na parte que o orquestrador preenche (D8) |
 | `general-purpose` (`ponytail-review`) | `sonnet` | Revisão de qualidade com experimentos: roda o código para achar o defeito de comportamento que quem só lê não acha |
 | [`qa`](.claude/agents/qa.md) | `sonnet` | Roda o projeto localmente depois dos portões verdes (sem repeti-los), testa casos de borda e devolve cada defeito com o comando que o reproduz |
 | [`revisor-arquitetura`](.claude/agents/revisor-arquitetura.md) | `opus` | Confere fronteiras entre pastas, contratos públicos, tipagem, `AGENTS.md` e decisões em [`docs/decisoes.md`](docs/decisoes.md) |
@@ -77,7 +77,7 @@ As regras inegociáveis não dependem só da memória do LLM; elas são fiscaliz
     - quando passa, lembra uma vez de disparar a revisão do pipeline.
 - **No Git (`.claude/hooks/git/`):**
   - [`confere-ramo.mjs`](.claude/hooks/confere-ramo.mjs) (`pre-commit` e `pre-merge-commit`) e [`confere-main.mjs`](.claude/hooks/confere-main.mjs) (`reference-transaction`): impedem commits, merges ou reescritas locais direto na `main`. Todo trabalho vai num branch `pr/<assunto-em-kebab>`, e a `main` só avança por `git pull --ff-only`.
-  - `pre-commit`: além do `confere-ramo` e do `confere-lgpd`, roda os testes do pipeline (`node --test`) quando o commit toca `.claude/`. Quem muda a regra tem de passar nos testes dela. O `pre-merge-commit` também roda o `confere-lgpd`.
+  - `pre-commit`: além do `confere-ramo` e do `confere-lgpd`, roda os testes do pipeline (`node --test`) quando o commit toca `.claude/`, o `CLAUDE.md` ou o `docs/arquitetura.md`, e recusa o `desenvolvedor.md` commitado num worktree (D8). Quem muda a regra tem de passar nos testes dela. O `pre-merge-commit` também roda o `confere-lgpd`.
   - [`confere-docs.mjs`](.claude/hooks/confere-docs.mjs) (`commit-msg`): recusa o commit se uma pasta de trabalho não tiver `AGENTS.md` com `Faz:`, `Não faz:` e `Como testar:`. Recusa também quando o `AGENTS.md` cita arquivo inexistente (o nome simples entre crases), quando há link relativo quebrado em `.md`, e quando o código da pasta mudou sem atualizar o `AGENTS.md` nem declarar `Docs-conferidos: <pasta>/AGENTS.md` na mensagem.
   - [`confere-push.mjs`](.claude/hooks/confere-push.mjs) (`pre-push`): trava push direto na `main`, push forçado ou push para URL diferente de [`.claude/pipeline.json`](.claude/pipeline.json), e roda o `confere-lgpd` sobre o que sobe, para pegar o commit que foi feito sem os hooks.
 - **Scripts que o orquestrador roda:**

@@ -9,7 +9,7 @@ Este guia foi feito para quem **nunca abriu este repositório** e quer entender,
 Em vez de pedir código em um chat solto onde um único modelo faz tudo, esquece regras e commita direto na `main`, este modelo transforma o Claude Code em uma **equipe com travas mecânicas (hooks)**:
 
 - **Chat principal ([`orquestrador`](.claude/agents/orquestrador.md)):** planeja lendo os mapas das pastas (`AGENTS.md`), divide a tarefa, delega e revisa. Ele **não** escreve código direto.
-- **Agentes de código (`sonnet` em worktree isolado):** escrevem o código e os testes apenas na pasta que receberam.
+- **O agente de código `desenvolvedor` (`sonnet`, sempre em worktree isolado, D8):** escreve o código e os testes apenas na pasta que recebeu. Roda sem o `CLAUDE.md`, com as regras de código no próprio arquivo e uma parte do projeto que o orquestrador preenche.
 - **Portões e Guardas (`.claude/hooks/`):** scripts em Node.js + Git que bloqueiam commit na `main`, vazamento de dados pessoais (LGPD), falta de documentação (`AGENTS.md`), `git push --force`, merge de PR pela IA ou fim de turno com testes quebrados.
 - **Revisores e QA (`.claude/agents/`):** agentes especializados (`revisor-seguranca`, `revisor-tela`, `revisor-arquitetura`, `revisor-lgpd`, `ponytail-review` e `qa`) escolhidos mecanicamente pelo diff da mudança.
 
@@ -186,7 +186,7 @@ Quando você envia um pedido, o `orquestrador` segue este roteiro:
 1. **Classificação e trava de esforço:** ele lê os `AGENTS.md`, classifica o caminho (`feature`, `bug`, `refactor`, `decisao`, `fase` ou `trivial`), grava o esforço em `.claude/estado/esforco` (sem esse arquivo, a [`guarda-agentes.mjs`](.claude/hooks/guarda-agentes.mjs) bloqueia qualquer delegação) e abre a resposta com:
    `Pipeline: feature · esforço: medio`
 2. **Se exigir decisão de arquitetura:** antes de escrever qualquer código, ele para, apresenta as opções com prós e contras e aguarda sua escolha para registrar em [`docs/decisoes.md`](docs/decisoes.md).
-3. **Delegação por pasta:** ele cria um pacote de contexto enxuto (máximo de 50 mil tokens) e chama um subagente `sonnet` por pasta (em worktree isolado se houver mais de um em paralelo).
+3. **Delegação por pasta:** ele cria um pacote de contexto enxuto (máximo de 50 mil tokens) e chama um `desenvolvedor` por pasta, sempre em worktree isolado (com worktree, só o `desenvolvedor` passa na guarda, D8).
 4. **Portões automáticos:**
    - Ao final do turno em que houve edição de código, o hook [`portao.mjs`](.claude/hooks/portao.mjs) roda `npm run <portaoRapido>` sozinho.
    - O hook [`confere-lgpd.mjs`](.claude/hooks/confere-lgpd.mjs) confere se não entrou dado pessoal nem segredo.

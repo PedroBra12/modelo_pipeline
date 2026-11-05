@@ -11,9 +11,9 @@
     "leitor-docs": { "model": "haiku", "effort": "low", "tools": "Read, Grep, Glob", "tarefa": "ler `docs/` e os `AGENTS.md` e apontar os arquivos e linhas onde focar" }
   },
   "niveis": {
-    "leve": { "model": "sonnet", "effort": "low", "tarefa": "renomear, buscar (`Explore`), conferir um fato ou um arquivo, mudança trivial, `ponytail-debt`" },
-    "medio": { "model": "sonnet", "effort": "medium", "tarefa": "código: feature, bug ou refactor dentro de uma pasta" },
-    "codigo-seguranca": { "model": "sonnet", "effort": "high", "tarefa": "código que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`) e a integração de fase" },
+    "leve": { "model": "sonnet", "effort": "low", "tarefa": "renomear, buscar (`Explore`), conferir um fato ou um arquivo, mudança trivial (no `desenvolvedor`), `ponytail-debt`" },
+    "medio": { "model": "sonnet", "effort": "medium", "tarefa": "código no `desenvolvedor`: feature, bug ou refactor dentro de uma pasta" },
+    "codigo-seguranca": { "model": "sonnet", "effort": "high", "tarefa": "código no `desenvolvedor` que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`) e a integração de fase" },
     "revisao-ponytail": { "model": "sonnet", "effort": "high", "revisor": "ponytail-review", "tarefa": "`ponytail-review` e `ponytail-audit` (em `general-purpose`)" },
     "autoanalise": { "model": "sonnet", "effort": "medium", "tarefa": "juntar o livro da sessão (`livro-sessao.jsonl`, no scratchpad) com os números do `coleta-agentes.mjs` e gravar o arquivo da sessão" },
     "orquestracao": { "model": "opus", "effort": "xhigh", "tarefa": "`orquestrador` (`.claude/agents/orquestrador.md`), só como agente do chat principal" },

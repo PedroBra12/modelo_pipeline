@@ -107,3 +107,83 @@ test('o script na linha de comando: texto, --json (um objeto por agente), --desd
     assert.equal(rodar(join(pasta, 'nao-existe')).status, 2);
   });
 });
+
+// ---------- D8.9: contexto1 (medido) e pacote1 (estimado) ----------
+
+/** Um agente com 1º e último usage diferentes; o 1º pedido leva o `texto`, que pode citar caminhos absolutos. */
+const comPacote = (texto) => jsonl(
+  pedido('2026-10-28T14:00:00.000Z', texto, 'ccc333'),
+  resposta('2026-10-28T14:01:00.000Z', 'claude-sonnet-5-5', { input_tokens: 7, cache_creation_input_tokens: 4000, cache_read_input_tokens: 600, output_tokens: 900 }),
+  resultado('2026-10-28T14:02:00.000Z'),
+  resposta('2026-10-28T14:05:00.000Z', 'claude-sonnet-5-5', { input_tokens: 2, cache_creation_input_tokens: 10, cache_read_input_tokens: 9000, output_tokens: 50 }),
+);
+const MEDIDOR = (tamanhos) => (caminho) => (caminho in tamanhos ? { real: caminho, bytes: tamanhos[caminho] } : null);
+
+test('contexto1 é input + cache_creation + cache_read do 1º usage, sem o output, e não muda com o último usage', () => {
+  const a = lerAgente(comPacote('Escreva o código.'), MEDIDOR({}));
+  assert.equal(a.contexto1, 7 + 4000 + 600, 'o 1º usage, sem os 900 de output');
+  assert.equal(a.tokens, 2 + 10 + 9000 + 50, 'tokens segue sendo o do último usage');
+});
+
+test('pacote1: os arquivos de fora que o 1º pedido cita por caminho absoluto, em tamanho ÷ 3, sem contar o mesmo arquivo duas vezes', () => {
+  const medidor = MEDIDOR({ '/fora/pacote.md': 300, '/fora/dois.md': 299 });
+  const a = lerAgente(comPacote('Leia /fora/pacote.md e /fora/dois.md, depois /fora/pacote.md de novo; /fora/nao-existe.md some.'), medidor);
+  assert.equal(a.pacote1, Math.ceil((300 + 299) / 3));
+  assert.equal(lerAgente(comPacote('Leia /fora/pacote.md.'), medidor).pacote1, 100);
+});
+
+test('pacote1: pacote não citado dá 0 (o contexto1 segue medido), e só o 1º pedido conta', () => {
+  const medidor = MEDIDOR({ '/fora/pacote.md': 300 });
+  const sem = lerAgente(comPacote('Escreva o código, sem caminho nenhum.'), medidor);
+  assert.equal(sem.pacote1, 0);
+  assert.equal(sem.contexto1, 4607);
+  const retomado = lerAgente(`${comPacote('Sem caminho.')}${jsonl(pedido('2026-10-28T14:10:00.000Z', 'Agora leia /fora/pacote.md', 'ccc333'))}`, medidor);
+  assert.equal(retomado.pacote1, 0, 'o pedido da retomada não é o 1º');
+});
+
+test('sem usage o contexto1 é null; sem pedido o pacote1 é null; o formatar mostra os dois campos separados', () => {
+  const sem = lerAgente(jsonl({ type: 'attachment', timestamp: '2026-10-28T14:00:00.000Z', agentId: 'ddd444' }), MEDIDOR({}));
+  assert.equal(sem.contexto1, null);
+  assert.equal(sem.pacote1, null);
+  const a = lerAgente(comPacote('Leia /fora/pacote.md'), MEDIDOR({ '/fora/pacote.md': 300 }));
+  assert.match(formatar([a]), /contexto1: 4607 {2}pacote1 \(est\.\): 100\n/);
+  assert.match(formatar([sem]), /contexto1: \? {2}pacote1 \(est\.\): \?\n/);
+});
+
+test('o pacote1 mede de verdade: arquivo fora do repositório conta, o de dentro não; --json traz os dois campos', () => {
+  const pasta = mkdtempSync(join(tmpdir(), 'coleta-'));
+  const fora = mkdtempSync(join(tmpdir(), 'pacote-'));
+  try {
+    writeFileSync(join(fora, 'pacote.md'), 'x'.repeat(900));
+    writeFileSync(join(pasta, 'eee555.output'), comPacote(`Leia ${join(fora, 'pacote.md')} e ${SCRIPT}.`).replaceAll('ccc333', 'eee555'));
+    const [a] = coletar(pasta);
+    assert.equal(a.pacote1, 300, 'o pacote de fora (900 ÷ 3); o próprio script, dentro do repositório, não conta');
+    const json = JSON.parse(spawnSync(process.execPath, [SCRIPT, pasta, '--json'], { encoding: 'utf8' }).stdout);
+    assert.deepEqual([json[0].contexto1, json[0].pacote1], [4607, 300]);
+  } finally {
+    rmSync(pasta, { recursive: true, force: true });
+    rmSync(fora, { recursive: true, force: true });
+  }
+});
+
+test('lerAgente: a mensagem que o Claude Code injeta (user, texto que começa com <system-reminder>) não é pedido: o agente não sai "retomado"', () => {
+  const lembrete = '<system-reminder>\nAs always, o contexto do projeto.\n</system-reminder>';
+  for (const injetada of [lembrete, [{ type: 'text', text: lembrete }], `  \n${lembrete}`]) {
+    const a = lerAgente(jsonl(
+      pedido('2026-10-28T14:00:00.000Z', 'Escreva o código.', 'ccc333'),
+      pedido('2026-10-28T14:00:01.000Z', injetada, 'ccc333'),
+      resposta('2026-10-28T14:01:00.000Z', 'claude-sonnet-5-5', { input_tokens: 1, cache_creation_input_tokens: 1, cache_read_input_tokens: 1, output_tokens: 1 }),
+    ));
+    assert.equal(a.pedidos, 1);
+    assert.equal(a.primeiroPedido, 'Escreva o código.');
+    assert.doesNotMatch(formatar([a]), /retomado/);
+  }
+  // o lembrete que vem antes do pedido não vira o 1º pedido; e o pedido de verdade que cita o texto no meio conta
+  const b = lerAgente(jsonl(
+    pedido('2026-10-28T14:00:00.000Z', '<system-reminder>x</system-reminder>', 'ddd444'),
+    pedido('2026-10-28T14:00:02.000Z', 'Veja o <system-reminder> citado no meio.', 'ddd444'),
+    resposta('2026-10-28T14:01:00.000Z', 'claude-sonnet-5-5', { input_tokens: 1 }),
+  ));
+  assert.equal(b.pedidos, 1);
+  assert.equal(b.primeiroPedido, 'Veja o <system-reminder> citado no meio.');
+});

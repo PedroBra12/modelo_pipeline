@@ -57,4 +57,24 @@ Gatilho novo e gatilho estreitado entram por edição de `revisao.gatilhos` no `
 - Achado em dúvida conta: a dúvida cai do lado de manter o revisor. Só o falso positivo comprovado leva `"confirmado": false`.
 - O ciclo de subir e descer entre sessões é um risco aceito (D2): cada degrau pede a `janela` inteira de sessões limpas, e a subida de revisor pede um escape; a de código, a janela de rodadas altas.
 
+## 6. A parte do projeto do `desenvolvedor` (D8)
+
+No fechamento, depois da conta. Nunca no meio da sessão: com o texto estável, o prompt do agente fica no cache.
+
+```
+node .claude/hooks/ajusta-pipeline.mjs --repetidas <scratchpad>
+```
+
+- O comando lê os pacotes `desenvolvedor-*.md` da sessão e lista as **candidatas** (linhas que se repetiram em 2 pacotes ou mais e que o agente não tem) e a **economia perdida** (linhas de pacote que repetem o `.claude/agents/desenvolvedor.md`). Ele nunca grava.
+- Proponha ao usuário um lote:
+  - **entram:** linhas das candidatas, reescritas como item `- ` de até 240 caracteres terminado em `[ajuste AAAA-MM-DD]` (a data do registro abaixo), sem resumo de pasta, que é papel do `AGENTS.md`;
+  - **saem:** a linha que o `AGENTS.md` já diz, a que contradiz uma `D<n>` nova e a que abre espaço;
+  - com a parte cheia (600 tokens), uma linha só entra se outra sair;
+  - a economia perdida não vira linha: ela corrige o próximo pacote.
+- Com o "sim":
+  - grave primeiro `docs/pipeline/ajustes/<AAAA-MM-DD>-desenvolvedor.md` com o bloco JSON `{ "alvo": "desenvolvedor", "tipo": "parte-do-projeto", "de": "<n> linhas", "para": "<n> linhas", "data": "<AAAA-MM-DD>", "vistas": [] }` e as listas `- entra: <texto>` e `- sai: <texto>`. O `<texto>` é o do item, sem o `- ` e sem a marca. A guarda confere que cada item `[ajuste AAAA-MM-DD]` da parte do projeto tem o seu `- entra:` com o mesmo texto no registro daquela data;
+  - edite só entre os marcadores do projeto; a parte fixa e o cabeçalho são do modelo e mudam por `D<n>`;
+  - rode `node --test ".claude/hooks/*.test.mjs"`.
+- Mudou o `CLAUDE.md` ou o `docs/arquitetura.md`? Rode `--sincronizar-desenvolvedor`. O pre-commit roda os testes do pipeline e recusa a cópia velha.
+
 **Pronto quando:** o relatório da sessão traz a saída do `--relatorio`, as propostas esperando o "sim" e os ajustes aplicados, e `node --test ".claude/hooks/*.test.mjs"` está verde.

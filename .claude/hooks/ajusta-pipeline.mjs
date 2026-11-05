@@ -5,13 +5,16 @@
 //   node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos [--data AAAA-MM-DD] [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --aplicar-mais <alvo> [--data AAAA-MM-DD] [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela [--raiz <pasta>]
+//   node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor [--raiz <pasta>]
+//   node .claude/hooks/ajusta-pipeline.mjs --repetidas <pasta> [--json] [--raiz <pasta>]   (só lê; sai antes de ler o pipeline.json)
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ESCADA, FIXOS, PISOS, SUPRESSAO, lerAgentes, lerAjuste, lerNiveis, localizar, par } from './config.mjs';
 import { varrer } from './confere-lgpd.mjs';
-import { TETO } from './guarda-agentes.mjs';
+import { CARACTERES_POR_TOKEN, TETO } from './guarda-agentes.mjs';
+import { partes, sincronizar } from './desenvolvedor.mjs';
 
 const RAIZ_PADRAO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GRAVES = new Set(['critico', 'alto', 'must']);
@@ -89,6 +92,8 @@ export function validarSessao(dados, nome, cfg) {
     if (!PAPEIS.has(a?.papel)) falta(`agentes[].papel inválido (${a?.papel})`);
     if (typeof a.tipo !== 'string' || a.tipo === '') falta('agentes[].tipo falta');
     if (![a.tokens, a.minutos, a.rodadas].every(numeroOuNulo)) falta(`agentes[] ${a.tipo}: tokens, minutos e rodadas são números`);
+    if (a.agente !== undefined && typeof a.agente !== 'string') falta(`agentes[] ${a.tipo}: agente (o subagent_type) é texto`);
+    if (![a.contexto1, a.pacote1].every(numeroOuNulo)) falta(`agentes[] ${a.tipo}: contexto1 e pacote1 são números (ou null)`);
     if (['revisor', 'qa'].includes(a.papel) && (typeof a.modelo !== 'string' || typeof a.esforco !== 'string')) falta(`agentes[] ${a.tipo}: o revisor e o qa levam modelo e esforco (o par em que rodaram)`);
   }
   if (!Array.isArray(dados.achados)) falta('achados tem de ser uma lista');
@@ -404,10 +409,101 @@ export function sincronizarTabela(raiz) {
   writeFileSync(c.skill, comTabela(readFileSync(c.skill, 'utf8'), lerConfig(c.config)));
 }
 
+/**
+ * Regrava os blocos gerados do `.claude/agents/desenvolvedor.md` (as regras fixas e, no projeto adotado, as do domínio)
+ * a partir do CLAUDE.md da raiz (D8). Só grava se mudou; devolve o que mudou (`[]` = em dia). Erro de extração sobe.
+ */
+export function sincronizarDesenvolvedor(raiz) {
+  const arquivo = join(caminhos(raiz).agentes, 'desenvolvedor.md');
+  const antes = readFileSync(arquivo, 'utf8');
+  const depois = sincronizar(antes, readFileSync(join(raiz, 'CLAUDE.md'), 'utf8'));
+  if (depois === antes) return [];
+  writeFileSync(arquivo, depois);
+  const [a, d] = [partes(antes), partes(depois)];
+  return [a.regras !== d.regras && 'bloco regras', a.projeto !== d.projeto && 'bloco dominio'].filter(Boolean);
+}
+
+// ---------- as linhas que se repetem nos pacotes do desenvolvedor (D8.3) ----------
+
+const MIN_LINHA = 40;
+const PACOTE_DO_DESENVOLVEDOR = /^desenvolvedor-.+\.md$/;
+
+/**
+ * As linhas de um texto de `.md` já normalizadas (as que valem para a conta): pula o que está dentro de cerca de código e
+ * as linhas que começam por `#`, `|` ou `<!--`; tira `>`, o marcador de lista (`-`, `*`, `+`, `1.`) e `**`; junta os
+ * espaços, tira `.;:,` do fim e põe em minúsculas. `minimo`: descarta a linha com menos caracteres que isso.
+ */
+export function linhasNormalizadas(texto, minimo = 0) {
+  const saida = [];
+  let cerca = null;
+  for (const bruta of texto.split(/\r?\n/)) {
+    const linha = bruta.trim();
+    const abre = /^(`{3,}|~{3,})/.exec(linha);
+    if (cerca !== null) {
+      if (abre !== null && abre[1][0] === cerca[0] && abre[1].length >= cerca.length && linha === abre[1]) cerca = null;
+      continue;
+    }
+    if (abre !== null) {
+      cerca = abre[1];
+      continue;
+    }
+    if (/^(#|\||<!--)/.test(linha)) continue;
+    const limpa = linha.replace(/^(?:>\s*)+/, '').replace(/^(?:[-*+]|\d+\.)\s+/, '').replaceAll('**', '').replace(/\s+/g, ' ').replace(/[.;:,]+$/, '').trim().toLowerCase();
+    if (limpa.length >= minimo && limpa !== '') saida.push(limpa);
+  }
+  return saida;
+}
+
+/**
+ * A conta do fechamento (D8.3). `pacotes`: `[{ arquivo, texto }]`, os `desenvolvedor-*.md`; `agente`: o texto do
+ * `.claude/agents/desenvolvedor.md` (o cabeçalho fica de fora). Conta pacotes distintos, não ocorrências. Devolve
+ * `candidatas` (a linha em 2 pacotes ou mais que o agente não tem) e `economiaPerdida` (a linha de pacote que o corpo do
+ * agente já tem, com `tokens` ≈ tamanho ÷ 3 × pacotes), as duas da mais repetida para a menos.
+ */
+export function repetidas(pacotes, agente) {
+  const corpo = new Set(linhasNormalizadas(agente.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')));
+  const porLinha = new Map();
+  for (const { arquivo, texto } of pacotes) {
+    for (const linha of linhasNormalizadas(texto, MIN_LINHA)) {
+      if (!porLinha.has(linha)) porLinha.set(linha, new Set());
+      porLinha.get(linha).add(arquivo);
+    }
+  }
+  const candidatas = [];
+  const economiaPerdida = [];
+  for (const [linha, arquivos] of porLinha) {
+    const dados = { linha, pacotes: arquivos.size, arquivos: [...arquivos].sort() };
+    if (corpo.has(linha)) economiaPerdida.push({ ...dados, tokens: Math.round((linha.length / CARACTERES_POR_TOKEN) * arquivos.size) });
+    else if (arquivos.size >= 2) candidatas.push(dados);
+  }
+  const ordem = (a, b) => b.pacotes - a.pacotes || a.linha.localeCompare(b.linha);
+  return { pacotes: pacotes.map((p) => p.arquivo).sort(), candidatas: candidatas.sort(ordem), economiaPerdida: economiaPerdida.sort(ordem) };
+}
+
+/** Lê os `desenvolvedor-*.md` do 1º nível de `pasta` e o agente de `raiz`, e faz a conta. Só lê. */
+export function repetidasDaPasta(pasta, raiz) {
+  const pacotes = readdirSync(pasta, { withFileTypes: true }).filter((e) => e.isFile() && PACOTE_DO_DESENVOLVEDOR.test(e.name)).map((e) => e.name).sort()
+    .map((arquivo) => ({ arquivo, texto: readFileSync(join(pasta, arquivo), 'utf8') }));
+  return repetidas(pacotes, readFileSync(join(caminhos(raiz).agentes, 'desenvolvedor.md'), 'utf8'));
+}
+
+/** O texto do `--repetidas`: os pacotes contados, as candidatas e a economia perdida. */
+export function formatarRepetidas(r) {
+  const bloco = (titulo, itens, extra) => [titulo, ...(itens.length === 0 ? ['  nenhuma'] : itens.map((i) => `  - [${i.pacotes} pacotes${extra(i)}] ${i.linha}\n      ${i.arquivos.join(', ')}`))];
+  const perdidos = r.economiaPerdida.reduce((t, i) => t + i.tokens, 0);
+  return [
+    `Pacotes contados (${r.pacotes.length}): ${r.pacotes.join(', ') || 'nenhum'}`,
+    '',
+    ...bloco('Candidatas a entrar no agente (em 2 pacotes ou mais, que o agente ainda não tem):', r.candidatas, () => ''),
+    '',
+    ...bloco(`Economia perdida (linha do pacote que o agente já tem; ≈ ${perdidos} tokens):`, r.economiaPerdida, (i) => `, ≈ ${i.tokens} tokens`),
+  ].join('\n');
+}
+
 // ---------- linha de comando ----------
 
-const COM_VALOR = new Set(['--raiz', '--data', '--aplicar-mais']);
-const SEM_VALOR = new Set(['--relatorio', '--json', '--aplicar-menos', '--sincronizar-tabela']);
+const COM_VALOR = new Set(['--raiz', '--data', '--aplicar-mais', '--repetidas']);
+const SEM_VALOR = new Set(['--relatorio', '--json', '--aplicar-menos', '--sincronizar-tabela', '--sincronizar-desenvolvedor']);
 
 function opcoes(argv) {
   const o = {};
@@ -431,6 +527,16 @@ function principal(argv) {
   if (o['--sincronizar-tabela']) {
     sincronizarTabela(raiz);
     console.log('tabela da seção 7 da skill pipeline sincronizada com o pipeline.json');
+    return;
+  }
+  if (o['--sincronizar-desenvolvedor']) {
+    const mudou = sincronizarDesenvolvedor(raiz);
+    console.log(mudou.length === 0 ? 'desenvolvedor.md já estava em dia com o CLAUDE.md' : `desenvolvedor.md regravado: ${mudou.join(', ')}`);
+    return;
+  }
+  if (o['--repetidas'] !== undefined) {
+    const r = repetidasDaPasta(resolve(o['--repetidas']), raiz);
+    console.log(o['--json'] ? JSON.stringify(r, null, 2) : formatarRepetidas(r));
     return;
   }
   const data = o['--data'] ?? new Date().toLocaleDateString('sv-SE');

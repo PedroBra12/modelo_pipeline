@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -86,4 +88,40 @@ test('entrada ilegível ou sem caminho: nega; modos perguntar e desligado como n
   const dentro = { tool_name: 'Write', tool_input: { file_path: '.git/config' }, cwd: CWD };
   assert.equal(hook(dentro, { PIPELINE_GUARDA_GIT: 'perguntar' })?.permissionDecision, 'ask');
   assert.equal(hook(dentro, { PIPELINE_GUARDA_GIT: 'desligado' }), null);
+});
+
+// ---------- a falha aberta e o link simbólico (correção da D8) ----------
+
+/** Uma pasta temporária com `lnk-hooks` (link para a pasta dos hooks) e `proj/lnk` (link para a pasta do git do projeto). */
+function comLinks(fn) {
+  const raiz = realpathSync(mkdtempSync(join(tmpdir(), 'guarda-git-arq-link-')));
+  try {
+    mkdirSync(join(raiz, 'proj', '.git'), { recursive: true });
+    symlinkSync(AQUI, join(raiz, 'lnk-hooks'), 'junction');
+    symlinkSync(join(raiz, 'proj', '.git'), join(raiz, 'proj', 'lnk'), 'junction');
+    fn(raiz);
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
+}
+
+test('o script chamado por um caminho com link simbólico (o /var do macOS) também age: o hook não fica mudo', () => {
+  comLinks((raiz) => {
+    const r = spawnSync(process.execPath, [join(raiz, 'lnk-hooks', 'guarda-git-arquivos.mjs')], {
+      input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: '/r/.git/config' }, cwd: '/r' }),
+      encoding: 'utf8',
+    });
+    assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny');
+  });
+});
+
+test('o link para a pasta do git não esconde o alvo: vale o caminho de verdade do ancestral que existe', () => {
+  comLinks((raiz) => {
+    const proj = join(raiz, 'proj');
+    for (const c of ['lnk/config', 'lnk/hooks/pre-commit', join(proj, 'lnk', 'hooks', 'novo', 'x')]) {
+      assert.notEqual(motivoDoCaminho(c, proj), null, c);
+      assert.equal(hook({ tool_name: 'Write', tool_input: { file_path: c }, cwd: proj })?.permissionDecision, 'deny', c);
+    }
+    assert.equal(motivoDoCaminho('src/novo/x.md', proj), null);
+  });
 });

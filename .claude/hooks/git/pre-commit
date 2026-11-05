@@ -1,15 +1,27 @@
 #!/bin/sh
 unset NODE_OPTIONS  # o ambiente do comando não escolhe o que o node carrega dentro do hook
 # Hook pre-commit do git: todo commit, do agente ou da pessoa, passa pelo confere-ramo (nada na main), pelo confere-lgpd e,
-# quando o commit toca .claude/, pelos testes do pipeline (D2: o que muda a regra do pipeline tem de passar nos testes dela).
+# quando o commit toca .claude/, o CLAUDE.md ou o docs/arquitetura.md (as fontes do desenvolvedor.md), pelos testes do pipeline
+# (D2: o que muda a regra do pipeline tem de passar nos testes dela).
 # Os testes são sempre o node --test sobre .claude/hooks/*.test.mjs: um commit podia trocar o script do package.json.
+# O .claude/agents/desenvolvedor.md só se commita no checkout do orquestrador, não num worktree de agente (o topo do repositório dentro
+# de .claude/worktrees/, D8): o agente de código roda num worktree e não muda o texto que o guia. Outro worktree ligado passa.
 # Ligado por: git config core.hooksPath .claude/hooks/git
 node "$(dirname "$0")/../confere-ramo.mjs" || exit 1
 node "$(dirname "$0")/../confere-lgpd.mjs" --indice || exit 1
-if git diff --cached --name-only | grep -q '^\.claude/'; then
+if git diff --cached --no-renames --name-only | grep -qix '\.claude/agents/desenvolvedor\.md'; then
+  # o worktree do agente = o topo do repositório (absoluto, resolvido) dentro de um segmento .claude/worktrees/, o critério da guarda-git;
+  # o checkout do orquestrador, mesmo sendo um worktree ligado, fica de fora. O que o git não diz também recusa
+  topo=$(cd "$(git rev-parse --show-toplevel)" 2>/dev/null && pwd -P)
+  if [ -z "$topo" ] || printf '%s/\n' "$topo" | grep -qiE '[\\/]\.claude[\\/]worktrees[\\/]'; then
+    echo "Commit recusado: o desenvolvedor.md só se commita no checkout do orquestrador (D8)." >&2
+    exit 1
+  fi
+fi
+if git diff --cached --name-only | grep -qE '^(\.claude/|CLAUDE\.md$|docs/arquitetura\.md$)'; then
   unset $(git rev-parse --local-env-vars)  # os testes criam repositórios próprios: sem o GIT_INDEX_FILE deste commit
   unset NODE_TEST_CONTEXT                  # num commit feito de dentro de um teste, o node --test se acharia recursivo e não rodaria nada
   set -- .claude/hooks/*.test.mjs
-  [ -e "$1" ] || { echo "Commit recusado: o commit toca .claude/ e não há testes do pipeline em .claude/hooks/*.test.mjs." >&2; exit 1; }
-  node --test "$@" >&2 || { echo "Commit recusado: o commit toca .claude/ e os testes do pipeline (node --test) falharam." >&2; exit 1; }
+  [ -e "$1" ] || { echo "Commit recusado: o commit toca .claude/, o CLAUDE.md ou o docs/arquitetura.md e não há testes do pipeline em .claude/hooks/*.test.mjs." >&2; exit 1; }
+  node --test "$@" >&2 || { echo "Commit recusado: o commit toca .claude/, o CLAUDE.md ou o docs/arquitetura.md e os testes do pipeline (node --test) falharam." >&2; exit 1; }
 fi

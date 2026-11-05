@@ -17,7 +17,7 @@ const QUATRO = ['config.test.mjs', 'guarda-agentes.test.mjs', 'ajusta-pipeline.t
 test('com os alvos no piso, os testes que leem o pipeline.json de verdade continuam verdes', { timeout: 300_000 }, () => {
   const raiz = mkdtempSync(join(tmpdir(), 'ciclo-'));
   try {
-    for (const rel of ['.claude', 'docs/pipeline', 'CLAUDE.md', 'AGENTS.md']) {
+    for (const rel of ['.claude', 'docs/pipeline', 'docs/arquitetura.md', 'CLAUDE.md', 'AGENTS.md']) {
       if (!existsSync(join(RAIZ, rel))) continue;
       mkdirSync(dirname(join(raiz, rel)), { recursive: true });
       cpSync(join(RAIZ, rel), join(raiz, rel), { recursive: true });

@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARQUIVO, FIXOS, lerAgentes, lerNiveis } from './config.mjs';
-import { TETO, TETO_TOKENS, SO_NO_CHAT, caminhosCitados, decidirAgente, decidirEsforcoPipeline, decidirTeto, tamanhoDoArquivo, decidirChamador, decidirOrquestrador, juntarDecisoes, lerCabecalhoDoArquivo, lerEsforcoDoEstado, lerParDoRegistro, lerRegistroDoArquivo, parDoChat } from './guarda-agentes.mjs';
+import { CABECALHO, sincronizar } from './desenvolvedor.mjs';
+import { TETO, TETO_TOKENS, SO_NO_CHAT, CODIGO, caminhosCitados, decidirAgente, lerFontesDoDesenvolvedor, decidirEsforcoPipeline, decidirTeto, tamanhoDoArquivo, decidirChamador, decidirOrquestrador, juntarDecisoes, lerCabecalhoDoArquivo, lerEsforcoDoEstado, lerParDoRegistro, lerRegistroDoArquivo, parDoChat } from './guarda-agentes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const AGENTES = join(AQUI, '..', 'agents');
@@ -38,10 +39,22 @@ const cabecalhos = {
   'leitor-docs': { name: 'leitor-docs', model: 'haiku', effort: 'low', tools },
   qa: { name: 'qa', model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash' },
   'revisor-tela': { name: 'revisor-tela', model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash' },
+  desenvolvedor: { name: 'desenvolvedor', model: 'sonnet', effort: 'medium', tools: 'Read, Edit, Write, Bash, Grep, Glob' },
 };
 const ler = (tipo) => cabecalhos[tipo];
 const decide = (entrada) => decidirAgente({ description: 'revisar', prompt: 'x', ...entrada }, ler);
 const passa = { decisao: null, motivo: null };
+
+// O desenvolvedor (D8): o agente de verdade, e um CLAUDE.md inventado que ainda não foi adotado.
+const AGENTE = readFileSync(join(AGENTES, 'desenvolvedor.md'), 'utf8');
+// `ajuste(data)` é o leitor do registro `docs/pipeline/ajustes/<data>-desenvolvedor.md`: só o de 2026-01-01 existe.
+const ITEM_DO_AJUSTE = '`npm run checar:rapido`: tipos e testes.';
+const ajusteFalso = (data) => (data === '2026-01-01' ? `# Ajuste\n\n- entra: ${ITEM_DO_AJUSTE}\n` : null);
+const fontesDe = ({ adotado = false, agente = AGENTE, claude } = {}) => () => ({
+  agente,
+  fontes: { 'CLAUDE.md': claude ?? (adotado ? `# Projeto Ficticio\n\n${REGRAS_DO_MODELO}` : '# <Nome do projeto>\n'), 'docs/arquitetura.md': '# Arquitetura\n', ajuste: ajusteFalso },
+});
+const fontesDoModelo = fontesDe();
 
 test('fork é negado, mesmo com model e effort', () => {
   assert.equal(decide({ subagent_type: 'fork' }).decisao, 'deny');
@@ -206,6 +219,7 @@ function hookCom(pipeline, tipo = 'qa') {
   try {
     mkdirSync(join(raiz, 'hooks'));
     cpSync(join(AQUI, 'guarda-agentes.mjs'), join(raiz, 'hooks', 'guarda-agentes.mjs'));
+    cpSync(join(AQUI, 'desenvolvedor.mjs'), join(raiz, 'hooks', 'desenvolvedor.mjs'));
     cpSync(join(AQUI, 'config.mjs'), join(raiz, 'hooks', 'config.mjs'));
     cpSync(AGENTES, join(raiz, 'agents'), { recursive: true });
     if (pipeline !== null) writeFileSync(join(raiz, 'pipeline.json'), pipeline);
@@ -246,6 +260,7 @@ test('o config.mjs quebrado (conflito de merge) dá deny em JSON na guarda, e o 
   try {
     mkdirSync(join(raiz, 'hooks'));
     cpSync(join(AQUI, 'guarda-agentes.mjs'), join(raiz, 'hooks', 'guarda-agentes.mjs'));
+    cpSync(join(AQUI, 'desenvolvedor.mjs'), join(raiz, 'hooks', 'desenvolvedor.mjs'));
     writeFileSync(join(raiz, 'hooks', 'config.mjs'), '<<<<<<< HEAD\nexport const ESCADA = [];\n=======\n>>>>>>> outro\n');
     cpSync(ARQUIVO, join(raiz, 'pipeline.json'));
     cpSync(AGENTES, join(raiz, 'agents'), { recursive: true });
@@ -287,7 +302,10 @@ test('os cabeçalhos de verdade de .claude/agents/ batem com a tabela da guarda 
     const { name, model, effort, tools: ferramentas, problema } = lerCabecalhoDoArquivo(tipo) ?? {};
     assert.equal(name, tipo, `${arquivo}: name ${name}`);
     assert.equal(problema, undefined, `${arquivo}: ${problema}`);
-    if (tipo === SO_NO_CHAT) {
+    if (tipo === CODIGO) {
+      assert.deepEqual({ model, effort, tools: ferramentas }, { model: 'sonnet', effort: 'medium', tools: 'Read, Edit, Write, Bash, Grep, Glob' }, `${arquivo}: o cabeçalho do desenvolvedor`);
+      assert.ok(readFileSync(join(AGENTES, arquivo), 'utf8').startsWith(CABECALHO), `${arquivo}: o cabeçalho byte a byte`);
+    } else if (tipo === SO_NO_CHAT) {
       const { model: modeloDoJson, effort: esforcoDoJson } = lerNiveis().valor.orquestracao;
       assert.equal(model, modeloDoJson, `${arquivo}: model ${model}`);
       assert.equal(effort, esforcoDoJson, `${arquivo}: effort ${effort}`);
@@ -389,6 +407,7 @@ test('o hook copiado para uma pasta temporária falha fechado: arquivo ilegível
   try {
     mkdirSync(join(raiz, 'hooks'));
     cpSync(join(AQUI, 'guarda-agentes.mjs'), join(raiz, 'hooks', 'guarda-agentes.mjs'));
+    cpSync(join(AQUI, 'desenvolvedor.mjs'), join(raiz, 'hooks', 'desenvolvedor.mjs'));
     cpSync(join(AQUI, 'config.mjs'), join(raiz, 'hooks', 'config.mjs'));
     cpSync(ARQUIVO, join(raiz, 'pipeline.json'));
     cpSync(join(AQUI, 'config.mjs'), join(raiz, 'hooks', 'config.mjs'));
@@ -724,8 +743,8 @@ test('o hook de ponta a ponta nega o pedido acima do teto e deixa passar o peque
 // ---------- o worktree pede o branch de partida (D63) ----------
 
 const doWorktree = (prompt, { tabela = {}, textos = {}, isolation = 'worktree' } = {}) => decidirAgente(
-  { description: 'codigo', subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', prompt, ...(isolation === null ? {} : { isolation }) },
-  ler, TETO, tamanhos(tabela), (caminho) => textos[caminho] ?? '',
+  { description: 'codigo', subagent_type: 'desenvolvedor', model: 'sonnet', effort: 'high', prompt, ...(isolation === null ? {} : { isolation }) },
+  ler, TETO, tamanhos(tabela), (caminho) => textos[caminho] ?? '', undefined, fontesDoModelo,
 );
 
 test('worktree (D63): sem git switch -c nem git checkout -b no pedido ou no pacote nega, com a D63 e o que dizer', () => {
@@ -746,13 +765,14 @@ test('worktree (D63): a frase no pedido, ou só no pacote (fora do repositório)
   assert.equal(doWorktree(`siga ${dentro}`, { textos: { [dentro]: 'git switch -c a b' } }).decisao, 'deny', 'arquivo que o leitor de tamanho não conta (repositório) não vale');
 });
 
-test('worktree (D63): sem isolation, ou com outro valor, nada muda', () => {
-  assert.deepEqual(doWorktree('escreva o código', { isolation: null }), passa);
-  assert.deepEqual(doWorktree('escreva o código', { isolation: 'remote' }), passa);
+test('worktree (D63): sem isolation, ou com outro valor, a regra do git switch -c não se aplica (o general-purpose segue como antes)', () => {
+  const geral = (isolation) => decidirAgente({ description: 'codigo', subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', prompt: 'escreva o código', ...(isolation === null ? {} : { isolation }) }, ler, TETO, tamanhos({}), () => '', undefined, fontesDoModelo);
+  assert.deepEqual(geral(null), passa);
+  assert.deepEqual(geral('remote'), passa);
 });
 
 test('worktree (D63): o hook de ponta a ponta nega o subagente isolado sem a frase e deixa passar com ela', () => {
-  const rodar = (prompt) => spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entradaDoHook({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', isolation: 'worktree', prompt }), encoding: 'utf8', env: { ...process.env, PIPELINE_ESFORCO: 'alto' } });
+  const rodar = (prompt) => spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entradaDoHook({ subagent_type: 'desenvolvedor', model: 'sonnet', effort: 'high', description: 'x', isolation: 'worktree', prompt }), encoding: 'utf8', env: { ...process.env, PIPELINE_ESFORCO: 'alto' } });
   const r = JSON.parse(rodar('escreva o código').stdout);
   assert.equal(r.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(r.hookSpecificOutput.permissionDecisionReason, /D63/);
@@ -837,6 +857,155 @@ test('esforço do pipeline (D64): lerEsforcoDoEstado e o hook de ponta a ponta r
     assert.equal(rodar({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', prompt: 'código' }, 'rapido'), null);
     assert.equal(rodar({ subagent_type: 'revisor-arquitetura', description: 'x' }, 'alto'), null);
     assert.equal(rodar({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', description: 'x', prompt: 'código' }, 'lixo')?.permissionDecision, 'deny');
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
+});
+
+// ---------- o agente desenvolvedor e o worktree só dele (D8) ----------
+
+const dev = (entrada = {}, lerFontes = fontesDoModelo, esforco = undefined) => decidirAgente(
+  { description: 'codigo', subagent_type: 'desenvolvedor', model: 'sonnet', effort: 'medium', isolation: 'worktree', prompt: '1º passo: `git switch -c pr/x pr/y`', ...entrada },
+  ler, TETO, undefined, undefined, esforco, lerFontes,
+);
+const REGRAS_DO_MODELO = '## Regras que não se negociam\n\n2. **Um `AGENTS.md` por pasta de trabalho** a.\n4. **Dado inventado** b.\n5. **Local primeiro:** c.\n6. **Segredos** d.\n7. **Recurso pago** e.\n';
+const comItem = (item) => sincronizar(AGENTE, '# <Nome do projeto>\n\n## Regras que não se negociam\n\n2. **Um `AGENTS.md` por pasta de trabalho** a.\n4. **Dado inventado** b.\n5. **Local primeiro:** c.\n6. **Segredos** d.\n7. **Recurso pago** e.\n').replace('<!-- projeto:inicio -->', `<!-- projeto:inicio -->\n${item}\n`);
+
+test('desenvolvedor (D8): passa com effort low, medium ou high e model ausente ou sonnet', () => {
+  for (const effort of ['low', 'medium', 'high']) {
+    assert.deepEqual(dev({ effort }), passa, effort);
+    assert.deepEqual(dev({ effort, model: undefined }), passa, `${effort} sem model`);
+    assert.deepEqual(dev({ effort, model: 'sonnet' }), passa, `${effort} sonnet`);
+  }
+});
+
+test('desenvolvedor (D8): nega sem effort (sem cair no do cabeçalho), com xhigh ou max, com opus ou haiku, com a caixa trocada e sem worktree', () => {
+  assert.match(dev({ effort: undefined }).motivo, /effort/);
+  for (const effort of ['xhigh', 'max', '']) assert.equal(dev({ effort }).decisao, 'deny', `effort "${effort}"`);
+  for (const model of ['opus', 'haiku', 'fable', 'claude-opus-5']) assert.deepEqual(dev({ model }).decisao, 'deny', `${model}: nega, sem ask`);
+  for (const subagent_type of ['Desenvolvedor', 'DESENVOLVEDOR']) assert.equal(dev({ subagent_type }).decisao, 'deny', subagent_type);
+  for (const isolation of [undefined, 'remote', '']) assert.match(dev({ isolation }).motivo, /worktree/, `isolation ${isolation}`);
+});
+
+test('desenvolvedor (D8): nega o agente com problema no corpo ou no cabeçalho, e o arquivo que não lê (falha fechado)', () => {
+  const r = dev({}, fontesDe({ agente: AGENTE.replace('<!-- projeto:fim -->', 'uma frase solta\n<!-- projeto:fim -->') }));
+  assert.equal(r.decisao, 'deny');
+  assert.match(r.motivo, /uma frase solta/);
+  assert.equal(dev({}, fontesDe({ agente: AGENTE.replace('model: sonnet', 'model: opus') })).decisao, 'deny', 'o cabeçalho tem de ser o do modelo');
+  assert.equal(dev({}, fontesDe({ agente: AGENTE.replace('<!-- regras:fim -->', '') })).decisao, 'deny', 'marcador que falta');
+  assert.match(dev({}, () => { throw new Error('ENOENT: CLAUDE.md'); }).motivo, /ENOENT/);
+});
+
+test('desenvolvedor (D8, Q9): adotado e vazio nega e manda preencher; os outros três estados passam', () => {
+  const cheio = comItem(`- ${ITEM_DO_AJUSTE} [ajuste 2026-01-01]`);
+  const negou = dev({}, fontesDe({ adotado: true }));
+  assert.equal(negou.decisao, 'deny');
+  assert.match(negou.motivo, /preencha a parte do projeto \(skill `pipeline`, seção 2; `node \.claude\/hooks\/ajusta-pipeline\.mjs --sincronizar-desenvolvedor`\)/);
+  assert.deepEqual(dev({}, fontesDe({ adotado: true, agente: cheio })), passa, 'adotado e preenchido');
+  assert.deepEqual(dev({}, fontesDe({ adotado: false })), passa, 'não adotado e vazio');
+  assert.deepEqual(dev({}, fontesDe({ adotado: false, agente: cheio })), passa, 'não adotado e preenchido');
+});
+
+test('desenvolvedor (D8): o item sem fonte, ou com fonte que não confere, nega com o item no motivo (CLAUDE.md, arquitetura e ajuste)', () => {
+  const projeto = (linha) => dev({}, fontesDe({ adotado: true, agente: comItem(linha) }));
+  assert.deepEqual(projeto(`- ${ITEM_DO_AJUSTE} [ajuste 2026-01-01]`), passa);
+  for (const [rotulo, linha, motivo] of [
+    ['sem marca', '- um item que ninguém mandou', /item sem fonte.*um item que ninguém/],
+    ['ajuste com data sem registro', `- ${ITEM_DO_AJUSTE} [ajuste 2026-02-02]`, /fonte não confere.*2026-02-02/],
+    ['ajuste com outro texto', '- outro texto [ajuste 2026-01-01]', /fonte não confere.*outro texto/],
+    ['arquitetura sem a linha', '- Linguagem: Java. [docs/arquitetura.md]', /fonte não confere.*arquitetura/],
+  ]) {
+    const r = projeto(linha);
+    assert.equal(r.decisao, 'deny', rotulo);
+    assert.match(r.motivo, motivo, rotulo);
+  }
+});
+
+test('desenvolvedor (D8): adotado com regra do domínio no CLAUDE.md e sem o bloco dominio no agente nega e manda sincronizar', () => {
+  const claude = `# Projeto Ficticio\n\n${REGRAS_DO_MODELO}8. **Isolamento** entre donos de dado.\n\n## Como rodar\n`;
+  const semBloco = comItem(`- ${ITEM_DO_AJUSTE} [ajuste 2026-01-01]`);
+  const negou = dev({}, fontesDe({ claude, agente: semBloco }));
+  assert.equal(negou.decisao, 'deny');
+  assert.match(negou.motivo, /falta o bloco das regras do domínio: rode `node \.claude\/hooks\/ajusta-pipeline\.mjs --sincronizar-desenvolvedor`/);
+  assert.deepEqual(dev({}, fontesDe({ claude, agente: sincronizar(semBloco, claude) })), passa, 'com o bloco');
+  assert.deepEqual(dev({}, fontesDe({ claude: claude.replace('8. **Isolamento** entre donos de dado.\n', ''), agente: semBloco })), passa, 'sem regra do domínio');
+});
+
+test('desenvolvedor (D8): adotado, a regra 8 com subitem de 2 espaços (extração em erro) e sem o bloco dominio, a guarda nega com a frase do erro', () => {
+  const claude = `# Projeto Ficticio\n\n${REGRAS_DO_MODELO}8. **Isolamento** entre donos de dado.\n  - subitem com 2 espaços.\n\n## Como rodar\n`;
+  const r = dev({}, fontesDe({ claude, agente: comItem(`- ${ITEM_DO_AJUSTE} [ajuste 2026-01-01]`) }));
+  assert.equal(r.decisao, 'deny');
+  assert.match(r.motivo, /linha solta na seção "## Regras que não se negociam"/);
+});
+
+test('lerFontesDoDesenvolvedor: o leitor do ajuste só lê o registro da data citada (AAAA-MM-DD) e devolve null se não lê', () => {
+  const raiz = mkdtempSync(join(tmpdir(), 'guarda-fontes-'));
+  try {
+    mkdirSync(join(raiz, 'docs', 'pipeline', 'ajustes'), { recursive: true });
+    writeFileSync(join(raiz, 'CLAUDE.md'), '# P\n');
+    writeFileSync(join(raiz, 'docs', 'arquitetura.md'), '# A\n');
+    writeFileSync(join(raiz, 'docs', 'pipeline', 'ajustes', '2026-03-04-desenvolvedor.md'), '- entra: x\n');
+    writeFileSync(join(raiz, 'docs', 'pipeline', 'ajustes', 'outro.md'), 'segredo');
+    const { fontes } = lerFontesDoDesenvolvedor(raiz);
+    assert.equal(fontes.ajuste('2026-03-04'), '- entra: x\n');
+    assert.equal(fontes.ajuste('2026-03-05'), null, 'registro que não existe');
+    for (const ruim of ['../ajustes/outro', '2026-3-4', '../../CLAUDE.md', '', undefined]) assert.equal(fontes.ajuste(ruim), null, `${ruim}`);
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
+});
+
+test('desenvolvedor (D8): com worktree só passa o desenvolvedor; general-purpose, tipo ausente, fixo e qualquer tipo com worktree negam; general-purpose sem worktree passa', () => {
+  const geral = (entrada) => decidirAgente({ description: 'codigo', model: 'sonnet', effort: 'high', prompt: 'git switch -c a b', ...entrada }, ler, TETO, undefined, undefined, undefined, fontesDoModelo);
+  for (const subagent_type of ['general-purpose', undefined, 'Explore', 'qa', 'revisor-tela', 'leitor-docs']) {
+    const r = geral({ subagent_type, isolation: 'worktree' });
+    assert.equal(r.decisao, 'deny', String(subagent_type));
+    assert.match(r.motivo, /só passa o `desenvolvedor` \(D8\)/);
+  }
+  assert.deepEqual(geral({ subagent_type: 'general-purpose' }), passa);
+  assert.deepEqual(geral({ subagent_type: 'general-purpose', isolation: 'remote' }), passa);
+});
+
+test('desenvolvedor (D8): o esforço do pipeline (D7) deixa passar em todos, e o teto D5 e o git switch -c (D6) continuam valendo', () => {
+  for (const esforco of ['rapido', 'medio', 'alto', undefined]) assert.deepEqual(dev({}, fontesDoModelo, esforco), passa, String(esforco));
+  assert.equal(dev({}, fontesDoModelo, 'invalido').decisao, 'deny', 'esforço inválido segue negando');
+  assert.match(dev({ prompt: 'escreva o código' }).motivo, /D63/, 'sem o git switch -c');
+  assert.match(dev({ prompt: `git switch -c a b ${grande(LIMITE + 1)}` }).motivo, /D60/, 'acima do teto');
+});
+
+test('desenvolvedor (D8): um 2º arquivo com name: desenvolvedor nega o agente', () => {
+  comPasta(() => {}, (_, decide) => assert.deepEqual(decide('revisor-seguranca'), passa, 'a cópia intacta, com o desenvolvedor.md, passa'));
+  comPasta((pasta) => writeFileSync(join(pasta, 'copia.md'), cabecalhoFalso('desenvolvedor', 'model: sonnet\neffort: medium\n')), (pasta) => {
+    const r = decidirAgente({ description: 'x', subagent_type: 'desenvolvedor', model: 'sonnet', effort: 'low', isolation: 'worktree', prompt: 'git switch -c a b' }, (t) => lerCabecalhoDoArquivo(t, pasta), TETO, undefined, undefined, undefined, fontesDoModelo);
+    assert.equal(r.decisao, 'deny');
+    assert.match(r.motivo, /copia\.md/);
+  });
+});
+
+test('desenvolvedor (D8): o hook de ponta a ponta passa com worktree e effort, nega sem eles e nega tudo com o desenvolvedor.mjs quebrado', () => {
+  const rodar = (tool_input, script = join(AQUI, 'guarda-agentes.mjs')) => {
+    const r = spawnSync(process.execPath, [script], { input: entradaDoHook({ description: 'x', prompt: 'git switch -c a b', ...tool_input }), encoding: 'utf8', env: { ...process.env, PIPELINE_ESFORCO: 'alto' } });
+    return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
+  };
+  const chamada = { subagent_type: 'desenvolvedor', model: 'sonnet', effort: 'medium', isolation: 'worktree' };
+  assert.equal(rodar(chamada).saida, null);
+  assert.equal(rodar({ ...chamada, effort: undefined }).saida?.permissionDecision, 'deny');
+  assert.equal(rodar({ ...chamada, isolation: undefined }).saida?.permissionDecision, 'deny');
+  assert.equal(rodar({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'low', isolation: 'worktree' }).saida?.permissionDecision, 'deny');
+  const raiz = mkdtempSync(join(tmpdir(), 'guarda-agentes-dev-'));
+  try {
+    mkdirSync(join(raiz, 'hooks'));
+    cpSync(join(AQUI, 'guarda-agentes.mjs'), join(raiz, 'hooks', 'guarda-agentes.mjs'));
+    cpSync(join(AQUI, 'config.mjs'), join(raiz, 'hooks', 'config.mjs'));
+    writeFileSync(join(raiz, 'hooks', 'desenvolvedor.mjs'), '<<<<<<< HEAD\nexport const CABECALHO = "";\n=======\n>>>>>>> outro\n');
+    cpSync(ARQUIVO, join(raiz, 'pipeline.json'));
+    cpSync(AGENTES, join(raiz, 'agents'), { recursive: true });
+    for (const tool_input of [chamada, { subagent_type: 'qa' }, { subagent_type: 'general-purpose', model: 'sonnet', effort: 'low' }]) {
+      const r = rodar(tool_input, join(raiz, 'hooks', 'guarda-agentes.mjs'));
+      assert.equal(r.status, 0);
+      assert.equal(r.saida?.permissionDecision, 'deny', JSON.stringify(tool_input));
+      assert.match(r.saida?.permissionDecisionReason, /desenvolvedor\.mjs ilegível/);
+    }
   } finally {
     rmSync(raiz, { recursive: true, force: true });
   }
