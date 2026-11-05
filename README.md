@@ -2,6 +2,8 @@
 
 Modelo de repositório para desenvolvimento de software com múltiplos agentes no Claude Code. Traz um pipeline estruturado, agentes especializados com governança de modelos (para economizar tokens sem perder qualidade), hooks determinísticos em Node.js e Git (sem dependências externas) e um **autoajuste**: o pipeline mede cada sessão e ajusta sozinho o esforço dos revisores, dentro de pisos e tetos que moram no código.
 
+> **Nunca abriu este repositório?** Comece pelo guia prático passo a passo em [`how_to_use.md`](how_to_use.md).
+
 ---
 
 ## Como funciona

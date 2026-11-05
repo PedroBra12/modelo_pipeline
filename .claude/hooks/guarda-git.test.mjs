@@ -714,3 +714,29 @@ test('o hook de ponta a ponta com o repositorio no marcador: nega com a mensagem
     assert.doesNotMatch(saida.permissionDecisionReason, /peça para ele rodar/);
   });
 });
+
+test('.claude/estado/esforco (D64): gravar medio ou alto e ler/limpar passam direto; gravar rapido ou qualquer outro comando que toque o arquivo pede confirmação (ask)', () => {
+  for (const seguro of [
+    "mkdir -p .claude/estado && printf '%s\\n' medio > .claude/estado/esforco",
+    "mkdir -p .claude/estado && printf '%s\\n' alto > .claude/estado/esforco",
+    "printf '%s\\n' medio > .claude/estado/esforco",
+    "printf '%s\\n' alto > .claude/estado/esforco",
+    'echo medio > .claude/estado/esforco',
+    'echo alto > .claude/estado/esforco',
+    'cat .claude/estado/esforco',
+    'rm -f .claude/estado/esforco',
+  ]) {
+    assert.deepEqual(decisao(seguro, PROJETO), { decisao: null, motivo: null }, seguro);
+  }
+  for (const pedeAsk of [
+    "mkdir -p .claude/estado && printf '%s\\n' rapido > .claude/estado/esforco",
+    "printf '%s\\n' rapido > .claude/estado/esforco",
+    'echo rapido > .claude/estado/esforco',
+    'cp /tmp/x .claude/estado/esforco',
+    'echo medio > .claude/estado/esforco && echo rapido > .claude/estado/esforco',
+  ]) {
+    const d = decisao(pedeAsk, PROJETO);
+    assert.equal(d.decisao, 'ask', pedeAsk);
+    assert.match(d.motivo, /confirme o esforço rapido em \.claude\/estado\/esforco/);
+  }
+});

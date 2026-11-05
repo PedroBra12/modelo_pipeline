@@ -601,7 +601,7 @@ test('referência que não existe: "a referência <x> não existe"; a main que a
 
 // ---- os três esforços do pipeline: rapido, medio (padrão) e alto (D64) ----
 
-test('três esforços (D64): medio é o padrão e dispensa revisor-arquitetura e revisor-lgpd; rapido dispensa todos os revisores e o qa; alto mantém todos', () => {
+test('três esforços (D64): medio é o padrão e dispensa revisor-arquitetura e revisor-lgpd; rapido dispensa todos os revisores e o qa em diff sem gatilho de risco e recusa diff de risco; alto mantém todos', () => {
   const diffCompleto = {
     'packages/db/migrations/20261101000000_x.sql': `create table t (id int);\n${GRANT}`,
     'src/contatos/x.js': "export const q = 'select cpf from pessoas';\n",
@@ -618,13 +618,10 @@ test('três esforços (D64): medio é o padrão e dispensa revisor-arquitetura e
     ]);
     assert.match(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD').stdout, /Revisores de HEAD~1\.\.HEAD \(esforço medio\)/);
 
-    // rapido: dispensa todos os obrigatórios e condicionais
-    const rapido = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'rapido', '--json').json();
-    assert.equal(rapido.esforco, 'rapido');
-    assert.deepEqual(rapido.obrigatorios, []);
-    assert.deepEqual(rapido.condicionais, []);
-    assert.deepEqual(rapido.dispensados.map((d) => d.nome).sort(), ['ponytail-review', 'qa', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-seguranca', 'revisor-tela']);
-    assert.ok(rapido.dispensados.every((d) => d.motivo === 'esforço rapido (D64)'));
+    // rapido em diff com gatilho de risco: recusado com erro 2
+    const bloqueado = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'rapido');
+    assert.equal(bloqueado.status, 2);
+    assert.match(bloqueado.stderr, /esforço rapido não é permitido quando o diff aciona gatilho de risco \(banco, permissao, dado_pessoal\)/);
 
     // alto: mantém todos
     const alto = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'alto', '--json').json();
@@ -632,17 +629,33 @@ test('três esforços (D64): medio é o padrão e dispensa revisor-arquitetura e
     assert.deepEqual(nomes(alto.obrigatorios), ['ponytail-review', 'qa', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-seguranca', 'revisor-tela']);
     assert.deepEqual(alto.dispensados, []);
   });
-  // qa condicional (.claude/hooks) também sai no rapido
-  const rapidoCond = em({ '.claude/hooks/x.mjs': 'a\n' }, { '.claude/hooks/x.mjs': 'b\n' }, { esforco: 'rapido' });
-  assert.deepEqual([rapidoCond.obrigatorios, rapidoCond.condicionais], [[], []]);
-  assert.ok(rapidoCond.dispensados.some((d) => d.nome === 'qa' && d.motivo === 'esforço rapido (D64)'));
+
+  // rapido em diff sem gatilho de risco (só tela, grande e comportamento): dispensa todos os obrigatórios e condicionais
+  const diffSemRisco = {
+    'src/app/a/Tela.jsx': 'export default function A() { return <p>oi</p>; }\n',
+    'src/app/b/Tela.jsx': 'export default function B() { return <p>oi</p>; }\n',
+    'src/lib/x.js': 'export const x = 1;\n',
+  };
+  com(doisCommits({}, diffSemRisco), ({ raiz }) => {
+    const rapido = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'rapido', '--json').json();
+    assert.equal(rapido.esforco, 'rapido');
+    assert.deepEqual(rapido.obrigatorios, []);
+    assert.deepEqual(rapido.condicionais, []);
+    assert.deepEqual(rapido.dispensados.map((d) => d.nome).sort(), ['ponytail-review', 'qa', 'revisor-arquitetura', 'revisor-tela']);
+    assert.ok(rapido.dispensados.every((d) => d.motivo === 'esforço rapido (D64)'));
+  });
 });
 
 test('três esforços (D64): lê .claude/estado/esforco quando --esforco não é passado; --esforco vence o arquivo; valor inválido é erro 2', () => {
-  com(doisCommits({}, { 'src/contatos/x.js': "export const q = 'select cpf from pessoas';\n" }), ({ raiz }) => {
+  const diffSemRisco = {
+    'src/app/a/Tela.jsx': 'export default function A() { return <p>oi</p>; }\n',
+    'src/app/b/Tela.jsx': 'export default function B() { return <p>oi</p>; }\n',
+    'src/lib/x.js': 'export const x = 1;\n',
+  };
+  com(doisCommits({}, diffSemRisco), ({ raiz }) => {
     mkdirSync(join(raiz, '.claude', 'estado'), { recursive: true });
     writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), 'alto\n');
-    assert.ok(nomes(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--json').json().obrigatorios).includes('revisor-lgpd'), 'arquivo em alto mantém revisor-lgpd');
+    assert.ok(nomes(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--json').json().obrigatorios).includes('revisor-arquitetura'), 'arquivo em alto mantém revisor-arquitetura');
     assert.deepEqual(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'rapido', '--json').json().obrigatorios, [], '--esforco na linha de comando vence o arquivo');
     writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), 'rapido\n');
     assert.deepEqual(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--json').json().obrigatorios, [], 'arquivo em rapido zera os obrigatórios');
