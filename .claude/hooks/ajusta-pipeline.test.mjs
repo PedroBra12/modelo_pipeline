@@ -3,12 +3,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARQUIVO, FIXOS, PISOS, lerAgentes, lerNiveis, par } from './config.mjs';
-import { analisar, aplicar, comTabela, formatar, lerAjustes, lerConfig, lerSessao, lerSessoes, tabela, validarSessao } from './ajusta-pipeline.mjs';
+import { analisar, aplicar, comTabela, formatar, lerAjustes, lerConfig, lerSessao, lerSessoes, linhasNormalizadas, repetidas, tabela, validarSessao } from './ajusta-pipeline.mjs';
 import { lerCabecalhoDoArquivo } from './guarda-agentes.mjs';
 import { EXEMPLO, fixarExemplo } from './teste-apoio.mjs';
 
@@ -294,6 +294,13 @@ test('validarSessao: o que falta, nome com erro de digitação, dado pessoal e t
   assert.throws(ruim((c) => { c.agentes[0].papel = 'estagiario'; }), /papel inválido/);
   assert.throws(ruim((c) => { c.agentes[0].tokens = 'muitos'; }), /são números/);
   assert.throws(ruim((c) => { c.achados[0].severidade = 'gravíssimo'; }), /achados\[\] inválido/);
+  // D8: agente, contexto1 e pacote1 são opcionais; o tipo errado é recusado e a sessão antiga, sem eles, segue válida
+  assert.doesNotThrow(ruim((c) => { Object.assign(c.agentes[0], { agente: 'desenvolvedor', contexto1: 12000, pacote1: 0 }); }));
+  assert.doesNotThrow(ruim((c) => { Object.assign(c.agentes[0], { contexto1: null, pacote1: null }); }));
+  assert.throws(ruim((c) => { c.agentes[0].agente = 3; }), /agente .* é texto/);
+  assert.throws(ruim((c) => { c.agentes[0].contexto1 = '12000'; }), /contexto1 e pacote1 são números/);
+  assert.throws(ruim((c) => { c.agentes[0].pacote1 = -1; }), /contexto1 e pacote1 são números/);
+  assert.throws(ruim((c) => { c.agentes[0].contexto1 = true; }), /contexto1 e pacote1 são números/);
   assert.throws(ruim((c) => { delete c.agentes[0].modelo; }), /levam modelo e esforco/);
   assert.throws(ruim((c) => { delete c.agentes[0].esforco; }), /levam modelo e esforco/);
   assert.throws(ruim((c) => { c.achados[0].resumo = `${['//', 'lgpd-ignora:'].join(' ')} celular -- dado inventado para o teste`; }), /supressão lgpd-ignora/);
@@ -789,5 +796,133 @@ test('--sincronizar-desenvolvedor: em dia não grava; CLAUDE.md mudado regrava o
     const falhou = cli(raiz, '--sincronizar-desenvolvedor');
     assert.equal(falhou.status, 2);
     assert.match(falhou.stderr, /Segredos/);
+  });
+});
+
+// ---------- D8.3: o --repetidas ----------
+
+const AGENTE_DE_EXEMPLO = `---
+name: desenvolvedor
+description: Agente de código inventado para o teste, com uma linha de cabeçalho bem comprida.
+---
+Você escreve código numa pasta, com o pacote do orquestrador.
+
+## Como trabalhar
+- Escopo: só a pasta do pacote, e mais nada além dela.
+- Só commita: sem push, PR, merge nem rebase.
+<!-- projeto:inicio -->
+<!-- projeto:fim -->
+`;
+const LINHA_A = 'Rode o portão rápido antes de pedir a revisão do código';
+const LINHA_B = 'Confira o AGENTS.md da pasta antes de mexer em qualquer arquivo';
+const pct = (arquivo, ...linhas) => ({ arquivo, texto: `# Pacote\n\n${linhas.join('\n')}\n` });
+
+test('repetidas: 1 pacote não basta e 2 bastam; a mesma linha duas vezes no mesmo pacote conta 1', () => {
+  const r1 = repetidas([pct('desenvolvedor-a.md', LINHA_A, LINHA_A, LINHA_A), pct('desenvolvedor-b.md', LINHA_B)], AGENTE_DE_EXEMPLO);
+  assert.deepEqual(r1.candidatas, [], 'três ocorrências em 1 pacote não são repetição entre pacotes');
+  const r2 = repetidas([pct('desenvolvedor-a.md', LINHA_A, LINHA_A), pct('desenvolvedor-b.md', LINHA_A, LINHA_B)], AGENTE_DE_EXEMPLO);
+  assert.deepEqual(r2.candidatas, [{ linha: LINHA_A.toLowerCase(), pacotes: 2, arquivos: ['desenvolvedor-a.md', 'desenvolvedor-b.md'] }]);
+  assert.deepEqual(r2.pacotes, ['desenvolvedor-a.md', 'desenvolvedor-b.md']);
+});
+
+test('repetidas: a linha com 39 caracteres normalizados fica de fora e a de 40 entra', () => {
+  const l39 = 'a'.repeat(39);
+  const l40 = 'b'.repeat(40);
+  const r = repetidas([pct('desenvolvedor-a.md', `- ${l39}.`, `- **${l40}**;`), pct('desenvolvedor-b.md', l39, `> ${l40}`)], AGENTE_DE_EXEMPLO);
+  assert.deepEqual(r.candidatas.map((c) => c.linha), [l40]);
+});
+
+test('linhasNormalizadas: cerca de código, #, | e <!-- ficam de fora; >, marcador de lista, ** e pontuação do fim saem; espaços se juntam e tudo vai a minúsculas', () => {
+  const texto = ['# Título que tem mais de quarenta caracteres no total', '| tabela | com mais de quarenta caracteres no total aqui |', '<!-- comentário com mais de quarenta caracteres no total -->',
+    '```json', 'linha dentro da cerca de código com mais de quarenta caracteres', '```', '~~~', 'outra linha dentro da cerca de til com mais de quarenta caracteres', '~~~',
+    '- **Leia** o   AGENTS.md DA pasta antes de qualquer mudança, ', '> 1. Leia o AGENTS.md da pasta antes de qualquer mudança;', '* leia o agents.md da pasta antes de qualquer mudança:', '+ Leia o AGENTS.md da pasta antes de qualquer mudança.'];
+  assert.deepEqual(linhasNormalizadas(texto.join('\n'), 40), Array(4).fill('leia o agents.md da pasta antes de qualquer mudança'));
+  assert.deepEqual(linhasNormalizadas('```\nnão fecha\nainda dentro\n', 0), [], 'a cerca sem fim vai até o fim do texto');
+  assert.deepEqual(linhasNormalizadas('````\n```\nainda dentro da cerca maior\n````\nfora', 0), ['fora']);
+});
+
+test('repetidas: a linha de pacote igual a uma do corpo do agente é economia perdida (tamanho ÷ 3 × pacotes) e não é candidata; o cabeçalho do agente não conta como corpo', () => {
+  const escopo = 'Escopo: só a pasta do pacote, e mais nada além dela.';
+  const r = repetidas([pct('desenvolvedor-a.md', `- ${escopo}`, LINHA_A), pct('desenvolvedor-b.md', `> ${escopo}`, LINHA_A, 'Agente de código inventado para o teste, com uma linha de cabeçalho bem comprida'), pct('desenvolvedor-c.md', escopo)], AGENTE_DE_EXEMPLO);
+  const normal = escopo.slice(0, -1).toLowerCase();
+  assert.deepEqual(r.economiaPerdida, [{ linha: normal, pacotes: 3, arquivos: ['desenvolvedor-a.md', 'desenvolvedor-b.md', 'desenvolvedor-c.md'], tokens: Math.round((normal.length / 3) * 3) }]);
+  assert.deepEqual(r.candidatas.map((c) => c.linha), [LINHA_A.toLowerCase()]);
+  const so1 = repetidas([pct('desenvolvedor-a.md', escopo)], AGENTE_DE_EXEMPLO);
+  assert.equal(so1.economiaPerdida[0].pacotes, 1, 'a economia perdida vale já com 1 pacote');
+  assert.equal(so1.economiaPerdida[0].tokens, Math.round(normal.length / 3));
+  const cab = repetidas([pct('desenvolvedor-a.md', 'Agente de código inventado para o teste, com uma linha de cabeçalho bem comprida'), pct('desenvolvedor-b.md', 'Agente de código inventado para o teste, com uma linha de cabeçalho bem comprida.')], AGENTE_DE_EXEMPLO);
+  assert.equal(cab.candidatas.length, 1, 'o description do cabeçalho não é corpo');
+});
+
+/** Uma pasta de pacotes e uma raiz só com o agente (sem `pipeline.json`), para o `--repetidas` na linha de comando. */
+function comPacotes(fn) {
+  const raiz = mkdtempSync(join(tmpdir(), 'repetidas-'));
+  const pasta = join(raiz, 'pacotes');
+  try {
+    mkdirSync(join(raiz, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(raiz, '.claude', 'agents', 'desenvolvedor.md'), AGENTE_DE_EXEMPLO);
+    mkdirSync(join(pasta, 'desenvolvedor-sub'), { recursive: true });
+    const grava = (nome, ...linhas) => writeFileSync(join(pasta, nome), `${linhas.join('\n')}\n`);
+    grava('desenvolvedor-a.md', LINHA_A, 'Escopo: só a pasta do pacote, e mais nada além dela.');
+    grava('desenvolvedor-b.md', LINHA_A, 'Escopo: só a pasta do pacote, e mais nada além dela.');
+    // fora da conta: planejamento, outro nome, outra extensão, subpasta e quem só contém o nome no meio
+    grava('planejamento-c.md', LINHA_B);
+    grava('planejamento-d.md', LINHA_B);
+    grava('outro-desenvolvedor-e.md', LINHA_B);
+    grava('desenvolvedor-f.txt', LINHA_B);
+    grava('desenvolvedor.md', LINHA_B);
+    writeFileSync(join(pasta, 'desenvolvedor-sub', 'desenvolvedor-g.md'), `${LINHA_B}\n`);
+    fn(raiz, pasta);
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
+}
+const instantaneo = (pasta) => readdirSync(pasta, { recursive: true }).sort().map((f) => `${f}:${statSync(join(pasta, f)).isFile() ? readFileSync(join(pasta, f)).length : 'dir'}`);
+
+test('--repetidas na linha de comando: só os desenvolvedor-*.md do 1º nível, texto e --json, sem gravar e sem ler o pipeline.json', () => {
+  comPacotes((raiz, pasta) => {
+    const antes = instantaneo(raiz);
+    const texto = spawnSync(process.execPath, [SCRIPT, '--raiz', raiz, '--repetidas', pasta], { encoding: 'utf8' });
+    assert.equal(texto.status, 0, texto.stderr);
+    assert.match(texto.stdout, /Pacotes contados \(2\): desenvolvedor-a\.md, desenvolvedor-b\.md/);
+    assert.match(texto.stdout, new RegExp(`\\[2 pacotes\\] ${LINHA_A.toLowerCase()}`));
+    assert.match(texto.stdout, /Economia perdida .*≈ 34 tokens\)/);
+    assert.match(texto.stdout, /\[2 pacotes, ≈ 34 tokens\] escopo: só a pasta do pacote, e mais nada além dela/);
+    assert.ok(!texto.stdout.includes(LINHA_B.toLowerCase()), 'planejamento e os outros nomes ficam fora');
+    const json = JSON.parse(spawnSync(process.execPath, [SCRIPT, '--raiz', raiz, '--repetidas', pasta, '--json'], { encoding: 'utf8' }).stdout);
+    assert.deepEqual(json.pacotes, ['desenvolvedor-a.md', 'desenvolvedor-b.md']);
+    assert.deepEqual(json.candidatas.map((c) => [c.linha, c.pacotes]), [[LINHA_A.toLowerCase(), 2]]);
+    assert.deepEqual(json.economiaPerdida.map((c) => [c.pacotes, c.tokens]), [[2, 34]]);
+    assert.deepEqual(instantaneo(raiz), antes, 'nunca grava');
+  });
+});
+
+test('--repetidas: pasta que não existe ou sem valor sai com 2, e a pasta sem pacotes imprime zero', () => {
+  comPacotes((raiz, pasta) => {
+    const roda = (...a) => spawnSync(process.execPath, [SCRIPT, '--raiz', raiz, ...a], { encoding: 'utf8' });
+    assert.equal(roda('--repetidas', join(raiz, 'nao-existe')).status, 2);
+    assert.equal(roda('--repetidas').status, 2);
+    assert.equal(roda('--repetidas', '--json').status, 2);
+    const vazia = join(raiz, 'vazia');
+    mkdirSync(vazia);
+    const r = roda('--repetidas', vazia);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Pacotes contados \(0\): nenhum/);
+  });
+});
+
+// ---------- D8.(D): o registro do ajuste do agente ----------
+
+test('um ajuste do desenvolvedor (parte do projeto) em docs/pipeline/ajustes/ não quebra o --relatorio nem entra na conta dos alvos', () => {
+  comProjeto([], (raiz) => {
+    const antes = JSON.parse(cli(raiz, '--relatorio', '--json').stdout);
+    const bloco = { alvo: 'desenvolvedor', tipo: 'parte-do-projeto', de: '0 linhas', para: '3 linhas', data: '2026-11-05', vistas: [] };
+    mkdirSync(join(raiz, 'docs', 'pipeline', 'ajustes'), { recursive: true });
+    writeFileSync(join(raiz, 'docs', 'pipeline', 'ajustes', '2026-11-05-desenvolvedor.md'), `# Ajuste 2026-11-05: desenvolvedor\n\n\`\`\`json\n${JSON.stringify(bloco, null, 2)}\n\`\`\`\n`);
+    const r = cli(raiz, '--relatorio', '--json');
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), antes);
+    assert.equal(cli(raiz, '--relatorio').status, 0);
+    assert.deepEqual(lerAjustes(join(raiz, 'docs', 'pipeline', 'ajustes')).map((a) => [a.alvo, a.tipo]), [['desenvolvedor', 'parte-do-projeto']]);
   });
 });

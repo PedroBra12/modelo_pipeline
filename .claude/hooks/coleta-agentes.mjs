@@ -5,13 +5,28 @@
 //   node .claude/hooks/coleta-agentes.mjs <pasta> [--desde <ISO>] [--json]
 // Por agente: agentId, modelo, tokens (a soma das 4 partes do ÚLTIMO `usage`, o `subagent_tokens` da notificação), minutos
 // (último `timestamp` − primeiro, 1 casa), início, fim, pedidos (as mensagens `user` que não são resultado de ferramenta; mais
-// de uma quer dizer que o agente foi retomado) e a 1ª linha do 1º pedido (100 caracteres). No fim, o total de agentes e de tokens.
+// de uma quer dizer que o agente foi retomado) e a 1ª linha do 1º pedido (100 caracteres). Mais, em campos separados (D8.9):
+// `contexto1` (medido: input + cache_creation + cache_read do 1º `usage`, sem o output; é o prompt de sistema, as ferramentas, o
+// `CLAUDE.md` quando entra e o pedido) e `pacote1` (estimado: os tokens dos arquivos de fora do repositório que o 1º pedido cita
+// por caminho absoluto, com a conta da guarda: tamanho ÷ CARACTERES_POR_TOKEN). No fim, o total de agentes e de tokens.
 import { readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CARACTERES_POR_TOKEN, caminhosCitados, tamanhoDoArquivo } from './guarda-agentes.mjs';
 
 const PARTES = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens'];
+const CONTEXTO = PARTES.filter((p) => p !== 'output_tokens');
 const CORTE = 100;
+
+/** Os tokens estimados dos arquivos de fora do repositório que o pedido cita (a conta da guarda, sem repetir o mesmo arquivo). `lerTamanho` é o `tamanhoDoArquivo`. */
+export function pacoteDoPedido(pedido, lerTamanho = tamanhoDoArquivo) {
+  const vistos = new Map();
+  for (const citado of caminhosCitados(pedido)) {
+    const arquivo = lerTamanho(citado);
+    if (arquivo !== null && arquivo !== undefined && !vistos.has(arquivo.real)) vistos.set(arquivo.real, arquivo.bytes);
+  }
+  return Math.ceil([...vistos.values()].reduce((t, b) => t + b, 0) / CARACTERES_POR_TOKEN);
+}
 
 /** O texto de uma mensagem `user` se ela é um pedido (texto), ou null se é só resultado de ferramenta. */
 function textoDoPedido(mensagem) {
@@ -22,12 +37,13 @@ function textoDoPedido(mensagem) {
   return textos.length === 0 ? null : textos.join('\n');
 }
 
-/** Um agente a partir das linhas JSONL de um `.output`; null se a 1ª linha JSON não tem `agentId` ou se não há `timestamp` (não é transcrição). */
-export function lerAgente(texto) {
+/** Um agente a partir das linhas JSONL de um `.output`; null se a 1ª linha JSON não tem `agentId` ou se não há `timestamp` (não é transcrição). `lerTamanho` mede os arquivos do `pacote1` (injetável nos testes). */
+export function lerAgente(texto, lerTamanho = tamanhoDoArquivo) {
   let agentId;
   let primeira = true;
   let modelo;
   let usage;
+  let usage1;
   let inicio;
   let fim;
   const pedidos = [];
@@ -52,7 +68,10 @@ export function lerAgente(texto) {
     }
     if (j.type === 'assistant') {
       if (typeof j.message?.model === 'string' && j.message.model !== '' && !j.message.model.startsWith('<')) modelo = j.message.model;
-      if (typeof j.message?.usage === 'object' && j.message.usage !== null) usage = j.message.usage;
+      if (typeof j.message?.usage === 'object' && j.message.usage !== null) {
+        usage = j.message.usage;
+        usage1 ??= usage;
+      }
     } else if (j.type === 'user') {
       const pedido = textoDoPedido(j.message);
       if (pedido !== null) pedidos.push(pedido);
@@ -67,18 +86,20 @@ export function lerAgente(texto) {
     inicio: new Date(inicio).toISOString(),
     fim: new Date(fim).toISOString(),
     pedidos: pedidos.length,
+    contexto1: usage1 === undefined ? null : CONTEXTO.reduce((s, p) => s + (Number(usage1[p]) || 0), 0),
+    pacote1: pedidos.length === 0 ? null : pacoteDoPedido(pedidos[0], lerTamanho),
     primeiroPedido: (pedidos[0] ?? '').split(/\r?\n/).find((l) => l.trim() !== '')?.trim().slice(0, CORTE) ?? '',
   };
 }
 
 /** Os agentes da pasta (os `.output` que são JSONL com transcrição), do início mais antigo ao mais novo; `desde` (ISO) filtra pelo início. */
-export function coletar(pasta, { desde } = {}) {
+export function coletar(pasta, { desde, lerTamanho } = {}) {
   const limite = desde === undefined ? undefined : Date.parse(desde);
   if (limite !== undefined && Number.isNaN(limite)) throw new Error(`--desde não é uma data ISO: ${desde}`);
   const agentes = [];
   for (const nome of readdirSync(pasta).sort()) {
     if (!nome.endsWith('.output')) continue;
-    const a = lerAgente(readFileSync(join(pasta, nome), 'utf8'));
+    const a = lerAgente(readFileSync(join(pasta, nome), 'utf8'), lerTamanho);
     if (a === null || (limite !== undefined && Date.parse(a.inicio) < limite)) continue;
     agentes.push(a);
   }
@@ -87,10 +108,12 @@ export function coletar(pasta, { desde } = {}) {
 
 export const total = (agentes) => ({ agentes: agentes.length, tokens: agentes.reduce((s, a) => s + a.tokens, 0) });
 
-/** O texto: duas linhas por agente e o total no fim. */
+const ou = (n) => (n === null ? '?' : n);
+
+/** O texto: duas linhas por agente (o contexto do 1º pedido medido e o pacote estimado, separados) e o total no fim. */
 export function formatar(agentes) {
   const linhas = agentes.flatMap((a) => [
-    `${a.agentId}  ${a.modelo ?? '?'}  ${a.tokens} tokens  ${a.minutos} min  ${a.inicio} .. ${a.fim}  pedidos: ${a.pedidos}${a.pedidos > 1 ? ' (retomado)' : ''}`,
+    `${a.agentId}  ${a.modelo ?? '?'}  ${a.tokens} tokens  ${a.minutos} min  ${a.inicio} .. ${a.fim}  pedidos: ${a.pedidos}${a.pedidos > 1 ? ' (retomado)' : ''}  contexto1: ${ou(a.contexto1)}  pacote1 (est.): ${ou(a.pacote1)}`,
     `  ${a.primeiroPedido}`,
   ]);
   const t = total(agentes);
