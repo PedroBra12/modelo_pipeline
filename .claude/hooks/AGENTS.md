@@ -108,11 +108,28 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 `.claude/hooks/git/` passam. Sem caminho legível (JSON quebrado, `file_path` e `notebook_path` ausentes), nega. Mesma saída da `guarda-git` (`hookSpecificOutput`,
                 `permissionDecision: deny`) e mesmo `PIPELINE_GUARDA_GIT` (`perguntar` vira `ask`, `desligado` sai antes de tudo). Ligado no `.claude/settings.json` com `onFailure: "block"`; testes em
                 `guarda-git-arquivos.test.mjs` e `settings.test.mjs`.
+              - `desenvolvedor.mjs`: não é hook; módulo puro (só `node:*`, não lê arquivo) do agente de código `.claude/agents/desenvolvedor.md` (D8).
+                O arquivo tem três zonas: o cabeçalho e o texto fixo (do modelo), o bloco entre `<!-- regras:inicio -->` e `<!-- regras:fim -->`
+                (gerado) e a parte do projeto entre `<!-- projeto:inicio -->` e `<!-- projeto:fim -->` (vazia no modelo; o orquestrador a preenche
+                só com itens `- `, e a regra 8 do `CLAUDE.md` vai num bloco gerado `dominio:inicio`/`dominio:fim` no topo dela). `CABECALHO` é o
+                cabeçalho exato, comparado byte a byte (campo a mais, repetido, CRLF ou chave entre aspas é problema). `partes(texto)` divide o
+                arquivo (exatamente um par de cada marcador, em ordem, ou `{ erro }` dizendo qual). `extrairRegras(claudeMd)` olha só a seção
+                `## Regras que não se negociam` e acha cada regra pelo título em negrito, sem o `:` do fim (`TITULOS_FIXOS`: `Um \`AGENTS.md\` por pasta de
+                trabalho`, `Dado inventado`, `Local primeiro`, `Segredos`, `Recurso pago`; título fixo ausente ou repetido é erro com o nome); o item
+                sem título de `TITULOS_DO_MODELO` é do domínio. `sincronizar(texto, claudeMd)` regrava o bloco `regras` e, se o `CLAUDE.md` já
+                foi adotado (`adotado`: a 1ª linha deixou de ser `# <...>`), o bloco `dominio`; mantém o resto e o fim de linha, e é idempotente.
+                `vazia` diz se a parte do projeto, sem comentários, não tem nada; `mesmaParteFixa(antes, depois)` diz se tudo fora do conteúdo
+                do projeto é igual byte a byte (a conta da exceção do `escolhe-revisores`, que vem em outra parte da D8). `problemas(texto, fontes)`
+                é o que a guarda chama: o cabeçalho, os marcadores, os tetos (tamanho em bytes ÷ `CARACTERES_POR_TOKEN` = 3, o mesmo da guarda:
+                corpo 1.500, parte fixa 900 e parte do projeto 600 tokens), o formato da parte do projeto fora do bloco `dominio` (só linhas
+                vazias ou itens `- ` de até 240 caracteres, sem título, cerca de código, comentário nem marcador) e a fonte (o item que termina em
+                `[CLAUDE.md]` ou `[docs/arquitetura.md]` tem de ser igual a uma linha dela). Não compara o bloco `regras` nem o `dominio` com o
+                `CLAUDE.md`: isso é do teste, para a guarda não barrar o agente no meio da sessão. Testes em `desenvolvedor.test.mjs`.
               - `guarda-agentes.mjs`: PreToolUse na ferramenta `Agent`. A função pura `decidirAgente(entrada,
-                lerCabecalho, agentes)` devolve `deny`, `ask` ou `null`; `lerCabecalho(tipo)` dá o `name`, o `model`, o
+                lerCabecalho, agentes, lerTamanho, lerTexto, esforco, lerFontes)` devolve `deny`, `ask` ou `null`; `lerCabecalho(tipo)` dá o `name`, o `model`, o
                 `effort` e o `tools` do frontmatter de `.claude/agents/<tipo>.md` (nada se o arquivo não existe) e um
                 `problema` quando o cabeçalho repete `name`, `model`, `effort` ou `tools` ou quando a pasta
-                `.claude/agents`, com as subpastas, tem um `.md` fora de `TETO` e do `orquestrador`, ou um 2º arquivo
+                `.claude/agents`, com as subpastas, tem um `.md` fora de `TETO`, do `orquestrador` e do `desenvolvedor`, ou um 2º arquivo
                 com o mesmo `name:` do fixo. `agentes` é a seção `agentes` do `.claude/pipeline.json` (padrão: o
                 `TETO`, nos testes).
                 - `TETO`, no código, diz o modelo, o esforço máximo e as ferramentas exatas de cada agente fixo (D2;
@@ -130,6 +147,16 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 - Teto de 50 mil tokens (D5) em todo subagente, fixo ou comum: `decidirTeto` soma o tamanho do `prompt` ao dos arquivos fora do repositório que o `prompt` cita por caminho absoluto (o pacote da D4), cada um uma vez só pelo `realpath`, e nega acima de `TETO_TOKENS` (50000, estimados como tamanho ÷ 3).
                 - O esforço do pipeline (D7): `lerEsforcoDoEstado` lê `PIPELINE_ESFORCO` ou `.claude/estado/esforco` (`rapido`, `medio` ou `alto`; sem arquivo ou vazio = `undefined`), e `decidirEsforcoPipeline(entrada, esforco)` nega fechado qualquer outro valor. No `rapido`, nega todos os revisores fixos (`revisor-seguranca`, `revisor-arquitetura`, `revisor-lgpd`, `revisor-tela`), o `qa` e o subagente cujo `prompt` ou `description` cita `ponytail-review`; deixa passar o `leitor-docs` e os agentes de código. No `medio`, nega `revisor-arquitetura` e `revisor-lgpd` e deixa passar os demais. No `alto` (ou `undefined`), não barra nenhum.
                 - O worktree nasce da `main` (D6): `decidirWorktree` nega o subagente com `isolation: "worktree"` quando nem o `prompt` nem um arquivo de pacote traz `git switch -c` ou `git checkout -b`.
+                - **O agente de código é o `desenvolvedor` (D8).** Com `isolation: "worktree"` só ele passa: o `general-purpose`, o tipo ausente, um fixo ou
+                  qualquer outro tipo nega com "só passa o `desenvolvedor` (D8)", e o `general-purpose` sem worktree passa como antes. Ele não entra no `TETO`
+                  (o esforço varia por chamada) nem no `pipeline.json`: a `decidirDesenvolvedor` passa só se o `subagent_type` é exatamente `desenvolvedor`
+                  (sem mudar a caixa), a pasta não tem `problema` (o `desenvolvedor.md` está na lista de arquivos permitidos), a chamada traz `isolation:
+                  "worktree"`, traz `effort` (obrigatório, de `low` a `high`; sem ele nega, sem cair no `medium` do cabeçalho), o `model` está ausente ou é `sonnet`
+                  (outro nega, sem `ask`), `problemas(agente, fontes)` do `desenvolvedor.mjs` vem vazio e não ocorre de o projeto já ter adotado o `CLAUDE.md`
+                  (a 1ª linha não é `# <...>`) com a parte do projeto vazia (nega com "preencha a parte do projeto"). `lerFontesDoDesenvolvedor` lê o agente, o
+                  `CLAUDE.md` e o `docs/arquitetura.md` (injetável, 7º argumento do `decidirAgente`); arquivo que não lê nega. O `desenvolvedor.mjs` é importado
+                  dentro de um `try`, como o `config.mjs`: se quebra, todo pedido de `Agent` nega ("desenvolvedor.mjs ilegível"). Depois valem, como para todos,
+                  o esforço do pipeline (D7: o `desenvolvedor` passa em todos), o teto de 50 mil tokens (D5) e o `git switch -c` (D6).
                 - O `orquestrador` (`SO_NO_CHAT`) só roda como agente do chat principal (`claude --agent orquestrador`):
                   como subagente nega, em qualquer modelo e esforço.
                 - Nos demais tipos o cabeçalho não vale: a chamada tem de trazer `model` e `effort`. Nega: `fork`
@@ -248,8 +275,11 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 `PISO_GATILHOS` ou a regra `grande` (branch que saiu antes da regra), a mensagem acrescenta "branch anterior à regra: traga a
                 main (git merge main)".
               - `coleta-agentes.mjs <pasta> [--desde <ISO>] [--json]`: não é hook; só lê, sem rede (D6). A autoanálise tira daqui os números dos subagentes (`agentId`, `modelo`, `tokens`, `minutos`, `inicio`, `fim`, `pedidos` e `primeiroPedido`) das transcrições `tasks/*.output` da sessão; testes em `coleta-agentes.test.mjs`.
-              - `ajusta-pipeline.mjs [--relatorio] [--aplicar-menos] [--aplicar-mais <alvo>] [--sincronizar-tabela] [--data
-                AAAA-MM-DD] [--json] [--raiz <pasta>]`: não é hook; é a conta da skill `adjust-pipeline` (D2). Lê as
+              - `ajusta-pipeline.mjs [--relatorio] [--aplicar-menos] [--aplicar-mais <alvo>] [--sincronizar-tabela] [--sincronizar-desenvolvedor] [--data
+                AAAA-MM-DD] [--json] [--raiz <pasta>]`: não é hook; é a conta da skill `adjust-pipeline` (D2). O `--sincronizar-desenvolvedor` (D8), no molde do
+                `--sincronizar-tabela`, roda o `sincronizar` do `desenvolvedor.mjs` sobre `.claude/agents/desenvolvedor.md` com o `CLAUDE.md` da raiz, grava só
+                se mudou, imprime o que mudou (`bloco regras`, `bloco dominio`) e, se a extração falha (título de regra ausente ou repetido, marcador quebrado),
+                sai com 2 e a frase do erro. Lê as
                 sessões de `docs/pipeline/sessoes/` (o bloco json de cada `AAAA-MM-DD-*.md`, validado: nomes que existem
                 no `pipeline.json`, sem dado pessoal pelas regras do `confere-lgpd`, texto de até 600 caracteres) e os
                 ajustes de `docs/pipeline/ajustes/`. Cada sessão leva `sessao.orquestrador` (obrigatório: `model` texto e
@@ -284,7 +314,9 @@ Não faz:      a regra do pipeline (está na skill `.claude/skills/pipeline`); a
               revisor-lgpd); os hooks globais do usuário não são daqui.
 Depende de:   Node 24 e git, sem pacote nenhum; o `.claude/pipeline.json`; os cabeçalhos de `.claude/agents/` e o fim
               do registro da sessão que o hook aponta em `transcript_path`, só para ler (`guarda-agentes.mjs`); `docs/pipeline/` e a tabela da seção 7 de `.claude/skills/pipeline/SKILL.md`
-              (`ajusta-pipeline.mjs`).
+              (`ajusta-pipeline.mjs`); o `CLAUDE.md`, o `docs/arquitetura.md` e `.claude/agents/desenvolvedor.md` (`guarda-agentes.mjs`, que os lê a cada chamada do
+              `desenvolvedor`, e `ajusta-pipeline.mjs --sincronizar-desenvolvedor`, que regrava o agente a partir do `CLAUDE.md`).
+              Claude Code 2.1.292 ou mais novo (o `effort` na chamada de `Agent`, que a guarda exige do `desenvolvedor`) e 2.1.271 ou mais novo (o `omitClaudeMd` do cabeçalho dele, D8).
 Regras daqui: hook de guarda erra para o lado de bloquear; hook de anotação nunca bloqueia; nada de rede.
               O `.claude/pipeline.json` é a única configuração: nenhum repositório, pasta ou script fixo no código.
               O confere-lgpd nunca repete o trecho achado (pode ser dado pessoal), o arquivo de regras fica fora da
@@ -298,9 +330,16 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 (`teste-apoio.mjs`), então não mudam quando o do projeto muda.
               - O `portao.test.mjs` usa um `package.json` e um `pipeline.json` falsos numa pasta temporária, e confere o
                 que o `marca-alterado.mjs` anota (código do produto pela lista única, `.jsx`, `.css` e `.py` inclusive; nunca `.claude/` nem `docs/`).
+              - O `desenvolvedor.test.mjs` confere o `desenvolvedor.mjs` com textos inventados (`partes` com 0 ou 2 pares, ordem trocada e CRLF; o cabeçalho com campo a
+                mais, repetido, `tools` errado e chave entre aspas; os tetos; a extração com título ausente, repetido e o item do domínio; `sincronizar`
+                idempotente; `mesmaParteFixa`; o lint de formato e de fonte) e o arquivo de verdade: o `.claude/agents/desenvolvedor.md` sem problema,
+                com os blocos iguais ao que o `CLAUDE.md` dá (se falha, rode `--sincronizar-desenvolvedor`), a parte do projeto vazia enquanto o `CLAUDE.md`
+                for o do modelo, o bloco `dominio` igual à extração num `CLAUDE.md` adotado (fonte falsa) e o `CARACTERES_POR_TOKEN` igual ao da guarda.
               - O `guarda-agentes.test.mjs` usa um `lerCabecalho` falso e também lê os cabeçalhos de verdade de
                 `.claude/agents/` (com as subpastas): todo arquivo está em `TETO` ou é o `orquestrador`
-                (o `orquestracao` de `niveis`), senão o teste falha; o cabeçalho tem de ser o do `pipeline.json`; o `name:` é o nome do arquivo e o `tools:` dos fixos é o da
+                (o `orquestracao` de `niveis`) ou o `desenvolvedor` (cabeçalho exato do `desenvolvedor.mjs`), senão o teste falha; o `desenvolvedor` (D8) tem casos
+                próprios (esforço na chamada, modelo, caixa, sem worktree, problema no corpo, os quatro estados adotado/vazio, arquivo que não lê, 2º arquivo com o
+                mesmo `name:`, o `general-purpose` com worktree e o hook de ponta a ponta com o `desenvolvedor.mjs` quebrado), e os da regra do `git switch -c` rodam com ele; o cabeçalho tem de ser o do `pipeline.json`; o `name:` é o nome do arquivo e o `tools:` dos fixos é o da
                 tabela; copia a pasta e o hook para uma pasta temporária para provar o arquivo estranho, o campo
                 repetido e a falha fechada. Os casos do chat principal (D3) usam registros JSONL inventados numa pasta
                 temporária: o parser puro, a janela do fim de um arquivo de mais de 4 MB (a única linha do chat no começo,
@@ -330,7 +369,7 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 ajuste num projeto temporário (e confere que nenhum par antigo sobra nos documentos) e confere em
                 sincronia com os arquivos de verdade: a tabela da seção 7 da skill, os cabeçalhos de `.claude/agents/`,
                 `docs/pipeline/sessoes/MODELO.md` e as sessões gravadas; cobre também o `orquestrador` obrigatório, o `consulta`
-                e a sessão fora da conta.
+                e a sessão fora da conta; o `--sincronizar-desenvolvedor` (em dia, bloco `regras` regravado, adoção que cria o bloco `dominio` e erro de extração com saída 2).
               - O `ciclo-completo.test.mjs` copia só o que os quatro testes que leem o `pipeline.json` de verdade usam
                 (`config`, `guarda-agentes`, `ajusta-pipeline` e `settings`), baixa todos os alvos ao piso (cabeçalhos e
                 tabela sincronizados) e roda esses quatro lá (~9 s): um teste que crava um par quebraria no 1º ajuste

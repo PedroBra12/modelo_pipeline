@@ -756,3 +756,38 @@ test('o arquivo de sessão: depois da data o nome é kebab de até 60 caracteres
     rmSync(pasta, { recursive: true, force: true });
   }
 });
+
+// ---------- --sincronizar-desenvolvedor (D8) ----------
+
+test('--sincronizar-desenvolvedor: em dia não grava; CLAUDE.md mudado regrava o bloco de regras e diz o que mudou; adotado cria o bloco do domínio; erro de extração falha com o título', () => {
+  comProjeto([], (raiz) => {
+    const agente = join(raiz, '.claude', 'agents', 'desenvolvedor.md');
+    const claude = join(raiz, 'CLAUDE.md');
+    const inicial = readFileSync(agente, 'utf8');
+    const emDia = cli(raiz, '--sincronizar-desenvolvedor');
+    assert.equal(emDia.status, 0, emDia.stderr);
+    assert.match(emDia.stdout, /já estava em dia/);
+    assert.equal(readFileSync(agente, 'utf8'), inicial, 'não gravou');
+
+    writeFileSync(claude, readFileSync(claude, 'utf8').replace('O `.env` local fica fora do git.', 'O `.env` local fica fora do git, sempre.'));
+    const mudou = cli(raiz, '--sincronizar-desenvolvedor');
+    assert.equal(mudou.status, 0, mudou.stderr);
+    assert.match(mudou.stdout, /bloco regras/);
+    assert.doesNotMatch(mudou.stdout, /bloco dominio/);
+    const depois = readFileSync(agente, 'utf8');
+    assert.match(depois, /fora do git, sempre\./);
+    assert.equal(depois.replace('fora do git, sempre.', 'fora do git.'), inicial, 'só o bloco de regras mudou');
+    assert.match(cli(raiz, '--sincronizar-desenvolvedor').stdout, /já estava em dia/, 'idempotente');
+
+    writeFileSync(claude, readFileSync(claude, 'utf8').replace('# <Nome do projeto>', '# Projeto Ficticio').replace(/^8\. <.*>$/m, '8. **Isolamento** entre donos de dado: nunca cruzar.'));
+    const adotou = cli(raiz, '--sincronizar-desenvolvedor');
+    assert.equal(adotou.status, 0, adotou.stderr);
+    assert.match(adotou.stdout, /bloco dominio/);
+    assert.match(readFileSync(agente, 'utf8'), /<!-- dominio:inicio -->\n8\. \*\*Isolamento\*\* entre donos de dado: nunca cruzar\.\n<!-- dominio:fim -->/);
+
+    writeFileSync(claude, readFileSync(claude, 'utf8').replace('6. **Segredos**', '6. Segredos'));
+    const falhou = cli(raiz, '--sincronizar-desenvolvedor');
+    assert.equal(falhou.status, 2);
+    assert.match(falhou.stderr, /Segredos/);
+  });
+});

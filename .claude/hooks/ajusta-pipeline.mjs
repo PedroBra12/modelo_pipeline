@@ -5,6 +5,7 @@
 //   node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos [--data AAAA-MM-DD] [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --aplicar-mais <alvo> [--data AAAA-MM-DD] [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela [--raiz <pasta>]
+//   node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor [--raiz <pasta>]
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -12,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { ESCADA, FIXOS, PISOS, SUPRESSAO, lerAgentes, lerAjuste, lerNiveis, localizar, par } from './config.mjs';
 import { varrer } from './confere-lgpd.mjs';
 import { TETO } from './guarda-agentes.mjs';
+import { partes, sincronizar } from './desenvolvedor.mjs';
 
 const RAIZ_PADRAO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GRAVES = new Set(['critico', 'alto', 'must']);
@@ -404,10 +406,24 @@ export function sincronizarTabela(raiz) {
   writeFileSync(c.skill, comTabela(readFileSync(c.skill, 'utf8'), lerConfig(c.config)));
 }
 
+/**
+ * Regrava os blocos gerados do `.claude/agents/desenvolvedor.md` (as regras fixas e, no projeto adotado, as do domínio)
+ * a partir do CLAUDE.md da raiz (D8). Só grava se mudou; devolve o que mudou (`[]` = em dia). Erro de extração sobe.
+ */
+export function sincronizarDesenvolvedor(raiz) {
+  const arquivo = join(caminhos(raiz).agentes, 'desenvolvedor.md');
+  const antes = readFileSync(arquivo, 'utf8');
+  const depois = sincronizar(antes, readFileSync(join(raiz, 'CLAUDE.md'), 'utf8'));
+  if (depois === antes) return [];
+  writeFileSync(arquivo, depois);
+  const [a, d] = [partes(antes), partes(depois)];
+  return [a.regras !== d.regras && 'bloco regras', a.projeto !== d.projeto && 'bloco dominio'].filter(Boolean);
+}
+
 // ---------- linha de comando ----------
 
 const COM_VALOR = new Set(['--raiz', '--data', '--aplicar-mais']);
-const SEM_VALOR = new Set(['--relatorio', '--json', '--aplicar-menos', '--sincronizar-tabela']);
+const SEM_VALOR = new Set(['--relatorio', '--json', '--aplicar-menos', '--sincronizar-tabela', '--sincronizar-desenvolvedor']);
 
 function opcoes(argv) {
   const o = {};
@@ -431,6 +447,11 @@ function principal(argv) {
   if (o['--sincronizar-tabela']) {
     sincronizarTabela(raiz);
     console.log('tabela da seção 7 da skill pipeline sincronizada com o pipeline.json');
+    return;
+  }
+  if (o['--sincronizar-desenvolvedor']) {
+    const mudou = sincronizarDesenvolvedor(raiz);
+    console.log(mudou.length === 0 ? 'desenvolvedor.md já estava em dia com o CLAUDE.md' : `desenvolvedor.md regravado: ${mudou.join(', ')}`);
     return;
   }
   const data = o['--data'] ?? new Date().toLocaleDateString('sv-SE');

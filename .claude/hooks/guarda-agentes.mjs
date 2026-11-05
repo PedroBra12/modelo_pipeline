@@ -12,6 +12,9 @@
 // pedido ou o pacote tem de dizer o 1º passo, git switch -c (ou git checkout -b), senão nega (D63). O esforço do
 // pipeline em .claude/estado/esforco (D64: rapido, medio ou alto) barra na guarda os agentes que aquele esforço não
 // roda: rapido nega todos os revisores e o qa; medio nega revisor-arquitetura e revisor-lgpd; valor inválido nega.
+// O agente de código é o desenvolvedor (D8): com isolation worktree só ele passa, e só com isolation worktree, effort da
+// chamada de low a high, model ausente ou sonnet, o agente sem problema no desenvolvedor.mjs (cabeçalho exato,
+// marcadores, tetos, lint) e, no projeto já adotado, com a parte do projeto preenchida; arquivo que não lê nega.
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +26,14 @@ try {
   config = await import('./config.mjs');
 } catch (erro) {
   falhaDoConfig = erro;
+}
+// idem para o desenvolvedor.mjs: sem ele a guarda não confere o agente de código, então tudo nega
+let desenvolvedor = null;
+let falhaDoDesenvolvedor = null;
+try {
+  desenvolvedor = await import('./desenvolvedor.mjs');
+} catch (erro) {
+  falhaDoDesenvolvedor = erro;
 }
 
 const AGENTES = join(resolve(dirname(fileURLToPath(import.meta.url)), '..'), 'agents');
@@ -43,6 +54,8 @@ export const TETO = {
 };
 /** Roda só como agente do chat principal (`claude --agent orquestrador`), nunca como subagente. */
 export const SO_NO_CHAT = 'orquestrador';
+/** O agente de código (D8): o único que roda com isolation worktree, e o único com o esforço na chamada. */
+export const CODIGO = 'desenvolvedor';
 
 const tiraAspas = (v) => v?.replace(/^(["'])(.*)\1$/, '$2');
 const cabecalhoDe = (arquivo) => /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(arquivo, 'utf8'))?.[1] ?? '';
@@ -52,7 +65,7 @@ const conjunto = (tools) => (tools === undefined ? undefined : tools.split(',').
 
 /** O que há de errado na pasta de agentes para liberar o fixo `tipo`: arquivo `.md` fora da lista (em qualquer subpasta) ou 2º arquivo com o mesmo `name:`. */
 function problemaDaPasta(tipo, pasta) {
-  const permitidos = new Set([...Object.keys(TETO), SO_NO_CHAT].map((k) => `${k}.md`));
+  const permitidos = new Set([...Object.keys(TETO), SO_NO_CHAT, CODIGO].map((k) => `${k}.md`));
   for (const rel of readdirSync(pasta, { recursive: true })) {
     const nome = String(rel);
     if (!nome.toLowerCase().endsWith('.md') || statSync(join(pasta, nome)).isDirectory()) continue;
@@ -103,6 +116,40 @@ function decidirFixo(tipo, bruto, entrada, cabecalho, vigente) {
   const teto = TETO[tipo];
   if (conjunto(vigente.tools) !== conjunto(teto.tools)) return nega(`${tipo}: as ferramentas do pipeline.json (${vigente.tools}) não são as do teto da guarda (${teto.tools})`);
   if (acimaDoTeto(vigente, teto)) return { decisao: 'ask', motivo: `${tipo}: o pipeline.json pede ${vigente.model} ${vigente.effort}, acima do teto da guarda (${teto.model} ${teto.effort}); confirme` };
+  return passa;
+}
+
+// ---------- o desenvolvedor (D8) ----------
+
+/** O agente, o CLAUDE.md e o docs/arquitetura.md do projeto, para a `problemas` do desenvolvedor.mjs. Erro de leitura sobe. */
+export function lerFontesDoDesenvolvedor(raiz = RAIZ_DO_PROJETO) {
+  const ler = (...rel) => readFileSync(join(...rel), 'utf8');
+  return { agente: ler(AGENTES, `${CODIGO}.md`), fontes: { 'CLAUDE.md': ler(raiz, 'CLAUDE.md'), 'docs/arquitetura.md': ler(raiz, 'docs', 'arquitetura.md') } };
+}
+
+/** A chamada do `desenvolvedor`: tudo o que a D8 manda conferir, nesta ordem. `lerFontes` é o `lerFontesDoDesenvolvedor`. */
+function decidirDesenvolvedor(bruto, entrada, cabecalho, lerFontes) {
+  if (desenvolvedor === null) return nega(`${CODIGO}: desenvolvedor.mjs ilegível: ${falhaDoDesenvolvedor instanceof Error ? falhaDoDesenvolvedor.message : falhaDoDesenvolvedor}`);
+  if (bruto !== CODIGO || cabecalho?.name !== CODIGO) {
+    return nega(`${CODIGO}: o subagent_type tem de ser igual ao name do cabeçalho de .claude/agents/${CODIGO}.md, sem mudar a caixa`);
+  }
+  if (cabecalho.problema !== undefined) return nega(`${CODIGO}: ${cabecalho.problema}`);
+  if (entrada?.isolation !== 'worktree') return nega(`${CODIGO} só roda com isolation: "worktree" (D8)`);
+  const effort = texto(entrada?.effort);
+  if (effort === undefined || !ESFORCOS.has(effort)) return nega(`${CODIGO}: passe effort low, medium ou high na chamada (o do cabeçalho não vale; xhigh e max não, D8)`);
+  const model = texto(entrada?.model);
+  if (model !== undefined && model !== 'sonnet') return nega(`${CODIGO} roda só em sonnet: tire o model "${model}" da chamada (D8)`);
+  let lidos;
+  try {
+    lidos = lerFontes();
+  } catch (e) {
+    return nega(`${CODIGO}: não deu para ler o agente, o CLAUDE.md ou o docs/arquitetura.md (${e instanceof Error ? e.message : e})`);
+  }
+  const achados = desenvolvedor.problemas(lidos.agente, lidos.fontes);
+  if (achados.length > 0) return nega(`${CODIGO}: ${achados.join('; ')}`);
+  if (desenvolvedor.adotado(lidos.fontes['CLAUDE.md']) && desenvolvedor.vazia(lidos.agente)) {
+    return nega(`${CODIGO}: preencha a parte do projeto (skill \`pipeline\`, seção 2; \`node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor\`)`);
+  }
   return passa;
 }
 
@@ -245,20 +292,22 @@ export function decidirEsforcoPipeline(entrada, esforco) {
  * ou nada. `lerTamanho` mede um arquivo citado no pedido (ver `tamanhoDoArquivo`) e `lerTexto` o lê (a regra do worktree).
  * O esforço do pipeline (D64), o teto de tokens e a regra do worktree valem para todo subagente que passou nas outras regras, e o deny deles vence o ask.
  */
-export function decidirAgente(entrada, lerCabecalho, agentes = TETO, lerTamanho = tamanhoDoArquivo, lerTexto = textoDoArquivo, esforco = undefined) {
-  const doTipo = decidirTipo(entrada, lerCabecalho, agentes);
+export function decidirAgente(entrada, lerCabecalho, agentes = TETO, lerTamanho = tamanhoDoArquivo, lerTexto = textoDoArquivo, esforco = undefined, lerFontes = lerFontesDoDesenvolvedor) {
+  const doTipo = decidirTipo(entrada, lerCabecalho, agentes, lerFontes);
   return doTipo.decisao === 'deny'
     ? doTipo
     : juntarDecisoes(doTipo, decidirEsforcoPipeline(entrada, esforco), decidirTeto(entrada, lerTamanho), decidirWorktree(entrada, lerTamanho, lerTexto));
 }
 
-function decidirTipo(entrada, lerCabecalho, agentes) {
+function decidirTipo(entrada, lerCabecalho, agentes, lerFontes) {
   const bruto = entrada?.subagent_type;
   const tipo = texto(bruto);
   if (tipo === 'fork') return nega('fork herda o modelo do chat principal; use um subagente com model');
   if (tipo === SO_NO_CHAT) {
     return nega(`${SO_NO_CHAT} roda só como agente do chat principal (claude --agent ${SO_NO_CHAT}), nunca como subagente: um subagente não abre outro e este seria um opus xhigh com todas as ferramentas, sem confirmação`);
   }
+  if (entrada?.isolation === 'worktree' && tipo !== CODIGO) return nega('com isolation: "worktree" só passa o `desenvolvedor` (D8); chame-o, com effort, e não o general-purpose, o tipo ausente nem outro');
+  if (tipo === CODIGO) return decidirDesenvolvedor(bruto, entrada, lerCabecalho(CODIGO), lerFontes);
   if (tipo !== undefined && Object.hasOwn(TETO, tipo)) return decidirFixo(tipo, bruto, entrada, lerCabecalho(tipo), agentes[tipo]);
   const model = texto(entrada?.model);
   const effort = texto(entrada?.effort);
@@ -399,6 +448,7 @@ async function principal() {
     dados = undefined;
   }
   if (typeof dados !== 'object' || dados === null) return saida('deny', 'entrada ilegível');
+  if (falhaDoDesenvolvedor !== null) return saida('deny', `desenvolvedor.mjs ilegível: ${falhaDoDesenvolvedor instanceof Error ? falhaDoDesenvolvedor.message : falhaDoDesenvolvedor}`);
   if (falhaDoConfig !== null) return saida('deny', `config.mjs ilegível: ${falhaDoConfig instanceof Error ? falhaDoConfig.message : falhaDoConfig}`);
   const doChamador = decidirChamador(completo);
   if (doChamador !== null) return saida(doChamador.decisao, doChamador.motivo);
