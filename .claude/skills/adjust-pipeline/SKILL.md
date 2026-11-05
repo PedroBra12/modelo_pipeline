@@ -72,9 +72,9 @@ node .claude/hooks/ajusta-pipeline.mjs --repetidas <scratchpad>
   - com a parte cheia (600 tokens), uma linha só entra se outra sair;
   - a economia perdida não vira linha: ela corrige o próximo pacote.
 - Com o "sim":
+  - grave primeiro `docs/pipeline/ajustes/<AAAA-MM-DD>-desenvolvedor.md` com o bloco JSON `{ "alvo": "desenvolvedor", "tipo": "parte-do-projeto", "de": "<n> linhas", "para": "<n> linhas", "data": "<AAAA-MM-DD>", "vistas": [] }` e as listas `- entra: <texto>` e `- sai: <texto>`. O `<texto>` é o do item, sem o `- ` e sem a marca. A guarda confere que cada item `[ajuste AAAA-MM-DD]` da parte do projeto tem o seu `- entra:` com o mesmo texto no registro daquela data;
   - edite só entre os marcadores do projeto; a parte fixa e o cabeçalho são do modelo e mudam por `D<n>`;
-  - rode `node --test ".claude/hooks/*.test.mjs"`;
-  - grave `docs/pipeline/ajustes/<AAAA-MM-DD>-desenvolvedor.md` com o bloco JSON `{ "alvo": "desenvolvedor", "tipo": "parte-do-projeto", "de": "<n> linhas", "para": "<n> linhas", "data": "<AAAA-MM-DD>", "vistas": [] }` e as listas `- entra: <texto>` e `- sai: <texto>`. A guarda confere que cada item `[ajuste AAAA-MM-DD]` da parte do projeto tem o seu `- entra:` com o mesmo texto no registro daquela data.
+  - rode `node --test ".claude/hooks/*.test.mjs"`.
 - Mudou o `CLAUDE.md` ou o `docs/arquitetura.md`? Rode `--sincronizar-desenvolvedor`. O pre-commit roda os testes do pipeline e recusa a cópia velha.
 
 **Pronto quando:** o relatório da sessão traz a saída do `--relatorio`, as propostas esperando o "sim" e os ajustes aplicados, e `node --test ".claude/hooks/*.test.mjs"` está verde.
