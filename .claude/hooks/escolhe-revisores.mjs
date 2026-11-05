@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PISO_GATILHOS, ehArquivoDeCodigo, lerAgentes, lerNiveis, lerPastas, localizar, par, revisaoDeObjeto } from './config.mjs';
 import { regrasCarregaram, varrer } from './confere-lgpd.mjs';
+import { mesmaParteFixa } from './desenvolvedor.mjs';
 
 export const ESFORCOS_PIPELINE = new Set(['rapido', 'medio', 'alto']);
 export const ESFORCO_PADRAO = 'medio';
@@ -23,6 +24,7 @@ const REFERENCIA = /^[A-Za-z0-9_][A-Za-z0-9_./~^@{}:-]*$/; // nunca começa com 
 const SEM_DOIS_PONTOS = /\.\./; // "a..b" ou "a...b" num argumento só mudaria o alcance de `${base}...${head}` (duas pontas viram diff direto, sem merge-base)
 const MAX_MOTIVOS = 3;
 const ARQUIVO_NO_GIT = '.claude/pipeline.json';
+const ARQUIVO_DESENVOLVEDOR = '.claude/agents/desenvolvedor.md';
 const FLAGS_DIFF = ['-c', 'core.quotepath=false', 'diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/'];
 const FLAGS_RENOMES = ['-c', 'core.quotepath=false', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--name-status', '-z', '-M', '--diff-filter=R'];
 
@@ -137,7 +139,31 @@ export function lerDiff({ base, head, trabalho = false, cwd = process.cwd() }) {
   }
   const nomes = git([...FLAGS_DIFF, '--name-only', '-z', ...alvo, '--'], cwd).split('\0').filter(Boolean);
   const arquivos = juntarRenomes(interpretarDiff(git([...FLAGS_DIFF, ...alvo, '--'], cwd), nomes), git([...FLAGS_RENOMES, ...alvo, '--'], cwd));
+  anexarTextosDoDesenvolvedor(arquivos, { base, head, trabalho, cwd });
   return trabalho ? [...arquivos, ...naoRastreados(cwd)] : arquivos;
+}
+
+/**
+ * Só no `.claude/agents/desenvolvedor.md` modificado e sem renome: o texto antes (o merge-base, ou o HEAD no `trabalho`) e o depois
+ * (o head, ou o disco no `trabalho`), para o `soParteDoProjeto`. O que não se lê fica sem o campo, e o gatilho dispara (D8.8).
+ */
+function anexarTextosDoDesenvolvedor(arquivos, { base, head, trabalho, cwd }) {
+  const a = arquivos.find((x) => x.caminho === ARQUIVO_DESENVOLVEDOR && x.status === 'M' && !x.binario && x.renomeadoDe === undefined && x.renomeadoPara === undefined);
+  if (a === undefined) return;
+  const lerGit = (ref) => {
+    try {
+      return git(['show', `${ref}:${ARQUIVO_DESENVOLVEDOR}`], cwd);
+    } catch {
+      return undefined;
+    }
+  };
+  try {
+    a.textoAntes = trabalho ? lerGit('HEAD') : lerGit(git(['merge-base', base, head], cwd).trim());
+    a.textoDepois = trabalho ? readFileSync(join(cwd, ARQUIVO_DESENVOLVEDOR), 'utf8') : lerGit(head);
+  } catch {
+    delete a.textoAntes;
+    delete a.textoDepois;
+  }
 }
 
 // ---------- a configuração: a união da base com o head ----------
@@ -223,6 +249,15 @@ export function carregarRevisao({ base, head, trabalho = false, cwd = process.cw
 /** `.sql` só com comentário mudado: ao menos 1 linha mudada, todas vazias ou começando por `--`. Perde só o caminho: não aciona gatilho por caminho, não conta como código nem para o `grande`; o conteúdo dele os gatilhos de conteúdo ainda leem. */
 const soComentarioSql = (a) => /\.sql$/i.test(a.caminho) && !a.binario && a.linhas.length + a.removidas.length > 0
   && [...a.linhas, ...a.removidas].every(({ texto }) => { const t = texto.trim(); return t === '' || t.startsWith('--'); });
+
+/**
+ * D8.8: só a parte do projeto do `.claude/agents/desenvolvedor.md` mudou (o resto, byte a byte, igual). Só nega o disparo por caminho
+ * do `config_pipeline`: o orquestrador a preenche, e o que ela diz não muda regra. Texto que falta ou não lê dá falso.
+ */
+export const soParteDoProjeto = (a) => a.caminho === ARQUIVO_DESENVOLVEDOR && a.status === 'M' && !a.binario
+  && a.renomeadoDe === undefined && a.renomeadoPara === undefined
+  && typeof a.textoAntes === 'string' && typeof a.textoDepois === 'string'
+  && a.textoAntes !== a.textoDepois && mesmaParteFixa(a.textoAntes, a.textoDepois);
 
 // Código: a extensão está na lista única do config.mjs, em qualquer lugar do repositório. As pastasDeTrabalho só valem para o binário.
 const ehCodigo = (caminho) => ehArquivoDeCodigo(caminho);
@@ -346,7 +381,7 @@ function motivosDoGatilho(g, arquivos, ignorar, pastas) {
   const motivos = [];
   for (const a of arquivos) {
     const soComentario = soComentarioSql(a);
-    if (!soComentario && g.caminhos.some((re) => re.test(a.caminho)) && (COBRE_DOCUMENTACAO.has(g.nome) || !ehDocumentacao(a.caminho))) {
+    if (!soComentario && !(g.nome === 'config_pipeline' && soParteDoProjeto(a)) && g.caminhos.some((re) => re.test(a.caminho)) && (COBRE_DOCUMENTACAO.has(g.nome) || !ehDocumentacao(a.caminho))) {
       if (!g.layout) motivos.push({ gatilho: g.nome, arquivo: a.caminho, por: 'caminho' });
       else {
         const l = motivoDeLayout(a);

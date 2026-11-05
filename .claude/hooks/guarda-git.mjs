@@ -11,6 +11,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURE, lerRepositorio, urlDoRepositorio } from './config.mjs';
+import { ehSubagente } from './guarda-pasta-agentes.mjs';
 
 const PROJETO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const PROGRAMAS = new Set(['git', 'gh', 'glab', 'npm']);
@@ -46,6 +47,17 @@ const NOME_DE_AMBIENTE = /\b(?:GIT_CONFIG\w*|NODE_OPTIONS)\b/i;
 const NOME_DE_ARQUIVO = /\.git[\\/](?:config|hooks)\b|config\.worktree/i;
 const NOME_DO_HOOKSPATH = /hookspath/i;
 const menciona = (texto) => NOME_DE_AMBIENTE.test(texto) || NOME_DE_ARQUIVO.test(texto) || NOME_DO_HOOKSPATH.test(texto);
+// D8.7: com agent_id (o subagente), a pasta de agentes entra na mesma regra invertida: toda menção fora de um segmento que só lê nega.
+// `.claude/agents` sem diferença de caixa, com `./`, `//` ou `\` no meio; e, com `.claude` em outro ponto do comando (cd .claude, -C .claude),
+// o `agents` solto como caminho (`agents/x.md`). O `agents/` no meio de outro caminho (apps/agents/) não conta.
+const NOME_DE_AGENTES = /\.claude[\\/]+(?:\.?[\\/]+)*agents(?![\w-])/i;
+const AGENTS_SOLTO = /(?:^|[\s'"=])agents(?:[\\/]|(?=\s|$|['"]))/i;
+const MOTIVO_DOS_AGENTES = 'subagente não mexe em `.claude/agents/` pelo shell (D8): só lê (cat, grep, rg, head, tail, wc, echo, git grep/log/show/diff, sem gravar em arquivo nem parêntese); a mudança ali se relata ao orquestrador';
+/** O que cita a pasta de agentes, no comando inteiro: o `agents` solto só conta onde o comando também fala de `.claude`. */
+const mencionaAgentes = (comando) => {
+  const comClaude = /\.claude\b/i.test(comando);
+  return (texto) => menciona(texto) || NOME_DE_AGENTES.test(texto) || (comClaude && AGENTS_SOLTO.test(texto));
+};
 const SO_LE = new Set(['grep', 'rg', 'cat', 'echo', 'printenv', 'select-string', 'get-item', 'get-childitem', 'get-content', 'write-output', 'write-host', 'head', 'tail', 'wc', 'cut', 'tr', 'measure-object']);
 // awk e sed ficam fora de SO_LE: o sed grava (w) e executa (e), o awk executa pelo pipe e pelo getline. O rg executa o que o --pre e o --hostname-bin apontam.
 const RG_EXECUTA = /(^|\s)--(pre|hostname-bin)/i;
@@ -70,7 +82,7 @@ const OPCAO_DA_MENSAGEM = new RegExp(String.raw`(?<=\s)(-[a-zA-Z]*m|--message)(=
 const tirarMensagensDeCommit = (t) => t.replace(COMMIT_COM_MENSAGEM, (_, cabeca, resto) => cabeca + resto.replace(OPCAO_DA_MENSAGEM, '$1$2""'));
 // o corpo de heredoc que menciona um nome vira o marcador no lugar do <<EOF: o comando que o recebe (cat > .git/config <<EOF) é julgado como quem menciona
 const HEREDOC = /<<-?\s*(['"]?)(\w+)\1([^\n]*)\n([\s\S]*?)\n[ \t]*\2[ \t]*(?=\n|$)/g;
-const marcarHeredocs = (t) => t.replace(HEREDOC, (_, _aspa, _delimitador, resto, corpo) => ` ${menciona(corpo) ? 'GIT_CONFIG_HEREDOC' : ''} ${resto}`);
+const marcarHeredocs = (t, cita = menciona) => t.replace(HEREDOC, (_, _aspa, _delimitador, resto, corpo) => ` ${cita(corpo) ? 'GIT_CONFIG_HEREDOC' : ''} ${resto}`);
 // o que está entre aspas não separa segmentos (grep -E 'A|B'); a aspa que não fecha não protege nada
 const protegerAspas = (t) => t.replace(/\\.|"(?:\\.|[^"\\])*"|'[^']*'/g, (m) => (m[0] === '\\' ? m : m.replace(/[;|&\r\n]/g, '\u0000')));
 /** O 1º programa do segmento (sem caminho, sem .exe, em minúsculas), ou '' se começa por atribuição, substituição ou outra coisa que não é programa. */
@@ -100,31 +112,32 @@ const gravaEmArquivo = (unidade) => {
   return sem.includes('>') || GRAVA_COM_COMANDO.test(sem);
 };
 /** O segmento só lê ou só tira (e não traz atribuição, substituição de comando nem parêntese que façam outra coisa)? */
-function soLeOuTira(segmento) {
+function soLeOuTira(segmento, cita = menciona) {
   if (/[(\x60]|\$\{/.test(segmento)) return false; // $(, <(, >(, @(, o parêntese do PowerShell e a crase executam o que está dentro, e a ${X:=y} atribui
   const programa = primeiroPrograma(segmento);
   if ((programa === 'rg' || programa === 'xargs') && RG_EXECUTA.test(segmento)) return false;
   if (programa === 'xargs') return SO_XARGS_LE.test(segmento);
   if (programa === 'git') {
     // git config com o core.hooksPath só: quem o escreve é negado pelo analisarGit; com o nome do arquivo ou da variável, não
-    const soHooksPath = !NOME_DE_AMBIENTE.test(segmento) && !NOME_DE_ARQUIVO.test(segmento);
+    const soHooksPath = !NOME_DE_AMBIENTE.test(segmento) && !NOME_DE_ARQUIVO.test(segmento) && (cita === menciona || !NOME_DE_AGENTES.test(segmento));
     return gitSoLe(segmento) || (partesDoGit(segmento).sub === 'config' && soHooksPath);
   }
   if (SO_LE.has(programa) || SO_TIRA.has(programa)) return true;
   // env -u NOME ... sem nenhuma atribuição (env -u NODE_OPTIONS git status): só tira
   return programa === 'env' && /\s(-u|--unset)\b/i.test(segmento) && !/(^|\s)[A-Za-z_]\w*\+?=/.test(segmento);
 }
-function mudaAmbienteDosHooks(comando) {
-  const texto = marcarHeredocs(tirarMensagensDeCommit(comando));
-  if (!menciona(texto)) return false;
+function mudaAmbienteDosHooks(comando, agente = false) {
+  const cita = agente ? mencionaAgentes(comando) : menciona;
+  const texto = marcarHeredocs(tirarMensagensDeCommit(comando), cita);
+  if (!cita(texto)) return false;
   // o que a leitura imprime não pode virar ordem: nada de ... | sh / bash / pwsh / iex / eval / xargs, nem de heredoc para um shell, num comando que menciona o nome
   // (o shell se procura no comando sem a máscara da mensagem: o que a máscara esconde não é, por isso, inofensivo)
-  if (SHELL_NA_PONTA.test(marcarHeredocs(comando))) return true;
+  if (SHELL_NA_PONTA.test(marcarHeredocs(comando, cita))) return true;
   const protegido = protegerAspas(texto);
   // a unidade (o pipe inteiro) que cita um nome não grava em arquivo, e todo segmento depois do 1º também só lê
-  const alemDoPrimeiro = (unidade) => unidade.split('|').slice(1).some((s) => s.trim() !== '' && !soLeOuTira(s));
-  if (protegido.split(UNIDADE_DO_AMBIENTE).some((unidade) => menciona(unidade) && (gravaEmArquivo(unidade) || alemDoPrimeiro(unidade)))) return true;
-  return protegido.split(SEGMENTO_DO_AMBIENTE).some((segmento) => menciona(segmento) && !soLeOuTira(segmento));
+  const alemDoPrimeiro = (unidade) => unidade.split('|').slice(1).some((s) => s.trim() !== '' && !soLeOuTira(s, cita));
+  if (protegido.split(UNIDADE_DO_AMBIENTE).some((unidade) => cita(unidade) && (gravaEmArquivo(unidade) || alemDoPrimeiro(unidade)))) return true;
+  return protegido.split(SEGMENTO_DO_AMBIENTE).some((segmento) => cita(segmento) && !soLeOuTira(segmento, cita));
 }
 // o comando entre aspas que vai para outro shell é lido também; o codificado não se lê, e se nega
 const SHELL_ANINHADO = /\b(?:bash|sh|zsh|cmd|pwsh|powershell)(?:\.exe)?\s+(?:-c|-command|\/c|\/k)\s+(["'])((?:(?!\1)[\s\S])*)\1/gi;
@@ -279,12 +292,13 @@ function analisarSegmento(segmento, repo) {
 /**
  * O que o comando faz de proibido (ou null) e se ele sobe algo para o GitHub (push, remoto ou PR).
  * `repo` é o resultado de lerRepositorio() ({ valor, erro }); com erro, o que sobe é negado com ele.
+ * `agente` (a entrada do hook traz agent_id: é um subagente) soma à regra do ambiente a pasta `.claude/agents` (D8.7).
  */
-export function analisar(comando, repo = lerRepositorio()) {
+export function analisar(comando, repo = lerRepositorio(), agente = false) {
   const semHeredoc = tirarCaminhoDoPrograma(tirarHeredocs(comando));
   const total = { proibido: CODIFICADO.test(semHeredoc) ? 'comando codificado (-EncodedCommand)' : null, sobe: false };
   for (const [, , dentro] of semHeredoc.matchAll(SHELL_ANINHADO)) {
-    const r = analisar(dentro, repo);
+    const r = analisar(dentro, repo, agente);
     total.proibido ??= r.proibido;
     total.sobe ||= r.sobe;
   }
@@ -295,6 +309,7 @@ export function analisar(comando, repo = lerRepositorio()) {
     total.sobe ||= r.sobe;
   }
   if (mudaAmbienteDosHooks(comando)) total.proibido ??= 'menção a GIT_CONFIG_*, NODE_OPTIONS, core.hooksPath, .git/config, config.worktree ou .git/hooks fora de um segmento que só lê (grep, rg, cat, echo, printenv, Select-String, Get-Item, git grep/log/show/diff, head, tail, wc) ou só tira (unset, env -u, Remove-Item), sem parêntese nem gravação em arquivo: desvia os hooks do git';
+  else if (agente && mudaAmbienteDosHooks(comando, true)) total.proibido ??= MOTIVO_DOS_AGENTES;
   if (total.sobe && MUDA_PASTA.test(limpo)) total.proibido ??= 'push ou PR com troca de pasta no comando';
   if (total.sobe && AMBIENTE.test(limpo)) total.proibido ??= 'push ou PR com variável GIT_ ou GH_ no comando';
   return total;
@@ -314,14 +329,14 @@ function foraDoProjeto(cwd) {
 }
 
 // A linha continuada (\ ou `) se lê separada e junta.
-const ler = (comando) => {
+const ler = (comando, agente = false) => {
   const repo = lerRepositorio();
-  return [analisar(comando, repo), analisar(comando.replace(/[\\`]\r?\n/g, ' '), repo)];
+  return [analisar(comando, repo, agente), analisar(comando.replace(/[\\`]\r?\n/g, ' '), repo, agente)];
 };
 
 /** Erra para o lado de bloquear: é guarda contra acidente. */
-export function avaliarEntrada(comando, cwd) {
-  const leituras = ler(comando);
+export function avaliarEntrada(comando, cwd, agente = false) {
+  const leituras = ler(comando, agente);
   const proibido = leituras[0].proibido ?? leituras[1].proibido;
   if (proibido !== null) return proibido;
   return leituras.some((r) => r.sobe) ? foraDoProjeto(cwd) : null;
@@ -330,10 +345,10 @@ export function avaliarEntrada(comando, cwd) {
 const PEDE_CONFIRMACAO = 'confirme o comando: push ou PR';
 
 /** deny quando há motivo para negar; ask quando o comando sobe algo (push, remoto, escrita em PR); senão null. */
-export function decisao(comando, cwd) {
-  const motivo = avaliarEntrada(comando, cwd);
+export function decisao(comando, cwd, agente = false) {
+  const motivo = avaliarEntrada(comando, cwd, agente);
   if (motivo !== null) return { decisao: 'deny', motivo };
-  if (ler(comando).some((r) => r.sobe)) return { decisao: 'ask', motivo: PEDE_CONFIRMACAO };
+  if (ler(comando, agente).some((r) => r.sobe)) return { decisao: 'ask', motivo: PEDE_CONFIRMACAO };
   return { decisao: null, motivo: null };
 }
 
@@ -363,15 +378,17 @@ async function principal() {
   for await (const pedaco of process.stdin) entrada += pedaco;
   let comando;
   let cwd;
+  let agente = false;
   try {
     const dados = JSON.parse(entrada);
     comando = dados.tool_input?.command;
     cwd = dados.cwd;
+    agente = ehSubagente(dados);
   } catch {
     comando = undefined;
   }
   if (typeof comando !== 'string') return decidir('deny', 'comando ilegível pela guarda');
-  const { decisao: veredito, motivo } = decisao(comando, cwd);
+  const { decisao: veredito, motivo } = decisao(comando, cwd, agente);
   if (veredito === 'ask') decidir('ask', motivo, true);
   // sem repositório configurado não há o que confirmar: o modo perguntar não vale para essa recusa
   else if (veredito === 'deny') decidir(modo === 'perguntar' && !motivo.startsWith(CONFIGURE) ? 'ask' : 'deny', motivo);
