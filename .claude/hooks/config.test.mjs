@@ -246,7 +246,7 @@ test('lockfile não é código: package-lock.json, pnpm-lock.yaml, yarn.lock e b
 test('toda cópia do mesmoArquivo (a que decide se o hook roda) cai para a comparação dos textos quando o realpath falha', () => {
   const aqui = dirname(fileURLToPath(import.meta.url));
   const copias = readdirSync(aqui).filter((f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs')).filter((f) => readFileSync(join(aqui, f), 'utf8').includes('const mesmoArquivo'));
-  assert.equal(copias.length, 11, `as cópias: ${copias.join(', ')}`);
+  assert.equal(copias.length, 13, `as cópias: ${copias.join(', ')}`);
   for (const f of copias) {
     const texto = readFileSync(join(aqui, f), 'utf8');
     assert.match(texto, /const mesmoArquivo = \(a, b\) => \{\n  if \(a === b\) return true;\n  try \{\n    return realpathSync\(a\) === realpathSync\(b\);\n  \} catch \{\n    return a === b;\n  \}\n\};/, `${f}: o erro do realpath não pode calar o hook quando os textos já são iguais`);

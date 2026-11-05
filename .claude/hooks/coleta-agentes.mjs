@@ -4,7 +4,7 @@
 // `agentId`: os `b*.output` são saídas de Bash (texto, ou JSON sem `agentId`) e se pulam.
 //   node .claude/hooks/coleta-agentes.mjs <pasta> [--desde <ISO>] [--json]
 // Por agente: agentId, modelo, tokens (a soma das 4 partes do ÚLTIMO `usage`, o `subagent_tokens` da notificação), minutos
-// (último `timestamp` − primeiro, 1 casa), início, fim, pedidos (as mensagens `user` que não são resultado de ferramenta; mais
+// (último `timestamp` − primeiro, 1 casa), início, fim, pedidos (as mensagens `user` que não são resultado de ferramenta nem a que o Claude Code injeta, a de texto que começa por `<system-reminder>`; mais
 // de uma quer dizer que o agente foi retomado) e a 1ª linha do 1º pedido (100 caracteres). Mais, em campos separados (D8.9):
 // `contexto1` (medido: input + cache_creation + cache_read do 1º `usage`, sem o output; é o prompt de sistema, as ferramentas, o
 // `CLAUDE.md` quando entra e o pedido) e `pacote1` (estimado: os tokens dos arquivos de fora do repositório que o 1º pedido cita
@@ -28,13 +28,19 @@ export function pacoteDoPedido(pedido, lerTamanho = tamanhoDoArquivo) {
   return Math.ceil([...vistos.values()].reduce((t, b) => t + b, 0) / CARACTERES_POR_TOKEN);
 }
 
-/** O texto de uma mensagem `user` se ela é um pedido (texto), ou null se é só resultado de ferramenta. */
+// a mensagem `user` que o Claude Code injeta (o contexto do projeto) começa por <system-reminder>: não é pedido de ninguém
+const INJETADA = /^\s*<system-reminder>/;
+
+/** O texto de uma mensagem `user` se ela é um pedido (texto), ou null se é só resultado de ferramenta ou a mensagem injetada. */
 function textoDoPedido(mensagem) {
   const c = mensagem?.content;
-  if (typeof c === 'string') return c;
-  if (!Array.isArray(c) || c.length === 0 || c.some((x) => x?.type === 'tool_result')) return null;
-  const textos = c.filter((x) => x?.type === 'text' && typeof x.text === 'string').map((x) => x.text);
-  return textos.length === 0 ? null : textos.join('\n');
+  let texto = null;
+  if (typeof c === 'string') texto = c;
+  else if (Array.isArray(c) && c.length > 0 && !c.some((x) => x?.type === 'tool_result')) {
+    const textos = c.filter((x) => x?.type === 'text' && typeof x.text === 'string').map((x) => x.text);
+    texto = textos.length === 0 ? null : textos.join('\n');
+  }
+  return texto === null || INJETADA.test(texto) ? null : texto;
 }
 
 /** Um agente a partir das linhas JSONL de um `.output`; null se a 1ª linha JSON não tem `agentId` ou se não há `timestamp` (não é transcrição). `lerTamanho` mede os arquivos do `pacote1` (injetável nos testes). */

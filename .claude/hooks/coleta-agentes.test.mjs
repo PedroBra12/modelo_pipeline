@@ -165,3 +165,25 @@ test('o pacote1 mede de verdade: arquivo fora do repositório conta, o de dentro
     rmSync(fora, { recursive: true, force: true });
   }
 });
+
+test('lerAgente: a mensagem que o Claude Code injeta (user, texto que começa com <system-reminder>) não é pedido: o agente não sai "retomado"', () => {
+  const lembrete = '<system-reminder>\nAs always, o contexto do projeto.\n</system-reminder>';
+  for (const injetada of [lembrete, [{ type: 'text', text: lembrete }], `  \n${lembrete}`]) {
+    const a = lerAgente(jsonl(
+      pedido('2026-10-28T14:00:00.000Z', 'Escreva o código.', 'ccc333'),
+      pedido('2026-10-28T14:00:01.000Z', injetada, 'ccc333'),
+      resposta('2026-10-28T14:01:00.000Z', 'claude-sonnet-5-5', { input_tokens: 1, cache_creation_input_tokens: 1, cache_read_input_tokens: 1, output_tokens: 1 }),
+    ));
+    assert.equal(a.pedidos, 1);
+    assert.equal(a.primeiroPedido, 'Escreva o código.');
+    assert.doesNotMatch(formatar([a]), /retomado/);
+  }
+  // o lembrete que vem antes do pedido não vira o 1º pedido; e o pedido de verdade que cita o texto no meio conta
+  const b = lerAgente(jsonl(
+    pedido('2026-10-28T14:00:00.000Z', '<system-reminder>x</system-reminder>', 'ddd444'),
+    pedido('2026-10-28T14:00:02.000Z', 'Veja o <system-reminder> citado no meio.', 'ddd444'),
+    resposta('2026-10-28T14:01:00.000Z', 'claude-sonnet-5-5', { input_tokens: 1 }),
+  ));
+  assert.equal(b.pedidos, 1);
+  assert.equal(b.primeiroPedido, 'Veja o <system-reminder> citado no meio.');
+});

@@ -11,7 +11,16 @@ import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURE, lerRepositorio, urlDoRepositorio } from './config.mjs';
-import { ehSubagente } from './guarda-pasta-agentes.mjs';
+
+// dentro do try, como a guarda-agentes: sem a guarda-pasta-agentes (arquivo quebrado, conflito de merge) o hook não sabe quem é subagente,
+// e um import estático que falha derrubaria o hook com um erro que não nega nada; aqui ele sai negando tudo (principal)
+let ehSubagente = null;
+let falhaDaPasta = null;
+try {
+  ({ ehSubagente } = await import('./guarda-pasta-agentes.mjs'));
+} catch (erro) {
+  falhaDaPasta = erro;
+}
 
 const PROJETO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const PROGRAMAS = new Set(['git', 'gh', 'glab', 'npm']);
@@ -52,11 +61,18 @@ const menciona = (texto) => NOME_DE_AMBIENTE.test(texto) || NOME_DE_ARQUIVO.test
 // o `agents` solto como caminho (`agents/x.md`). O `agents/` no meio de outro caminho (apps/agents/) não conta.
 const NOME_DE_AGENTES = /\.claude[\\/]+(?:\.?[\\/]+)*agents(?![\w-])/i;
 const AGENTS_SOLTO = /(?:^|[\s'"=])agents(?:[\\/]|(?=\s|$|['"]))/i;
+// o ajusta-pipeline grava o agente sem citar a pasta: o --sincronizar-desenvolvedor, o --aplicar-menos e o --aplicar-mais contam como menção a ela
+const AJUSTA_AGENTES = /--(?:sincronizar-desenvolvedor|aplicar-menos|aplicar-mais)(?![\w-])/i;
 const MOTIVO_DOS_AGENTES = 'subagente não mexe em `.claude/agents/` pelo shell (D8): só lê (cat, grep, rg, head, tail, wc, echo, git grep/log/show/diff, sem gravar em arquivo nem parêntese); a mudança ali se relata ao orquestrador';
-/** O que cita a pasta de agentes, no comando inteiro: o `agents` solto só conta onde o comando também fala de `.claude`. */
-const mencionaAgentes = (comando) => {
+/** O que cita só a pasta de agentes, no comando inteiro: o `agents` solto só conta onde o comando também fala de `.claude`. */
+const citaAgentes = (comando) => {
   const comClaude = /\.claude\b/i.test(comando);
-  return (texto) => menciona(texto) || NOME_DE_AGENTES.test(texto) || (comClaude && AGENTS_SOLTO.test(texto));
+  return (texto) => NOME_DE_AGENTES.test(texto) || AJUSTA_AGENTES.test(texto) || (comClaude && AGENTS_SOLTO.test(texto));
+};
+/** A pasta de agentes e, junto, os nomes da configuração dos hooks do git. */
+const mencionaAgentes = (comando) => {
+  const agentes = citaAgentes(comando);
+  return (texto) => menciona(texto) || agentes(texto);
 };
 const SO_LE = new Set(['grep', 'rg', 'cat', 'echo', 'printenv', 'select-string', 'get-item', 'get-childitem', 'get-content', 'write-output', 'write-host', 'head', 'tail', 'wc', 'cut', 'tr', 'measure-object']);
 // awk e sed ficam fora de SO_LE: o sed grava (w) e executa (e), o awk executa pelo pipe e pelo getline. O rg executa o que o --pre e o --hostname-bin apontam.
@@ -126,8 +142,9 @@ function soLeOuTira(segmento, cita = menciona) {
   // env -u NOME ... sem nenhuma atribuição (env -u NODE_OPTIONS git status): só tira
   return programa === 'env' && /\s(-u|--unset)\b/i.test(segmento) && !/(^|\s)[A-Za-z_]\w*\+?=/.test(segmento);
 }
+// `agente`: false (só a configuração do git), true (ela e a pasta de agentes) ou 'so-agentes' (só a pasta de agentes)
 function mudaAmbienteDosHooks(comando, agente = false) {
-  const cita = agente ? mencionaAgentes(comando) : menciona;
+  const cita = agente === 'so-agentes' ? citaAgentes(comando) : agente ? mencionaAgentes(comando) : menciona;
   const texto = marcarHeredocs(tirarMensagensDeCommit(comando), cita);
   if (!cita(texto)) return false;
   // o que a leitura imprime não pode virar ordem: nada de ... | sh / bash / pwsh / iex / eval / xargs, nem de heredoc para um shell, num comando que menciona o nome
@@ -371,11 +388,15 @@ function decidir(decisao, motivo, soConfirma = false) {
   }));
 }
 
+/** O comando (lido como o `ler` o lê, inclusive a linha continuada) que a regra dos agentes (D8.7) nega, sem a configuração do git. */
+export const negaAgentes = (comando) => [comando, comando.replace(/[\\`]\r?\n/g, ' ')].some((c) => mudaAmbienteDosHooks(c, 'so-agentes'));
+
 async function principal() {
   const modo = process.env.PIPELINE_GUARDA_GIT ?? 'negar';
-  if (modo === 'desligado') return;
   let entrada = '';
   for await (const pedaco of process.stdin) entrada += pedaco;
+  // sem a guarda-pasta-agentes não há como saber quem é subagente: nega tudo, em qualquer modo
+  if (ehSubagente === null) return decidir('deny', `guarda-pasta-agentes.mjs ilegível: ${falhaDaPasta instanceof Error ? falhaDaPasta.message : falhaDaPasta}`);
   let comando;
   let cwd;
   let agente = false;
@@ -388,7 +409,11 @@ async function principal() {
     comando = undefined;
   }
   if (typeof comando !== 'string') return decidir('deny', 'comando ilegível pela guarda');
+  // D8.7: com agent_id, a negação da pasta de agentes vale em qualquer modo (o desligado não a some, o perguntar não a vira em ask)
+  const dosAgentes = agente && negaAgentes(comando);
+  if (modo === 'desligado' && !dosAgentes) return;
   const { decisao: veredito, motivo } = decisao(comando, cwd, agente);
+  if (dosAgentes) return decidir('deny', veredito === 'deny' ? motivo : MOTIVO_DOS_AGENTES);
   if (veredito === 'ask') decidir('ask', motivo, true);
   // sem repositório configurado não há o que confirmar: o modo perguntar não vale para essa recusa
   else if (veredito === 'deny') decidir(modo === 'perguntar' && !motivo.startsWith(CONFIGURE) ? 'ask' : 'deny', motivo);

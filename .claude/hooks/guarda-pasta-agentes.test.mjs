@@ -3,6 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -118,4 +120,55 @@ test('o hook: entrada ilegível ou subagente sem caminho nega; o orquestrador se
   assert.equal(hook({ tool_name: 'Edit', tool_input: {}, cwd: CWD }), null);
   const dentro = { tool_name: 'Write', tool_input: { file_path: '.claude/agents/x.md' }, cwd: CWD, agent_id: 'a1' };
   for (const modo of ['perguntar', 'desligado']) assert.equal(hook(dentro, { PIPELINE_GUARDA_GIT: modo })?.permissionDecision, 'deny', modo);
+});
+
+// ---------- a falha aberta e o link simbólico (D8.7, correção) ----------
+
+/** Uma pasta temporária com `lnk-hooks` (link para a pasta dos hooks) e `proj/lnk` (link para o `.claude` do projeto, que tem agents/). */
+function comLinks(fn) {
+  const raiz = realpathSync(mkdtempSync(join(tmpdir(), 'guarda-pasta-link-')));
+  try {
+    mkdirSync(join(raiz, 'proj', '.claude', 'agents'), { recursive: true });
+    symlinkSync(AQUI, join(raiz, 'lnk-hooks'), 'junction');
+    symlinkSync(join(raiz, 'proj', '.claude'), join(raiz, 'proj', 'lnk'), 'junction');
+    fn(raiz);
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
+}
+
+test('o script chamado por um caminho com link simbólico (o /var do macOS) também age: o hook não fica mudo', () => {
+  comLinks((raiz) => {
+    const r = spawnSync(process.execPath, [join(raiz, 'lnk-hooks', 'guarda-pasta-agentes.mjs')], {
+      input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: '/r/.claude/agents/x.md' }, cwd: '/r', agent_id: 'a1' }),
+      encoding: 'utf8',
+    });
+    assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny');
+  });
+});
+
+test('o link para a pasta .claude (ou para a de agentes) não esconde o alvo: vale o caminho de verdade do ancestral que existe', () => {
+  comLinks((raiz) => {
+    const proj = join(raiz, 'proj');
+    for (const c of ['lnk/agents/desenvolvedor.md', 'lnk/agents/novo/x.md', join(proj, 'lnk', 'agents', 'qa.md'), 'lnk/../lnk/agents/x.md']) {
+      assert.notEqual(motivoDaEntrada({ agent_id: 'a1', cwd: proj, tool_input: { file_path: c } }), null, c);
+      assert.equal(motivoDaEntrada({ cwd: proj, tool_input: { file_path: c } }), null, `sem agent_id: ${c}`);
+    }
+    symlinkSync(join(proj, '.claude', 'agents'), join(proj, 'lnk-agentes'), 'junction');
+    assert.notEqual(motivoDaEntrada({ agent_id: 'a1', cwd: proj, tool_input: { file_path: 'lnk-agentes/x.md' } }), null);
+    symlinkSync(join(proj, '.claude', 'agents', 'ainda-nao-existe.md'), join(proj, 'ponta.md')); // o link que ainda não aponta para nada
+    assert.notEqual(motivoDaEntrada({ agent_id: 'a1', cwd: proj, tool_input: { file_path: 'ponta.md' } }), null, 'link solto para dentro de agents/');
+    assert.equal(motivoDaEntrada({ agent_id: 'a1', cwd: proj, tool_input: { file_path: 'lnk/skills/x.md' } }), null, 'o link para .claude, fora de agents/');
+    assert.equal(motivoDaEntrada({ agent_id: 'a1', cwd: proj, tool_input: { file_path: 'src/novo/x.md' } }), null, 'caminho que ainda não existe, sem link');
+  });
+});
+
+test('o hook como processo nega pelo link de verdade, no Edit e no Write', () => {
+  comLinks((raiz) => {
+    const proj = join(raiz, 'proj');
+    for (const tool_name of ['Edit', 'Write']) {
+      const saida = hook({ tool_name, tool_input: { file_path: join(proj, 'lnk', 'agents', 'desenvolvedor.md') }, cwd: proj, agent_id: 'a1' });
+      assert.equal(saida?.permissionDecision, 'deny', tool_name);
+    }
+  });
 });
