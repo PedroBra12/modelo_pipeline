@@ -13,7 +13,7 @@ Para o orquestrador de uma fase do plano do projeto (`docs/plano.md`): o agente 
    - o nível de cada agente (`SKILL.md`, seção 7);
    - o aceite, como lista de comandos e resultados esperados.
    **Pronto quando:** um agente que só leia o handoff e o `AGENTS.md` da pasta dele consegue começar.
-4. **Dividir.** Lance os agentes em paralelo, cada um no seu worktree (`isolation: "worktree"`, um branch por agente, em `pr/<fase>-<assunto-em-kebab>`; o 1º passo do pedido é `git switch -c <branch> <branch da fase>`, porque o worktree nasce da `main` e a `guarda-agentes` nega sem ele, D6), com:
+4. **Dividir.** Lance os `desenvolvedor` em paralelo, cada um no seu worktree (`isolation: "worktree"`, um branch por agente, em `pr/<fase>-<assunto-em-kebab>`; o 1º passo do pedido é `git switch -c <branch> <branch da fase>`, porque o worktree nasce da `main` e a `guarda-agentes` nega sem ele, D6), com:
    - o handoff;
    - o modelo e o esforço do nível da tarefa (`SKILL.md`, seção 7);
    - a pasta dele;

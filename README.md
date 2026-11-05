@@ -41,7 +41,7 @@ O modelo separa quem **planeja e julga** (`opus`) de quem **localiza documentaç
 |---|---|---|
 | [`orquestrador`](.claude/agents/orquestrador.md) | `opus` | Agente do chat principal: planeja pelos `AGENTS.md`, divide tarefas por pasta/worktree, delega código ao `sonnet`, roda os revisores que o `escolhe-revisores.mjs` manda, o QA, o PR e a autoanálise. Nunca roda como subagente |
 | [`leitor-docs`](.claude/agents/leitor-docs.md) | `haiku` | Batedor de leitura: usa `Grep`/`Glob` em `docs/` e nos `AGENTS.md` e devolve só os arquivos e linhas onde o orquestrador deve focar |
-| `general-purpose` (código) | `sonnet` | Escreve código, testes e migrações em worktree isolado (`isolation: "worktree"`), só na sua pasta, no nível `leve`, `medio` ou `codigo-seguranca` |
+| [`desenvolvedor`](.claude/agents/desenvolvedor.md) | `sonnet` | Escreve código, testes e migrações, sempre em worktree isolado (`isolation: "worktree"`), só na sua pasta, no esforço do nível `leve`, `medio` ou `codigo-seguranca`. Roda sem o `CLAUDE.md`: leva as regras de código na parte fixa e o que é do projeto na parte que o orquestrador preenche (D8) |
 | `general-purpose` (`ponytail-review`) | `sonnet` | Revisão de qualidade com experimentos: roda o código para achar o defeito de comportamento que quem só lê não acha |
 | [`qa`](.claude/agents/qa.md) | `sonnet` | Roda o projeto localmente depois dos portões verdes (sem repeti-los), testa casos de borda e devolve cada defeito com o comando que o reproduz |
 | [`revisor-arquitetura`](.claude/agents/revisor-arquitetura.md) | `opus` | Confere fronteiras entre pastas, contratos públicos, tipagem, `AGENTS.md` e decisões em [`docs/decisoes.md`](docs/decisoes.md) |
