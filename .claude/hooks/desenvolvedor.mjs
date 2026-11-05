@@ -216,8 +216,11 @@ export function problemas(texto, fontes) {
   const d = dominioDe(p.projeto);
   if (d.erro !== undefined) return [...achados, d.erro];
   const claudeMd = fontes?.['CLAUDE.md'];
-  if (d.sem && typeof claudeMd === 'string' && adotado(claudeMd) && (extrairRegras(claudeMd).dominio?.length ?? 0) > 0) {
-    achados.push('falta o bloco das regras do domínio: rode `node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor`');
+  if (d.sem && typeof claudeMd === 'string' && adotado(claudeMd)) {
+    // a extração em erro não pode calar a falta do bloco: o erro dela vira o problema, com a frase dele
+    const r = extrairRegras(claudeMd);
+    if (r.erro !== undefined) achados.push(r.erro);
+    else if (r.dominio.length > 0) achados.push('falta o bloco das regras do domínio: rode `node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor`');
   }
   const livre = d.sem ? p.projeto : d.antes + d.depois;
   for (const linha of linhasDe(livre)) {

@@ -104,6 +104,9 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   `PIPELINE_GUARDA_GIT=desligado` não a some e o `perguntar` não a vira em `ask` (o `principal` lê a entrada antes do `desligado`; `negaAgentes` é a conta só da pasta de agentes); o resto continua
                   com o modo. A `guarda-pasta-agentes` é importada dentro de um `try`, como a `guarda-agentes` faz com o `config.mjs`: se não carrega (arquivo quebrado), a `guarda-git` nega tudo, em qualquer modo e com ou sem
                   `agent_id` ("guarda-pasta-agentes.mjs ilegível"), em vez de cair num erro que não nega nada. Com o `desligado` a entrada ilegível também nega (sem ler a entrada não se sabe se é subagente).
+                  **O heredoc não esconde a menção:** o corpo de heredoc que cita a pasta de agentes vira o marcador `GIT_CONFIG_HEREDOC` no lugar do `<<EOF`, e a conta só dos agentes (`citaAgentes`) lê esse marcador como
+                  menção; `bash <<'EOF'`, `node -` e `python3 -` com `echo x > .claude/agents/y` no corpo negam nos três modos (`negar`, `perguntar`, `desligado`), e o heredoc que só lê (`cat <<'EOF'`) passa. O teste
+                  `guarda-git.agentes.test.mjs` roda **cada** item da lista `NEGA` pelo hook, como subagente, nos três modos, esperando `deny`.
                 - Lê a linha continuada (`\` e a crase) separada e junta, tira as aspas dos argumentos sem espaço (a
                   aspa vazia fica), acha o programa depois de `xargs`, `timeout`, `cmd /c`, lê também o comando entre
                   aspas passado a outro shell (`bash -c`, `cmd /c`, `pwsh -Command`) e nega o `-EncodedCommand`.
@@ -150,7 +153,7 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 corpo 1.500, parte fixa 900 e parte do projeto 600 tokens), o formato da parte do projeto fora do bloco `dominio` (só linhas
                 vazias ou itens `- ` de até 240 caracteres, sem título, cerca de código, comentário nem marcador), a presença do bloco `dominio` (com o
                 `CLAUDE.md` adotado e regras do domínio na extração, a falta dos marcadores é problema: "falta o bloco das regras do domínio: rode
-                `--sincronizar-desenvolvedor`"; só presença, o texto não se compara) e a fonte: fora do bloco `dominio`, todo item `- ` termina numa marca,
+                `--sincronizar-desenvolvedor`"; só presença, o texto não se compara; com o `CLAUDE.md` adotado e a extração em erro, o erro dela, com a frase dele, vira problema, para a regra 8 com subitem de 2 espaços não liberar o agente sem o bloco; não adotado, sem exigência) e a fonte: fora do bloco `dominio`, todo item `- ` termina numa marca,
                 senão é "item sem fonte". `[CLAUDE.md]` ou `[docs/arquitetura.md]`: o texto (sem `- ` e sem a marca, com `trim`) é igual a uma linha da
                 fonte. `[ajuste AAAA-MM-DD]`: `fontes.ajuste(data)` (injetável; devolve o texto de `docs/pipeline/ajustes/AAAA-MM-DD-desenvolvedor.md` ou
                 `null`) tem uma linha `- entra: <texto>` com o mesmo texto (com `trim`). Marca que não confere é "fonte não confere". Não compara o bloco `regras` nem o `dominio` com o
@@ -372,7 +375,8 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 mais, repetido, `tools` errado e chave entre aspas; os tetos; a extração com título ausente, repetido e o item do domínio; `sincronizar`
                 idempotente; `mesmaParteFixa`; a regra com sublista aninhada, 4 espaços, tab e branco, e a linha solta, para uma regra fixa e para a do domínio; o BOM; a presença do bloco `dominio`;
                 o lint de formato e de fonte, com o item sem marca, os três tipos de marca e o registro do ajuste) e o arquivo de verdade: o `.claude/agents/desenvolvedor.md` sem problema,
-                com os blocos iguais ao que o `CLAUDE.md` dá (se falha, rode `--sincronizar-desenvolvedor`), a parte do projeto vazia enquanto o `CLAUDE.md`
+                com os blocos iguais ao que o `CLAUDE.md` dá (se falha, rode `--sincronizar-desenvolvedor`), as fontes de verdade (`lerFontesDoDesenvolvedor(raiz).fontes`, com o leitor de
+                `docs/pipeline/ajustes/`, para o item `[ajuste AAAA-MM-DD]` de um projeto adotado conferir; testado numa raiz temporária adotada, com o registro e sem ele), a parte do projeto vazia enquanto o `CLAUDE.md`
                 for o do modelo, o bloco `dominio` igual à extração num `CLAUDE.md` adotado (fonte falsa) e o `CARACTERES_POR_TOKEN` igual ao da guarda.
               - O `guarda-agentes.test.mjs` usa um `lerCabecalho` falso e também lê os cabeçalhos de verdade de
                 `.claude/agents/` (com as subpastas): todo arquivo está em `TETO` ou é o `orquestrador`

@@ -43,6 +43,12 @@ const NEGA = [
   'cp x .claude/worktrees/agent-a/.claude/agents/y.md',
   'Set-Content -Path .claude\\agents\\x.md -Value x',
   'git config user.name .claude/agents/z.md',
+  // o corpo do heredoc que vai para um interpretador: a menção no corpo vale
+  "bash <<'EOF'\necho x > .claude/agents/desenvolvedor.md\nEOF",
+  "sh <<EOF\nrm .claude/agents/qa.md\nEOF",
+  "node - <<'EOF'\nrequire('fs').writeFileSync('.claude/agents/x.md', 'x')\nEOF",
+  "python3 - <<'EOF'\nopen('.claude/agents/x.md', 'w')\nEOF",
+  "cat > x.sh <<'EOF'\ncp y .claude/agents/z.md\nEOF",
   // a troca de pasta antes: o caminho relativo da pasta de agentes
   'cd .claude && sed -i s/a/b/ agents/qa.md',
   'git -C .claude checkout main -- agents/qa.md',
@@ -55,6 +61,7 @@ const NEGA = [
 ];
 const LIBERA = [
   'cat .claude/agents/qa.md',
+  "cat <<'EOF'\nrelata .claude/agents/qa.md\nEOF",
   'cat .CLAUDE/AGENTS/qa.md',
   'grep -n x .claude/agents/qa.md',
   'grep -rn x .claude/agents/',
@@ -123,6 +130,21 @@ test('o hook de ponta a ponta: o agent_id da entrada liga a regra, que vale tamb
   assert.equal(hook({ tool_input, agent_id: 'a1' }, { PIPELINE_GUARDA_GIT: 'desligado' })?.permissionDecision, 'deny', 'o modo desligado não desliga a trava dos agentes');
   assert.equal(hook({ tool_input, agent_id: 'a1' }, { PIPELINE_GUARDA_GIT: 'perguntar' }).permissionDecisionReason.includes('subagente'), true);
   assert.equal(hook({ tool_input: { command: 'cat .claude/agents/qa.md' }, agent_id: 'a1' }), null);
+});
+
+test('o hook de ponta a ponta: cada comando da lista NEGA é negado (deny) para o subagente em todos os modos, e o heredoc também', () => {
+  const hook = (command, modo) => {
+    const r = spawnSync(process.execPath, [join(HOOKS, 'guarda-git.mjs')], {
+      input: JSON.stringify({ tool_name: 'Bash', cwd: PROJETO, tool_input: { command }, agent_id: 'a1' }),
+      encoding: 'utf8',
+      env: { ...process.env, PIPELINE_GUARDA_GIT: modo },
+    });
+    return r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput?.permissionDecision;
+  };
+  for (const modo of ['negar', 'perguntar', 'desligado']) {
+    for (const c of NEGA) assert.equal(hook(c, modo), 'deny', `${modo}: ${c}`);
+  }
+  for (const modo of ['negar', 'perguntar', 'desligado']) assert.equal(hook("cat <<'EOF'\nrelata .claude/agents/qa.md\nEOF", modo) === 'deny', false, `a leitura em heredoc passa (${modo})`);
 });
 
 test('os modos perguntar e desligado seguem valendo para o resto: sem agent_id, e para o subagente fora da pasta de agentes', () => {
