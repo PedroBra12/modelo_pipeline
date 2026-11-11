@@ -104,7 +104,7 @@ const dadosReais = () => JSON.parse(readFileSync(ARQUIVO, 'utf8'));
 test('agentes e niveis: o do projeto carrega; nome, model, effort e tools inválidos, abaixo do piso ou fixo mudado falham', () => {
   const agentes = lerAgentes();
   assert.equal(agentes.erro, null);
-  assert.deepEqual(Object.keys(agentes.valor).sort(), ['leitor-docs', 'qa', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-seguranca', 'revisor-tela']);
+  assert.deepEqual(Object.keys(agentes.valor).sort(), ['designer-ui', 'leitor-docs', 'qa', 'revisor-arquitetura', 'revisor-seguranca', 'revisor-tela']);
   assert.equal(lerNiveis().erro, null);
   const com = (secao, nome, valor) => { const d = dadosReais(); d[secao][nome] = valor; return d; };
   const q = dadosReais().agentes.qa;
@@ -115,7 +115,9 @@ test('agentes e niveis: o do projeto carrega; nome, model, effort e tools invál
     ['tarefa não texto', com('agentes', 'qa', { ...q, tarefa: 3 }), /agentes\.qa/],
     ['segurança é fixa, para baixo', com('agentes', 'revisor-seguranca', { ...dadosReais().agentes['revisor-seguranca'], effort: 'high' }), /revisor-seguranca é fixo em opus:xhigh/],
     ['segurança é fixa, para outro modelo', com('agentes', 'revisor-seguranca', { ...dadosReais().agentes['revisor-seguranca'], model: 'sonnet' }), /revisor-seguranca é fixo em opus:xhigh/],
-    ['lgpd é fixo', com('agentes', 'revisor-lgpd', { ...dadosReais().agentes['revisor-lgpd'], model: 'sonnet' }), /revisor-lgpd é fixo em opus:high/],
+    ['designer-ui é fixo (D35), para baixo', com('agentes', 'designer-ui', { ...dadosReais().agentes['designer-ui'], effort: 'medium' }), /designer-ui é fixo em sonnet:high/],
+    ['designer-ui é fixo (D35), para cima', com('agentes', 'designer-ui', { ...dadosReais().agentes['designer-ui'], model: 'opus' }), /designer-ui é fixo em sonnet:high/],
+    ['o revisor aposentado (D34) volta como nome desconhecido', com('agentes', 'revisor-lgpd', { ...dadosReais().agentes['revisor-seguranca'] }), /nome desconhecido/],
     ['nível autoanalise é fixo', com('niveis', 'autoanalise', { model: 'sonnet', effort: 'low' }), /niveis\.autoanalise é fixo em sonnet:medium/],
     ['fixo mudado', com('agentes', 'leitor-docs', { ...dadosReais().agentes['leitor-docs'], model: 'sonnet' }), /fixo em haiku:low/],
     ['revisor-tela abaixo do piso', com('agentes', 'revisor-tela', { ...dadosReais().agentes['revisor-tela'], model: 'sonnet', effort: 'low' }), /agentes\.revisor-tela está em sonnet:low, abaixo do piso sonnet:medium/],
@@ -166,7 +168,10 @@ test('revisao: a do projeto compila e cumpre os pisos; gatilho repetido, regex i
     ['gatilho tela removido', (d) => { d.gatilhos = d.gatilhos.filter((x) => x.nome !== 'tela'); }, /gatilho tela falta/],
     ['revisor-tela tirado do gatilho tela', (d) => { g(d, 'tela').revisores = ['qa']; }, /tela: revisores perdeu revisor-tela/],
     ['caminho do gatilho tela encolhido', (d) => { g(d, 'tela').caminhos = ['^src/.+\\.jsx$']; }, /tela: caminhos perdeu/],
-    ['revisor mínimo tirado', (d) => { g(d, 'dado_pessoal').revisores = ['revisor-lgpd']; }, /dado_pessoal: revisores perdeu revisor-seguranca/],
+    ['revisor mínimo tirado', (d) => { g(d, 'dado_pessoal').revisores = ['revisor-arquitetura']; }, /dado_pessoal: revisores perdeu revisor-seguranca/],
+    ['lgpd_regras sem o revisor-seguranca (D34)', (d) => { g(d, 'lgpd_regras').revisores = ['revisor-arquitetura']; }, /lgpd_regras: revisores perdeu revisor-seguranca/],
+    ['remocoes tirado do lgpd_regras', (d) => { delete g(d, 'lgpd_regras').remocoes; }, /lgpd_regras: remocoes tem de ser true/],
+    ['lgpd_ignora sem o revisor-seguranca (D34)', (d) => { g(d, 'lgpd_ignora').revisores = ['revisor-arquitetura']; }, /lgpd_ignora: revisores perdeu revisor-seguranca/],
     ['caminho mínimo tirado', (d) => { g(d, 'banco').caminhos = ['^x/']; }, /banco: caminhos perdeu/],
     ['conteúdo mínimo tirado', (d) => { g(d, 'lgpd_ignora').conteudo = ['outra coisa']; }, /lgpd_ignora: conteudo perdeu/],
     ['remocoes tirado do permissao', (d) => { g(d, 'permissao').remocoes = false; }, /permissao: remocoes tem de ser true/],
@@ -182,10 +187,10 @@ test('revisao: a do projeto compila e cumpre os pisos; gatilho repetido, regex i
     ['caminhos do qa tirados', (d) => { d.comportamento_caminhos = []; }, /comportamento_caminhos perdeu/],
   ];
   for (const [rotulo, muda, esperado] of casos) comArquivo(com(muda), (c) => assert.match(lerRevisao(c).erro, esperado, rotulo));
-  comArquivo(com((d) => { g(d, 'banco').revisores.push('revisor-lgpd'); g(d, 'banco').caminhos.push('^extra/'); }), (c) => assert.equal(lerRevisao(c).erro, null), 'somar pode');
+  comArquivo(com((d) => { g(d, 'banco').revisores.push('revisor-tela'); g(d, 'banco').caminhos.push('^extra/'); }), (c) => assert.equal(lerRevisao(c).erro, null), 'somar pode');
   assert.equal(revisaoDeObjeto(com((d) => { d.sempre = []; delete d.grande; }).revisao, { pisos: false }).erro, null, 'sem os pisos (a base de um diff) aceita');
   comArquivo(com((d) => { d.sempre = ['revisor-arquitetura']; }), (c) => assert.equal(lerRevisao(c).erro, null), 'o sempre pode ter nomes ou ficar vazio');
-  comArquivo(com((d) => { d.grande.revisores.push('revisor-lgpd'); d.grande.gatilhos.push('permissao'); }), (c) => assert.equal(lerRevisao(c).erro, null), 'o grande também só soma');
+  comArquivo(com((d) => { d.grande.revisores.push('revisor-tela'); d.grande.gatilhos.push('permissao'); }), (c) => assert.equal(lerRevisao(c).erro, null), 'o grande também só soma');
   const projeto = lerRevisao().valor;
   assert.deepEqual(projeto.sempre, [], 'o sempre do projeto está vazio');
   assert.deepEqual(projeto.grande, { revisores: PISO_GRANDE.revisores, gatilhos: ['banco'] });

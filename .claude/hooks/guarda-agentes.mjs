@@ -48,10 +48,10 @@ const CAMPOS = ['name', 'model', 'effort', 'tools'];
 export const TETO = {
   'revisor-seguranca': { model: 'opus', effort: 'xhigh', tools: 'Read, Grep, Glob' },
   'revisor-arquitetura': { model: 'opus', effort: 'high', tools: 'Read, Grep, Glob' },
-  'revisor-lgpd': { model: 'opus', effort: 'high', tools: 'Read, Grep, Glob' },
   'leitor-docs': { model: 'haiku', effort: 'low', tools: 'Read, Grep, Glob' },
   qa: { model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash' },
   'revisor-tela': { model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash' },
+  'designer-ui': { model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash, Edit, Write' },
 };
 /** Roda só como agente do chat principal (`claude --agent orquestrador`), nunca como subagente. */
 export const SO_NO_CHAT = 'orquestrador';
@@ -257,8 +257,8 @@ export function decidirWorktree(entrada, lerTamanho = tamanhoDoArquivo, lerTexto
 // ---------- o esforço do pipeline em .claude/estado/esforco (D64) ----------
 
 export const ESFORCOS_PIPELINE = new Set(['rapido', 'medio', 'alto']);
-export const FORA_DO_RAPIDO = new Set(['revisor-seguranca', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-tela', 'qa']);
-export const FORA_DO_MEDIO = new Set(['revisor-arquitetura', 'revisor-lgpd']);
+export const FORA_DO_RAPIDO = new Set(['revisor-seguranca', 'revisor-arquitetura', 'revisor-tela', 'qa']);
+export const FORA_DO_MEDIO = new Set(['revisor-arquitetura']);
 
 /**
  * O esforço do pipeline em `.claude/estado/esforco` (ou `env.PIPELINE_ESFORCO`): `'rapido'`, `'medio'`, `'alto'`,
@@ -301,7 +301,7 @@ export function decidirEsforcoPipeline(entrada, esforco) {
       return nega('esforço rapido (D64): ponytail-review não roda no rápido (sem revisores nem qa; mude .claude/estado/esforco se o usuário pediu outro esforço)');
     }
   } else if (esforco === 'medio' && tipo !== undefined && FORA_DO_MEDIO.has(tipo)) {
-    return nega(`esforço medio (D64): ${tipo} só roda no esforço alto (mude .claude/estado/esforco para alto se o usuário pediu)`);
+    return nega(`esforço medio (D64): ${tipo} só roda no esforço alto, D12 (mude .claude/estado/esforco para alto se o usuário pediu)`);
   }
   return passa;
 }

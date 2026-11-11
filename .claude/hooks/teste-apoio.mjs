@@ -34,7 +34,7 @@ export function copiarHooks(projeto, config = CONFIG_PADRAO) {
  * pipeline.json de verdade: o ajuste automático muda esses pares, e um teste que os crava quebraria o pre-commit.
  */
 export const EXEMPLO = {
-  agentes: { 'revisor-seguranca': 'opus:xhigh', 'revisor-arquitetura': 'opus:high', 'revisor-lgpd': 'opus:high', qa: 'sonnet:high', 'revisor-tela': 'sonnet:high', 'leitor-docs': 'haiku:low' },
+  agentes: { 'revisor-seguranca': 'opus:xhigh', 'revisor-arquitetura': 'opus:high', qa: 'sonnet:high', 'revisor-tela': 'sonnet:high', 'leitor-docs': 'haiku:low', 'designer-ui': 'sonnet:high' },
   niveis: { leve: 'sonnet:low', medio: 'sonnet:medium', 'codigo-seguranca': 'sonnet:high', 'revisao-ponytail': 'sonnet:high', autoanalise: 'sonnet:medium', orquestracao: 'opus:xhigh', forte: 'opus:high' },
 };
 

@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ESCADA, FIXOS, PISOS, SUPRESSAO, lerAgentes, lerAjuste, lerNiveis, localizar, par } from './config.mjs';
+import { APOSENTADOS, ESCADA, FIXOS, PISOS, SUPRESSAO, lerAgentes, lerAjuste, lerNiveis, localizar, par } from './config.mjs';
 import { varrer } from './confere-lgpd.mjs';
 import { CARACTERES_POR_TOKEN, TETO } from './guarda-agentes.mjs';
 import { partes, sincronizar } from './desenvolvedor.mjs';
@@ -116,7 +116,7 @@ export function validarSessao(dados, nome, cfg) {
       ...dados.agentes.map((a) => a.tipo), ...dados.achados.flatMap((a) => [a.revisor, ...(a.escapou_de ?? []), ...(a.nao_rodou ?? []), ...(a.visto_por ?? [])]),
       ...(dados.gatilho_falso ?? []), ...(dados.adiar ?? []).map((d) => d.alvo),
     ];
-    const desconhecido = nomes.find((n) => idDe(cfg, n) === undefined);
+    const desconhecido = nomes.find((n) => idDe(cfg, n) === undefined && !APOSENTADOS.has(n));
     if (desconhecido !== undefined) falta(`o nome ${desconhecido} não existe em agentes nem em niveis do pipeline.json (erro de digitação?)`);
     const achado = varrer(JSON.stringify(dados), 'sessao.md').find((x) => !x.suprimido && ['critico', 'alto'].includes(x.regra.nivel));
     if (achado !== undefined) falta(`dado pessoal no bloco (regra ${achado.regra.id}): a sessão só leva módulo, pasta, arquivo e o achado técnico`);

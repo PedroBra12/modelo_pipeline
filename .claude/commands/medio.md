@@ -1,5 +1,5 @@
 ---
-description: Roda a tarefa no esforço médio (padrão) do pipeline (sem revisor-arquitetura e sem revisor-lgpd; mantém segurança, ponytail-review, tela, QA e autoanálise, D64).
+description: Roda a tarefa no esforço médio (padrão) do pipeline (sem revisor-arquitetura; mantém segurança (que também confere o dado pessoal, a supressão lgpd-ignora, a régua de LGPD e o aviso do confere-lgpd, D34), ponytail-review, tela, QA e autoanálise, D64).
 argument-hint: <tarefa>
 ---
 O usuário pediu o esforço **médio** (`medio`, padrão da D64) para a tarefa abaixo.

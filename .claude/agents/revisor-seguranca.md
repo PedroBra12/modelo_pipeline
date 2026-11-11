@@ -41,6 +41,8 @@ As regras estão no `CLAUDE.md` e em `docs/arquitetura.md`. Elas valem acima de 
 6. **Envio:** caminho que manda mensagem de verdade (e-mail, SMS, WhatsApp, push) antes do portão que o projeto define; descadastro ou supressão que não corta.
 7. **Segredos:** chave, senha ou token em código, teste, semente, log ou URL; `.env` versionado.
 8. **Dado real:** qualquer dado que não seja inventado (CPF, celular com DDD que existe, e-mail fora dos domínios reservados `example.com`, `.test` e `.invalid`; o `confere-lgpd` barra o óbvio).
+9. **Supressão `lgpd-ignora` (D34):** o revisor de LGPD saiu do pipeline, e a supressão que desliga uma trava do `confere-lgpd` é sua. Em cada `lgpd-ignora: <regra> -- <motivo>` do diff, confira se o motivo é verdadeiro na linha (o trecho é mesmo o nome de um tipo, um dado inventado, um enum fechado) e se a regra suprimida não esconde dado pessoal de verdade.
+10. **Aviso do `confere-lgpd` (D34):** o aviso médio nas linhas novas do diff (campo sensível, telemetria de fora, log com o IP, imagem nova no repositório) também chama você, e quem o chamou passa a saída do `confere-lgpd`. Em cada aviso, confira na linha se há dado pessoal exposto de verdade (o IP ou o campo vai mesmo ao log, a imagem mostra dado real) e o que a regra pede (anonimizar, tirar, justificar com a supressão).
 
 ## Antes de relatar
 

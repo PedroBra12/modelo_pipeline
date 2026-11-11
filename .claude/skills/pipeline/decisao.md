@@ -9,7 +9,7 @@ Para quando a tarefa pede uma escolha difícil de reverter (critérios na seçã
    - **B:** "a que melhor protege as fronteiras entre as pastas e o projeto daqui a dois anos".
    Cada proposta usa o vocabulário da skill `codebase-design` (módulo fundo, costura, adaptador) e diz: os tipos e o contrato, os arquivos e pastas, as migrações, os testes, a seção da arquitetura que muda, e o custo de reverter.
    **Pronto quando:** as duas propostas existem e são diferentes de verdade. Se ficaram iguais, a restrição B era fraca: refaça com outra.
-3. **Julgar.** Mande as duas para o subagente `revisor-arquitetura`, e para o `revisor-seguranca` e o `revisor-lgpd` nos casos da descrição de cada um. Monte uma tabela curta com os critérios: regras não negociáveis, custo de reverter, carga de quem lê, testabilidade, efeito no resto do projeto. Recomende uma.
+3. **Julgar.** Mande as duas para o subagente `revisor-arquitetura`, e para o `revisor-seguranca` nos casos da descrição dele (o dado pessoal que a decisão desenha inclusive: a D34 tirou o revisor de LGPD). Monte uma tabela curta com os critérios: regras não negociáveis, custo de reverter, carga de quem lê, testabilidade, efeito no resto do projeto. Recomende uma.
    **Pronto quando:** a tabela cobre as duas propostas em todos os critérios, os revisores responderam e há uma recomendada.
 4. **Decidir.** Mostre ao usuário a tabela e a recomendação (`AskUserQuestion`, a recomendada primeiro). Se quem decide é outra pessoa (o cliente, o jurídico), escreva o questionário seguindo `.claude/skills/to-questionnaire/SKILL.md` e pare aqui.
    **Pronto quando:** o usuário escolheu, com as palavras dele.

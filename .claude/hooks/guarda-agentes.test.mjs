@@ -35,10 +35,10 @@ const cabecalhos = {
   orquestrador: { name: 'orquestrador', model: 'opus', effort: 'xhigh' },
   'revisor-arquitetura': { name: 'revisor-arquitetura', model: 'opus', effort: 'high', tools },
   'revisor-seguranca': { name: 'revisor-seguranca', model: 'opus', effort: 'xhigh', tools },
-  'revisor-lgpd': { name: 'revisor-lgpd', model: 'opus', effort: 'high', tools },
   'leitor-docs': { name: 'leitor-docs', model: 'haiku', effort: 'low', tools },
   qa: { name: 'qa', model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash' },
   'revisor-tela': { name: 'revisor-tela', model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash' },
+  'designer-ui': { name: 'designer-ui', model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash, Edit, Write' },
   desenvolvedor: { name: 'desenvolvedor', model: 'sonnet', effort: 'medium', tools: 'Read, Edit, Write, Bash, Grep, Glob' },
 };
 const ler = (tipo) => cabecalhos[tipo];
@@ -83,18 +83,26 @@ test('o effort fora dos agentes fixos só aceita low, medium e high: qualquer ou
   assert.equal(decidirAgente({ subagent_type: 'estranho', effort: 'low' }, cabecalhoSonnet).decisao, 'deny', 'nem só o model');
 });
 
-test('o revisor-seguranca passa direto em opus xhigh e o revisor-arquitetura e o revisor-lgpd em opus high, negando outro modelo ou esforço', () => {
+test('o revisor-seguranca passa direto em opus xhigh e o revisor-arquitetura em opus high, negando outro modelo ou esforço', () => {
   const subagent_type = 'revisor-seguranca';
   assert.deepEqual(decide({ subagent_type }), passa, `${subagent_type} pelo cabeçalho`);
   assert.deepEqual(decide({ subagent_type, model: 'opus', effort: 'xhigh' }), passa, `${subagent_type} explícito`);
   assert.equal(decide({ subagent_type, model: 'sonnet', effort: 'high' }).decisao, 'deny', `${subagent_type} não aceita sonnet`);
   assert.equal(decide({ subagent_type, model: 'opus', effort: 'high' }).decisao, 'deny', `${subagent_type} não aceita high`);
-  for (const tipo of ['revisor-arquitetura', 'revisor-lgpd']) {
+  for (const tipo of ['revisor-arquitetura']) {
     assert.deepEqual(decide({ subagent_type: tipo }), passa, `${tipo} pelo cabeçalho`);
     assert.deepEqual(decide({ subagent_type: tipo, model: 'opus', effort: 'high' }), passa, `${tipo} explícito`);
     assert.equal(decide({ subagent_type: tipo, model: 'sonnet', effort: 'high' }).decisao, 'deny', `${tipo} não aceita sonnet`);
     assert.equal(decide({ subagent_type: tipo, model: 'opus', effort: 'xhigh' }).decisao, 'deny', `${tipo} não aceita xhigh`);
   }
+});
+
+test('o designer-ui passa direto em sonnet high, com Edit e Write, e nega outro modelo, esforço ou ferramentas (D35)', () => {
+  const subagent_type = 'designer-ui';
+  assert.deepEqual(decide({ subagent_type }), passa, 'pelo cabeçalho');
+  assert.deepEqual(decide({ subagent_type, model: 'sonnet', effort: 'high' }), passa, 'explícito');
+  assert.equal(decide({ subagent_type, model: 'opus', effort: 'high' }).decisao, 'deny', 'não aceita opus');
+  assert.equal(decide({ subagent_type, model: 'sonnet', effort: 'medium' }).decisao, 'deny', 'não aceita medium');
 });
 
 test('o leitor-docs passa direto em haiku low (cabeçalho ou chamada) e nega outro modelo ou esforço', () => {
@@ -204,7 +212,7 @@ test('o hook de ponta a ponta: nega a entrada ilegível, o fork e o orquestrador
   assert.equal(hook(chamada({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'medium', description: 'x' })), null);
   assert.equal(hook(chamada({ subagent_type: 'revisor-seguranca', description: 'x' })), null, 'o cabeçalho de verdade do revisor-seguranca (opus xhigh)');
   assert.equal(hook(chamada({ subagent_type: 'revisor-arquitetura', description: 'x' })), null, 'o cabeçalho de verdade do revisor-arquitetura (opus high)');
-  assert.equal(hook(chamada({ subagent_type: 'revisor-lgpd', description: 'x' })), null, 'o cabeçalho de verdade do revisor-lgpd (opus high)');
+  assert.equal(hook(chamada({ subagent_type: 'designer-ui', description: 'x' })), null, 'o cabeçalho de verdade do designer-ui (sonnet high)');
   assert.equal(hook(chamada({ subagent_type: 'leitor-docs', description: 'x' })), null, 'o cabeçalho de verdade do leitor-docs (haiku low)');
   assert.equal(hook(chamada({ subagent_type: 'qa', description: 'x' })), null, 'o cabeçalho de verdade do qa (sonnet high)');
   assert.equal(hook(chamada({ subagent_type: 'revisor-tela', description: 'x' })), null, 'o cabeçalho de verdade do revisor-tela (sonnet high)');
@@ -382,14 +390,14 @@ test('campo repetido no cabeçalho (name, model, effort ou tools) nega o agente 
 test('o tools do cabeçalho do agente fixo precisa ser o da tabela, de verdade em disco', () => {
   for (const tools of ['Read, Grep, Glob, Bash', 'Read', '*']) {
     comPasta((pasta) => {
-      const arquivo = join(pasta, 'revisor-lgpd.md');
+      const arquivo = join(pasta, 'revisor-arquitetura.md');
       writeFileSync(arquivo, readFileSync(arquivo, 'utf8').replace(/^tools:.*$/m, `tools: ${tools}`));
-    }, (_, decide) => assert.equal(decide('revisor-lgpd').decisao, 'deny', tools));
+    }, (_, decide) => assert.equal(decide('revisor-arquitetura').decisao, 'deny', tools));
   }
   comPasta((pasta) => {
-    const arquivo = join(pasta, 'revisor-lgpd.md');
+    const arquivo = join(pasta, 'revisor-arquitetura.md');
     writeFileSync(arquivo, readFileSync(arquivo, 'utf8').replace(/^tools:.*\r?\n/m, ''));
-  }, (_, decide) => assert.equal(decide('revisor-lgpd').decisao, 'deny', 'sem tools = todas as ferramentas'));
+  }, (_, decide) => assert.equal(decide('revisor-arquitetura').decisao, 'deny', 'sem tools = todas as ferramentas'));
 });
 
 test('o cabeçalho com fim de linha CRLF é lido igual', () => {
@@ -781,14 +789,14 @@ test('worktree (D63): o hook de ponta a ponta nega o subagente isolado sem a fra
 
 // ---------- o esforço do pipeline em .claude/estado/esforco (D64) ----------
 
-test('esforço do pipeline (D64): ausente só permite leitor-docs; rapido nega todos os revisores (fixos e ponytail-review) e o qa; medio nega arquitetura e lgpd; alto e undefined deixam passar; inválido nega fechado', () => {
+test('esforço do pipeline (D64): ausente só permite leitor-docs; rapido nega todos os revisores (fixos e ponytail-review) e o qa; medio nega arquitetura; alto e undefined deixam passar; inválido nega fechado', () => {
   assert.deepEqual(decidirEsforcoPipeline({ subagent_type: 'leitor-docs' }, '<ausente>'), passa, 'ausente deixa leitor-docs');
-  for (const tipo of ['general-purpose', 'qa', 'revisor-seguranca', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-tela']) {
+  for (const tipo of ['general-purpose', 'qa', 'revisor-seguranca', 'revisor-arquitetura', 'revisor-tela', 'designer-ui']) {
     const r = decidirEsforcoPipeline({ subagent_type: tipo, model: 'sonnet', effort: 'high' }, '<ausente>');
     assert.equal(r.decisao, 'deny', `ausente nega ${tipo}`);
     assert.match(r.motivo, /defina primeiro o esforço do pipeline em \.claude\/estado\/esforco/);
   }
-  for (const tipo of ['revisor-seguranca', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-tela', 'qa']) {
+  for (const tipo of ['revisor-seguranca', 'revisor-arquitetura', 'revisor-tela', 'qa']) {
     const r = decidirEsforcoPipeline({ subagent_type: tipo }, 'rapido');
     assert.equal(r.decisao, 'deny', `rapido nega ${tipo}`);
     assert.match(r.motivo, /esforço rapido \(D64\)/);
@@ -797,13 +805,14 @@ test('esforço do pipeline (D64): ausente só permite leitor-docs; rapido nega t
   assert.equal(decidirEsforcoPipeline({ subagent_type: 'general-purpose', description: 'ponytail-review da pasta' }, 'rapido').decisao, 'deny', 'rapido nega ponytail-review na description');
   assert.deepEqual(decidirEsforcoPipeline({ subagent_type: 'leitor-docs' }, 'rapido'), passa, 'rapido deixa leitor-docs');
   assert.deepEqual(decidirEsforcoPipeline({ subagent_type: 'general-purpose', model: 'sonnet', effort: 'high', prompt: 'escreva o código' }, 'rapido'), passa, 'rapido deixa agente de código');
+  assert.deepEqual(decidirEsforcoPipeline({ subagent_type: 'designer-ui' }, 'rapido'), passa, 'rapido deixa designer-ui');
 
-  for (const tipo of ['revisor-arquitetura', 'revisor-lgpd']) {
+  for (const tipo of ['revisor-arquitetura']) {
     const r = decidirEsforcoPipeline({ subagent_type: tipo }, 'medio');
     assert.equal(r.decisao, 'deny', `medio nega ${tipo}`);
     assert.match(r.motivo, /esforço medio \(D64\)/);
   }
-  for (const tipo of ['revisor-seguranca', 'revisor-tela', 'qa', 'leitor-docs']) {
+  for (const tipo of ['revisor-seguranca', 'revisor-tela', 'qa', 'leitor-docs', 'designer-ui']) {
     assert.deepEqual(decidirEsforcoPipeline({ subagent_type: tipo }, 'medio'), passa, `medio deixa ${tipo}`);
   }
   assert.deepEqual(decidirEsforcoPipeline({ subagent_type: 'general-purpose', prompt: 'aplique ponytail-review' }, 'medio'), passa, 'medio deixa ponytail-review');

@@ -11,17 +11,18 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PISO_GATILHOS, ehArquivoDeCodigo, lerAgentes, lerNiveis, lerPastas, localizar, par, revisaoDeObjeto } from './config.mjs';
+import { APOSENTADOS, PISO_GATILHOS, ehArquivoDeCodigo, lerAgentes, lerNiveis, lerPastas, localizar, par, revisaoDeObjeto } from './config.mjs';
 import { regrasCarregaram, varrer } from './confere-lgpd.mjs';
 import { mesmaParteFixa } from './desenvolvedor.mjs';
 
 export const ESFORCOS_PIPELINE = new Set(['rapido', 'medio', 'alto']);
 export const ESFORCO_PADRAO = 'medio';
-export const FORA_DO_MEDIO = new Set(['revisor-arquitetura', 'revisor-lgpd']);
+export const FORA_DO_MEDIO = new Set(['revisor-arquitetura']);
 export const GATILHOS_BLOQUEADOS_NO_RAPIDO = new Set([
   'banco',
   'permissao',
   'dado_pessoal',
+  'rede_rota',
   'config_pipeline',
   'lgpd_ignora',
   'lgpd_regras',
@@ -212,6 +213,22 @@ export function unirRevisao(a, b) {
   };
 }
 
+/**
+ * A regra da base sem os agentes aposentados (`APOSENTADOS`, D34): a base que ainda os cita não os chama mais. O gatilho que
+ * fica sem revisor nenhum sai (só o head diz o que um gatilho dele chama, e o do head nunca fica vazio); o gatilho de risco
+ * do `rapido` não depende disso, porque o head traz o piso de cada um. O revisor da base que não é aposentado fica como está.
+ */
+export function semAposentados(revisao) {
+  const sai = (lista) => lista.filter((nome) => !APOSENTADOS.has(nome));
+  return {
+    ...revisao,
+    sempre: sai(revisao.sempre),
+    comportamento: sai(revisao.comportamento),
+    grande: revisao.grande == null ? revisao.grande : { ...revisao.grande, revisores: sai(revisao.grande.revisores) },
+    gatilhos: revisao.gatilhos.map((g) => ({ ...g, revisores: sai(g.revisores) })).filter((g) => g.revisores.length > 0),
+  };
+}
+
 /** O `revisao` em `texto` (o conteúdo de um pipeline.json). Com `pisos` (o head), o que não lê ou não cumpre os pisos do código é erro; sem eles (a base), vira null. */
 function revisaoDoTexto(texto, rotulo, pisos) {
   let revisao;
@@ -250,7 +267,7 @@ export function carregarRevisao({ base, head, trabalho = false, cwd = process.cw
   const atual = revisaoDoTexto(textoHead, trabalho ? 'da árvore' : `em ${head}`, true);
   const textoBase = textoNoGit(trabalho ? 'HEAD' : base, cwd);
   const antes = textoBase === null ? null : revisaoDoTexto(textoBase, 'da base', false);
-  return antes === null ? atual : unirRevisao(antes, atual);
+  return antes === null ? atual : unirRevisao(semAposentados(antes), atual);
 }
 
 // ---------- a escolha ----------
@@ -447,7 +464,7 @@ function motivosDaMudancaGrande(grande, dosGatilhos, arquivos, pastas) {
  * O binário (a mídia inclusive) roda o varrer com "\0": só as regras de caminho e de binário do confere-lgpd, sem gatilho de conteúdo.
  */
 function motivosDoConfereLgpd(arquivos) {
-  if (!regrasCarregaram()) throw new Error('as regras do confere-lgpd não carregaram (lgpd-regras.mjs ou config.mjs quebrado): sem elas a revisão de LGPD não vale');
+  if (!regrasCarregaram()) throw new Error('as regras do confere-lgpd não carregaram (lgpd-regras.mjs ou config.mjs quebrado): sem elas o aviso de LGPD não vale');
   const motivos = [];
   for (const a of arquivos) {
     if (!a.binario && a.linhas.length === 0) continue;
@@ -513,12 +530,18 @@ export function escolher(todos, cfg, { comportamento = false, semComportamento, 
     if (motivos.length > 0) for (const nome of g.revisores) juntar(nome, motivos);
   }
   const doConfereLgpd = motivosDoConfereLgpd(todos);
-  if (doConfereLgpd.length > 0) juntar('revisor-lgpd', doConfereLgpd);
+  if (doConfereLgpd.length > 0) juntar('revisor-seguranca', doConfereLgpd);
   if (revisao.grande != null) {
     const grande = motivosDaMudancaGrande(revisao.grande, dosGatilhos, arquivos, pastas);
     if (grande.length > 0) for (const nome of revisao.grande.revisores) juntar(nome, grande);
   }
-  const resumir = (r) => ({ ...r, total: r.motivos.length, motivos: r.motivos.slice(0, MAX_MOTIVOS) });
+  // Antes de cortar em MAX_MOTIVOS entra um motivo de cada gatilho (na ordem em que aparecem), e só depois os demais (D34).
+  const resumir = (r) => {
+    const vistos = new Set();
+    const primeiros = r.motivos.filter((m) => !vistos.has(m.gatilho) && vistos.add(m.gatilho));
+    const demais = r.motivos.filter((m) => !primeiros.includes(m));
+    return { ...r, total: r.motivos.length, motivos: [...primeiros, ...demais].slice(0, MAX_MOTIVOS) };
+  };
   const obrigatorios = [...porNome.values()].map(resumir);
   const condicionais = [];
   const dispensados = [];
@@ -558,7 +581,7 @@ export function escolher(todos, cfg, { comportamento = false, semComportamento, 
       }
     }
   }
-  return { esforco, obrigatorios, condicionais, dispensados, semEfeito, codigo: codigo.length };
+  return { esforco, obrigatorios, condicionais, dispensados, semEfeito, avisosLgpd: resumir({ nome: 'confere-lgpd', motivos: doConfereLgpd }), codigo: codigo.length };
 }
 
 const onde = (m) => (m.linha === undefined ? m.arquivo : `${m.arquivo}:${m.linha}`);
@@ -584,6 +607,12 @@ export function formatar(resultado, base, head) {
     for (const d of resultado.dispensados) linhas.push(`  - ${d.nome}: ${d.motivo}`);
   }
   for (const s of resultado.semEfeito) linhas.push('', `${s.nome} não era obrigatório: ${s.opcao} sem efeito`);
+  const avisos = resultado.avisosLgpd;
+  if (avisos !== undefined && avisos.total > 0) {
+    linhas.push('', 'Avisos do confere-lgpd nas linhas novas (D34: chamam o revisor-seguranca; vão também ao relatório):');
+    for (const m of avisos.motivos) linhas.push(`      ${motivo(m)}`);
+    if (avisos.total > avisos.motivos.length) linhas.push(`      e mais ${avisos.total - avisos.motivos.length} aviso(s)`);
+  }
   return linhas.join('\n');
 }
 

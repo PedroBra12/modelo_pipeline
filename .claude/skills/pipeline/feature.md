@@ -18,6 +18,6 @@ Comportamento ou ferramenta nova, dentro de uma pasta.
    - borda validada;
    - job e migração que podem rodar de novo sem estrago (`principle-make-operations-idempotent`).
    **Pronto quando:** o teste fica verde, e os chamadores, testes e sementes que a mudança alcança estão ajustados.
-5. **Tela, se houver.** Use a skill `frontend-design`, dentro do `PRODUCT.md`: contraste AA, forma e cor nos estados, e o texto de onde o projeto o guarda. Quem a vê rodando, a 320 px e na larga, é o `revisor-tela`, na revisão (`SKILL.md`, seção 4).
+5. **Tela, se houver.** A tela de `apps/web` vai ao agente `designer-ui` (D35), que usa a skill `impeccable` dentro do `PRODUCT.md` e do `DESIGN.md`. **O agente de código não escreve o `.tsx` de tela nem o `estilos.css`** (ele não delega): relata o que a tela precisa, e o orquestrador chama o `designer-ui` depois, no mesmo branch, em série. A tela entrega: contraste AA, forma e cor nos estados, e o texto de onde o projeto o guarda. Quem a vê rodando, a 320 px e na larga, é o `revisor-tela`, na revisão (`SKILL.md`, seção 4).
    **Pronto quando:** a tela roda localmente e foi vista na tela estreita (320 px) e na larga.
 6. **Portões, revisão, QA e relatório:** seções 3 a 6 do `SKILL.md`.

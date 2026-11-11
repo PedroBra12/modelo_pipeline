@@ -5,9 +5,9 @@
   "agentes": {
     "revisor-seguranca": { "model": "opus", "effort": "xhigh", "tools": "Read, Grep, Glob", "tarefa": "revisão de risco: banco, permissão, dado pessoal, rede, segredo, isolamento entre donos de dado" },
     "revisor-arquitetura": { "model": "opus", "effort": "high", "tools": "Read, Grep, Glob", "tarefa": "revisão de arquitetura: fronteiras entre pastas, contrato, AGENTS.md, decisão registrada" },
-    "revisor-lgpd": { "model": "opus", "effort": "high", "tools": "Read, Grep, Glob", "tarefa": "revisão de LGPD: finalidade, caminho do dado pessoal, retenção, supressões" },
     "qa": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "tarefa": "rodar a coisa de verdade e tentar quebrar" },
-    "revisor-tela": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "tarefa": "ver a tela tocada rodando a 320 px e a 1280 px no ambiente local, com a skill de tela do projeto, contra o PRODUCT.md (portão 5)" },
+    "revisor-tela": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "tarefa": "ver a tela tocada rodando a 320 px e a 1280 px no ambiente local, com o detector da `impeccable` (pelo lançador preso) e o `DESIGN.md`, contra o PRODUCT.md (portão 5)" },
+    "designer-ui": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash, Edit, Write", "tarefa": "escrever a tela de `apps/web` (o `.tsx` de `app/` e de `componentes/` e o `estilos.css`): vê a tela rodando no ambiente local, critica com a skill `impeccable` dentro do PRODUCT.md e do DESIGN.md e se confere a 320 px e a 1280 px (D35)" },
     "leitor-docs": { "model": "haiku", "effort": "low", "tools": "Read, Grep, Glob", "tarefa": "ler `docs/` e os `AGENTS.md` e apontar os arquivos e linhas onde focar" }
   },
   "niveis": {
@@ -44,7 +44,7 @@
       },
       {
         "nome": "dado_pessoal",
-        "revisores": ["revisor-lgpd", "revisor-seguranca"],
+        "revisores": ["revisor-seguranca"],
         "remocoes": true,
         "caminhos": [],
         "conteudo": [
@@ -67,7 +67,13 @@
       {
         "nome": "config_pipeline",
         "revisores": ["revisor-seguranca", "revisor-arquitetura"],
-        "caminhos": ["^\\.claude/(pipeline\\.json|agents/|hooks/|settings(\\.local)?\\.json|skills/pipeline/|skills/adjust-pipeline/)"],
+        "caminhos": [
+          "^\\.claude/(pipeline\\.json|agents/|hooks/|settings(\\.local)?\\.json|skills/pipeline/|skills/adjust-pipeline/)",
+          "^\\.claude/commands/",
+          "^CLAUDE\\.md$",
+          "^\\.claude/skills/impeccable/",
+          "^\\.claude/skills/(pick-ui-library|break-ui|mobile-native|emil-design-eng)/"
+        ],
         "conteudo": []
       },
       {
@@ -79,16 +85,16 @@
       },
       {
         "nome": "lgpd_ignora",
-        "revisores": ["revisor-lgpd"],
+        "revisores": ["revisor-seguranca"],
         "todo_arquivo": true,
         "caminhos": [],
         "conteudo": ["lgpd-ignora:\\s*([\\w ,]+?)\\s*--\\s*\\S.{9,}"]
       },
       {
         "nome": "lgpd_regras",
-        "revisores": ["revisor-lgpd"],
+        "revisores": ["revisor-seguranca"],
         "remocoes": true,
-        "caminhos": ["^\\.claude/hooks/(lgpd-regras|confere-lgpd)", "^\\.claude/hooks/config\\.mjs$", "^\\.claude/agents/revisor-lgpd\\.md$"],
+        "caminhos": ["^\\.claude/hooks/(lgpd-regras|confere-lgpd)", "^\\.claude/hooks/config\\.mjs$", "^docs/(decisoes|arquitetura)\\.md$", "^CLAUDE\\.md$"],
         "conteudo": ["legadoAte"]
       },
       {
