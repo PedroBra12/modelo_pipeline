@@ -586,7 +586,7 @@ test('a janela do registro: a única linha do chat no começo de um arquivo de m
   assert.deepEqual(lerRegistroDoArquivo(arquivo, Number.POSITIVE_INFINITY), { model: 'claude-opus-5-5', effort: 'xhigh' }, 'sem janela o mesmo arquivo dá o par: é a janela que corta');
 });
 
-test('o hook de ponta a ponta, sem neto no pipeline.json: o subagente não abre subagente e só o chat principal (sem agent_id, agent_type ausente ou orquestrador) segue (D11)', () => {
+test('o hook de ponta a ponta, sem neto no pipeline.json: o subagente não abre subagente e só o chat principal (sem agent_id, agent_type ausente ou que não é agente do pipeline.json) segue (D11)', () => {
   const hook = (entrada) => {
     const r = spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8' });
     return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
@@ -605,9 +605,10 @@ test('o hook de ponta a ponta, sem neto no pipeline.json: o subagente não abre 
   assert.deepEqual(hook(com({ agent_type: 'orquestrador' })), { status: 0, saida: null }, 'orquestrador no par certo passa');
   assert.equal(hook(com({ agent_type: 'orquestrador' }, { effort: 'low' })).saida?.permissionDecision, 'deny', 'e no par errado nega pelo par');
   assert.deepEqual(hook(com({})), { status: 0, saida: null }, 'sem agent_type (o chat principal sem --agent) segue');
-  for (const extra of [{ agent_type: 'outro' }, { agent_type: 'Orquestrador' }, { agent_type: 'general-purpose' }]) {
+  assert.deepEqual(hook(com({ agent_type: 'claude' })), { status: 0, saida: null }, 'agent_type que não é agente do pipeline.json (a sessão em segundo plano) é o chat principal');
+  for (const extra of [{ agent_type: 'qa' }, { agent_type: 'revisor-seguranca' }, { agent_type: 'leitor-docs' }]) {
     const r = hook(com(extra));
-    assert.equal(r.saida?.permissionDecision, 'deny', `agent_type ${extra.agent_type} sem agent_id não é o chat principal`);
+    assert.equal(r.saida?.permissionDecision, 'deny', `agent_type ${extra.agent_type} (agente do pipeline.json) sem agent_id não é o chat principal`);
     assert.match(r.saida.permissionDecisionReason, /subagente não abre subagente/);
   }
   for (const agent_id of ['', '  ', null]) assert.deepEqual(hook(com({ agent_id })), { status: 0, saida: null }, `agent_id ${JSON.stringify(agent_id)} é sem agent_id`);
@@ -632,22 +633,24 @@ test('parDoChat: com effort.level na entrada só ele vale; sem ele valem CLAUDE_
   assert.deepEqual(decidirOrquestrador(parDoChat({ effort: { level: 'xhigh' } }, { CLAUDE_EFFORT: 'low' }, () => ({ model: 'claude-opus-5-5', effort: 'low' }))), passa, 'com effort.level só ele vale');
 });
 
-test('ehChatPrincipal: só a chamada sem agent_id e com agent_type ausente ou orquestrador (D11)', () => {
-  for (const entrada of [{}, undefined, null, { agent_type: 'orquestrador' }, { agent_id: '' }, { agent_id: '  ', agent_type: 'orquestrador' }, { agent_id: null }, { agent_type: '' }, { agent_type: null }]) {
-    assert.equal(ehChatPrincipal(entrada), true, JSON.stringify(entrada));
+test('ehChatPrincipal: sem agent_id e com agent_type ausente ou que não é agente do pipeline.json (D11)', () => {
+  const p = P;
+  const nomes = Object.keys(P.agentes);
+  for (const entrada of [{}, undefined, null, { agent_type: 'orquestrador' }, { agent_id: '' }, { agent_id: '  ', agent_type: 'orquestrador' }, { agent_id: null }, { agent_type: '' }, { agent_type: null }, { agent_type: 'claude' }, { agent_type: 'outro' }, { agent_type: 'Orquestrador' }]) {
+    assert.equal(ehChatPrincipal(entrada, p), true, JSON.stringify(entrada));
   }
-  for (const entrada of [{ agent_id: 'a1' }, { agent_id: 'a1', agent_type: 'orquestrador' }, { agent_id: ' a1 ', agent_type: 'Explore' }, { agent_type: 'outro' }, { agent_type: 'Orquestrador' }, { agent_type: ' orquestrador' }, { agent_type: 'general-purpose' }, { agent_id: 7 }, { agent_id: {}, agent_type: 'outro' }, { agent_type: 7 }]) {
-    assert.equal(ehChatPrincipal(entrada), false, JSON.stringify(entrada));
+  for (const entrada of [{ agent_id: 'a1' }, { agent_id: 'a1', agent_type: 'orquestrador' }, { agent_id: ' a1 ', agent_type: 'Explore' }, ...nomes.map((nome) => ({ agent_type: nome })), { agent_id: 7 }, { agent_id: {}, agent_type: 'outro' }, { agent_type: 7 }]) {
+    assert.equal(ehChatPrincipal(entrada, p), false, JSON.stringify(entrada));
   }
 });
 
 test('decidirChamador sem neto: o chat principal segue (null) e a chamada de subagente nega com a mensagem da D11', () => {
   const motivo = 'subagente não abre subagente: só o chat principal, o orquestrador, delega (D11)';
   const chamada = { subagent_type: 'leitor-docs', description: 'x' };
-  for (const entrada of [{ agent_id: 'a1' }, { agent_id: 'a1', agent_type: 'orquestrador' }, { agent_id: 'a1', agent_type: 'general-purpose' }, { agent_type: 'outro' }]) {
+  for (const entrada of [{ agent_id: 'a1' }, { agent_id: 'a1', agent_type: 'orquestrador' }, { agent_id: 'a1', agent_type: 'general-purpose' }, { agent_type: 'qa' }]) {
     assert.deepEqual(decidirChamador(entrada, chamada, P, ler), { decisao: 'deny', motivo }, JSON.stringify(entrada));
   }
-  for (const entrada of [{}, undefined, { agent_type: 'orquestrador' }, { agent_id: '' }]) assert.equal(decidirChamador(entrada, chamada, P, ler), null, JSON.stringify(entrada));
+  for (const entrada of [{}, undefined, { agent_type: 'orquestrador' }, { agent_type: 'claude' }, { agent_id: '' }]) assert.equal(decidirChamador(entrada, chamada, P, ler), null, JSON.stringify(entrada));
 });
 
 test('o hook de ponta a ponta confere o chat principal: opus xhigh passa; outro esforço ou modelo nega; o que não deu para ler pede confirmação; vale para toda chamada de Agent', () => {

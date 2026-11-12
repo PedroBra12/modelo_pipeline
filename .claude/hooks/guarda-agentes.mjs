@@ -402,11 +402,19 @@ export function decidirOrquestrador(par, p = papeisDoProjeto()) {
 const PESO = { deny: 2, ask: 1 };
 const dado = (v) => v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '');
 /**
- * Chat principal (D11) é só a chamada SEM `agent_id` e com `agent_type` ausente ou igual a `orquestrador`: o `agent_type` vem
- * também no chat aberto por `--agent`, e o `agent_id` só na entrada de um subagente. Todo o resto é chamada de subagente. Valor
- * que não é texto (`agent_id: 7`) conta como dado: na dúvida é subagente.
+ * Chat principal (D11) é a chamada SEM `agent_id` cujo `agent_type`, se vier, não é o nome de um agente de `agentes` do
+ * pipeline.json (`p`): o `agent_id` só vem na entrada de um subagente, e o `agent_type` vem também no chat principal, que nem
+ * sempre é o `orquestrador` (a sessão em segundo plano chega com outro tipo, e a regra "ausente ou orquestrador" travou o chat).
+ * Assim, a chamada aninhada de um agente fixo que chegasse sem `agent_id` segue tratada como subagente. Valor que não é texto
+ * (`agent_id: 7`, `agent_type: 7`) conta como subagente: na dúvida é subagente.
  */
-export const ehChatPrincipal = (entrada) => !dado(entrada?.agent_id) && (!dado(entrada?.agent_type) || entrada.agent_type === SO_NO_CHAT);
+export const ehChatPrincipal = (entrada, p) => {
+  if (dado(entrada?.agent_id)) return false;
+  const tipo = entrada?.agent_type;
+  if (!dado(tipo)) return true;
+  if (typeof tipo !== 'string') return false;
+  return !papeis.nomesDeAgentes(p).includes(tipo);
+};
 
 /**
  * A chamada de Agent feita por um subagente (D11): só passa o neto, o agente que `neto` do pipeline.json nomeia, uma vez só.
@@ -431,7 +439,7 @@ function decidirDoNeto(entrada, dados, p, lerCabecalho, lerTamanho, esforco) {
  * aí segue para o `decidirOrquestrador` e o `decidirAgente`. `entrada` é a entrada inteira do hook e `dados` o `tool_input`.
  */
 export function decidirChamador(entrada, dados, p, lerCabecalho = () => undefined, lerTamanho = tamanhoDoArquivo, esforco = undefined) {
-  return ehChatPrincipal(entrada) ? null : decidirDoNeto(entrada, dados, p, lerCabecalho, lerTamanho, esforco);
+  return ehChatPrincipal(entrada, p) ? null : decidirDoNeto(entrada, dados, p, lerCabecalho, lerTamanho, esforco);
 }
 
 // ---------- o pipeline.json contra a main (D11) ----------
