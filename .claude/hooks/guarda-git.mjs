@@ -56,20 +56,30 @@ const NOME_DE_AMBIENTE = /\b(?:GIT_CONFIG\w*|NODE_OPTIONS)\b/i;
 const NOME_DE_ARQUIVO = /\.git[\\/](?:config|hooks)\b|config\.worktree/i;
 const NOME_DO_HOOKSPATH = /hookspath/i;
 const menciona = (texto) => NOME_DE_AMBIENTE.test(texto) || NOME_DE_ARQUIVO.test(texto) || NOME_DO_HOOKSPATH.test(texto);
-// D8.7: com agent_id (o subagente), a pasta de agentes entra na mesma regra invertida: toda menção fora de um segmento que só lê nega.
+// D8.7 e D11: com agent_id (o subagente), a pasta de agentes, o pipeline.json, os settings*.json e `.claude/estado/` entram na mesma regra invertida: toda menção fora de um segmento que só lê nega.
 // `.claude/agents` sem diferença de caixa, com `./`, `//` ou `\` no meio; e, com `.claude` em outro ponto do comando (cd .claude, -C .claude),
 // o `agents` solto como caminho (`agents/x.md`). O `agents/` no meio de outro caminho (apps/agents/) não conta.
 const NOME_DE_AGENTES = /\.claude[\\/]+(?:\.?[\\/]+)*agents(?![\w-])/i;
 const AGENTS_SOLTO = /(?:^|[\s'"=])agents(?:[\\/]|(?=\s|$|['"]))/i;
 // o ajusta-pipeline grava o agente sem citar a pasta: o --sincronizar-desenvolvedor, o --aplicar-menos e o --aplicar-mais contam como menção a ela
 const AJUSTA_AGENTES = /--(?:sincronizar-desenvolvedor|aplicar-menos|aplicar-mais)(?![\w-])/i;
-const MOTIVO_DOS_AGENTES = 'subagente não mexe em `.claude/agents/` pelo shell (D8): só lê (cat, grep, rg, head, tail, wc, echo, git grep/log/show/diff, sem gravar em arquivo nem parêntese); a mudança ali se relata ao orquestrador';
+// o gerador dos pares (D11) também regrava o cabeçalho dos agentes sem citar a pasta: `sincroniza-pares` (com ou sem .mjs), com qualquer
+// argumento, conta como menção a ela, menos com `--conferir` no mesmo segmento (que só lê). O que vem depois do nome vai até o separador.
+const SINCRONIZA_PARES = /sincroniza-pares(?:\.mjs)?(?![\w-])([^;&|\n]*)/gi;
+const SO_CONFERE = /(?:^|\s)--conferir(?=\s|$)/;
+const gravaPares = (texto) => [...texto.matchAll(SINCRONIZA_PARES)].some((m) => !SO_CONFERE.test(m[1]));
+// D11: o `pipeline.json`, os `settings*.json` e a pasta `.claude/estado/` (onde mora o esforço do pipeline) entram na mesma regra: o subagente só os lê.
+// Sem saber em que worktree o comando roda (a regra é léxica): o desenvolvedor não mexe neles nem no próprio worktree. O `pipeline.json` tem ainda
+// a confirmação contra a `main` na guarda-agentes, que é a rede de verdade; aqui é contra acidente (variável, glob, aspas partidas, link, `git apply` passam).
+const NOME_DE_CONFIG = /\.claude[\\/]+(?:\.?[\\/]+)*(?:pipeline\.json|settings[\w.-]*\.json|estado(?![\w-]))/i;
+const CONFIG_SOLTO = /(?:^|[\s'"=])(?:pipeline\.json|settings[\w.-]*\.json(?![\w.-])|estado[\\/])/i;
+const MOTIVO_DOS_AGENTES = 'subagente não mexe em `.claude/agents/`, `.claude/pipeline.json`, `.claude/settings*.json` nem `.claude/estado/` pelo shell (D8, D11): só lê (cat, grep, rg, head, tail, wc, echo, git grep/log/show/diff, sem gravar em arquivo nem parêntese); a mudança ali se relata ao orquestrador';
 const MARCADOR_DO_HEREDOC = /GIT_CONFIG_HEREDOC/;
-/** O que cita só a pasta de agentes, no comando inteiro: o `agents` solto só conta onde o comando também fala de `.claude`. */
+/** O que cita só a pasta de agentes e os arquivos de configuração do pipeline, no comando inteiro: o nome solto só conta onde o comando também fala de `.claude`. */
 const citaAgentes = (comando) => {
   const comClaude = /\.claude\b/i.test(comando);
   // o marcador do heredoc (marcarHeredocs) só nasce quando o corpo citou a pasta: lê-lo como menção impede o heredoc de esconder a trava
-  return (texto) => NOME_DE_AGENTES.test(texto) || AJUSTA_AGENTES.test(texto) || MARCADOR_DO_HEREDOC.test(texto) || (comClaude && AGENTS_SOLTO.test(texto));
+  return (texto) => NOME_DE_AGENTES.test(texto) || NOME_DE_CONFIG.test(texto) || AJUSTA_AGENTES.test(texto) || gravaPares(texto) || MARCADOR_DO_HEREDOC.test(texto) || (comClaude && (AGENTS_SOLTO.test(texto) || CONFIG_SOLTO.test(texto)));
 };
 /** A pasta de agentes e, junto, os nomes da configuração dos hooks do git. */
 const mencionaAgentes = (comando) => {
@@ -137,7 +147,7 @@ function soLeOuTira(segmento, cita = menciona) {
   if (programa === 'xargs') return SO_XARGS_LE.test(segmento);
   if (programa === 'git') {
     // git config com o core.hooksPath só: quem o escreve é negado pelo analisarGit; com o nome do arquivo ou da variável, não
-    const soHooksPath = !NOME_DE_AMBIENTE.test(segmento) && !NOME_DE_ARQUIVO.test(segmento) && (cita === menciona || !NOME_DE_AGENTES.test(segmento));
+    const soHooksPath = !NOME_DE_AMBIENTE.test(segmento) && !NOME_DE_ARQUIVO.test(segmento) && (cita === menciona || !(NOME_DE_AGENTES.test(segmento) || NOME_DE_CONFIG.test(segmento)));
     return gitSoLe(segmento) || (partesDoGit(segmento).sub === 'config' && soHooksPath);
   }
   if (SO_LE.has(programa) || SO_TIRA.has(programa)) return true;

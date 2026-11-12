@@ -8,7 +8,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ARQUIVO, lerAgentes, lerNiveis, lerPastas, lerRevisao } from './config.mjs';
+import { ARQUIVO, lerPastas, lerRevisao } from './config.mjs';
+import { lerAgentes, lerNiveis } from './papeis.mjs';
 import { escolher, soParteDoProjeto } from './escolhe-revisores.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));

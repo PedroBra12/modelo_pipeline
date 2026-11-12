@@ -5,7 +5,8 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ARQUIVO, CONFIGURE, MARCADOR, ESCADA, PISOS, PISO_GATILHOS, PISO_GRANDE, conferirPisos, lerAgentes, lerAjuste, lerLegadoAte, lerNiveis, lerPastas, lerPortao, lerRepositorio, lerRevisao, localizar, revisaoDeObjeto, urlDoRepositorio } from './config.mjs';
+import { ARQUIVO, CONFIGURE, MARCADOR, PISO_GATILHOS, PISO_GRANDE, lerAjuste, lerLegadoAte, lerPastas, lerPortao, lerRepositorio, lerRevisao, localizar, revisaoDeObjeto, urlDoRepositorio } from './config.mjs';
+import { lerAgentes, lerNiveis } from './papeis.mjs';
 
 /** Roda `fn(caminho)` com um pipeline.json temporário (objeto vira JSON; texto vai como está; undefined = sem arquivo). */
 function comArquivo(conteudo, fn) {
@@ -19,12 +20,12 @@ function comArquivo(conteudo, fn) {
   }
 }
 
-test('o pipeline.json do projeto é JSON válido e tem os sete campos, e só o lgpd é opcional; o repositorio é o marcador ou um dono/repo', () => {
+test('o pipeline.json do projeto é JSON válido e tem os dez campos, e só o lgpd e o neto são opcionais; o repositorio é o marcador ou um dono/repo', () => {
   const dados = JSON.parse(readFileSync(ARQUIVO, 'utf8'));
-  const obrigatorios = ['agentes', 'ajuste', 'niveis', 'pastasDeTrabalho', 'portaoRapido', 'repositorio', 'revisao'];
+  const obrigatorios = ['agentes', 'ajuste', 'comum', 'escada', 'familias', 'niveis', 'pastasDeTrabalho', 'portaoRapido', 'repositorio', 'revisao'];
   const chaves = Object.keys(dados).sort();
   for (const c of obrigatorios) assert.ok(chaves.includes(c), `falta ${c}`);
-  assert.deepEqual(chaves.filter((c) => !obrigatorios.includes(c)).filter((c) => c !== 'lgpd'), [], 'além dos sete, só o lgpd (opcional)');
+  assert.deepEqual(chaves.filter((c) => !obrigatorios.includes(c)).filter((c) => !['lgpd', 'neto'].includes(c)), [], 'além dos dez, só o lgpd e o neto (opcionais)');
   const repo = lerRepositorio();
   if (dados.repositorio === MARCADOR) assert.ok(repo.erro?.startsWith(CONFIGURE), 'o marcador falha fechado');
   else assert.deepEqual(repo, { valor: dados.repositorio, erro: null });
@@ -101,37 +102,6 @@ test('urlDoRepositorio: https e ssh do GitHub, com ou sem .git, sem caixa, e esc
 
 const dadosReais = () => JSON.parse(readFileSync(ARQUIVO, 'utf8'));
 
-test('agentes e niveis: o do projeto carrega; nome, model, effort e tools inválidos, abaixo do piso ou fixo mudado falham', () => {
-  const agentes = lerAgentes();
-  assert.equal(agentes.erro, null);
-  assert.deepEqual(Object.keys(agentes.valor).sort(), ['leitor-docs', 'qa', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-seguranca', 'revisor-tela']);
-  assert.equal(lerNiveis().erro, null);
-  const com = (secao, nome, valor) => { const d = dadosReais(); d[secao][nome] = valor; return d; };
-  const q = dadosReais().agentes.qa;
-  for (const [rotulo, d, esperado] of [
-    ['model inválido', com('agentes', 'qa', { ...q, model: 'gpt' }), /agentes\.qa/],
-    ['effort inválido', com('agentes', 'qa', { ...q, effort: 'max' }), /agentes\.qa/],
-    ['sem tools', com('agentes', 'qa', { model: 'sonnet', effort: 'high' }), /agentes\.qa/],
-    ['tarefa não texto', com('agentes', 'qa', { ...q, tarefa: 3 }), /agentes\.qa/],
-    ['segurança é fixa, para baixo', com('agentes', 'revisor-seguranca', { ...dadosReais().agentes['revisor-seguranca'], effort: 'high' }), /revisor-seguranca é fixo em opus:xhigh/],
-    ['segurança é fixa, para outro modelo', com('agentes', 'revisor-seguranca', { ...dadosReais().agentes['revisor-seguranca'], model: 'sonnet' }), /revisor-seguranca é fixo em opus:xhigh/],
-    ['lgpd é fixo', com('agentes', 'revisor-lgpd', { ...dadosReais().agentes['revisor-lgpd'], model: 'sonnet' }), /revisor-lgpd é fixo em opus:high/],
-    ['nível autoanalise é fixo', com('niveis', 'autoanalise', { model: 'sonnet', effort: 'low' }), /niveis\.autoanalise é fixo em sonnet:medium/],
-    ['fixo mudado', com('agentes', 'leitor-docs', { ...dadosReais().agentes['leitor-docs'], model: 'sonnet' }), /fixo em haiku:low/],
-    ['revisor-tela abaixo do piso', com('agentes', 'revisor-tela', { ...dadosReais().agentes['revisor-tela'], model: 'sonnet', effort: 'low' }), /agentes\.revisor-tela está em sonnet:low, abaixo do piso sonnet:medium/],
-    ['arquitetura em sonnet (o modelo vem do papel)', com('agentes', 'revisor-arquitetura', { ...dadosReais().agentes['revisor-arquitetura'], model: 'sonnet', effort: 'high' }), /sonnet:high, abaixo do piso opus:medium/],
-    ['nome desconhecido', com('agentes', 'intruso', q), /nome desconhecido/],
-    ['nível de código em opus', com('niveis', 'medio', { model: 'opus', effort: 'high' }), /niveis\.medio: nível de código não usa opus/],
-    ['nível codigo-seguranca em opus', com('niveis', 'codigo-seguranca', { model: 'opus', effort: 'high' }), /niveis\.codigo-seguranca: nível de código não usa opus/],
-    ['nível abaixo do piso', com('niveis', 'medio', { model: 'sonnet', effort: 'low' }), /abaixo do piso sonnet:medium/],
-  ]) comArquivo(d, (c) => assert.match((rotulo.startsWith('nível') ? lerNiveis(c) : lerAgentes(c)).erro, esperado, rotulo));
-  const sem = dadosReais();
-  delete sem.agentes.qa;
-  comArquivo(sem, (c) => assert.match(lerAgentes(c).erro, /agentes\.qa falta/));
-  for (const agentes of [undefined, {}, [], 'x']) comArquivo({ agentes }, (c) => assert.match(lerAgentes(c).erro, /agentes em/));
-  comArquivo({ niveis: { 'nome ruim': { model: 'sonnet', effort: 'low' } } }, (c) => assert.match(lerNiveis(c).erro, /nome inválido/));
-});
-
 test('o BOM no começo do pipeline.json é aceito', () => {
   comArquivo(`﻿${JSON.stringify(dadosReais())}`, (c) => assert.equal(lerAgentes(c).erro, null));
 });
@@ -166,7 +136,10 @@ test('revisao: a do projeto compila e cumpre os pisos; gatilho repetido, regex i
     ['gatilho tela removido', (d) => { d.gatilhos = d.gatilhos.filter((x) => x.nome !== 'tela'); }, /gatilho tela falta/],
     ['revisor-tela tirado do gatilho tela', (d) => { g(d, 'tela').revisores = ['qa']; }, /tela: revisores perdeu revisor-tela/],
     ['caminho do gatilho tela encolhido', (d) => { g(d, 'tela').caminhos = ['^src/.+\\.jsx$']; }, /tela: caminhos perdeu/],
-    ['revisor mínimo tirado', (d) => { g(d, 'dado_pessoal').revisores = ['revisor-lgpd']; }, /dado_pessoal: revisores perdeu revisor-seguranca/],
+    ['revisor mínimo tirado', (d) => { g(d, 'dado_pessoal').revisores = ['revisor-arquitetura']; }, /dado_pessoal: revisores perdeu revisor-seguranca/],
+    ['lgpd_regras sem o revisor-seguranca (D34)', (d) => { g(d, 'lgpd_regras').revisores = ['revisor-arquitetura']; }, /lgpd_regras: revisores perdeu revisor-seguranca/],
+    ['remocoes tirado do lgpd_regras', (d) => { delete g(d, 'lgpd_regras').remocoes; }, /lgpd_regras: remocoes tem de ser true/],
+    ['lgpd_ignora sem o revisor-seguranca (D34)', (d) => { g(d, 'lgpd_ignora').revisores = ['revisor-arquitetura']; }, /lgpd_ignora: revisores perdeu revisor-seguranca/],
     ['caminho mínimo tirado', (d) => { g(d, 'banco').caminhos = ['^x/']; }, /banco: caminhos perdeu/],
     ['conteúdo mínimo tirado', (d) => { g(d, 'lgpd_ignora').conteudo = ['outra coisa']; }, /lgpd_ignora: conteudo perdeu/],
     ['remocoes tirado do permissao', (d) => { g(d, 'permissao').remocoes = false; }, /permissao: remocoes tem de ser true/],
@@ -182,10 +155,10 @@ test('revisao: a do projeto compila e cumpre os pisos; gatilho repetido, regex i
     ['caminhos do qa tirados', (d) => { d.comportamento_caminhos = []; }, /comportamento_caminhos perdeu/],
   ];
   for (const [rotulo, muda, esperado] of casos) comArquivo(com(muda), (c) => assert.match(lerRevisao(c).erro, esperado, rotulo));
-  comArquivo(com((d) => { g(d, 'banco').revisores.push('revisor-lgpd'); g(d, 'banco').caminhos.push('^extra/'); }), (c) => assert.equal(lerRevisao(c).erro, null), 'somar pode');
+  comArquivo(com((d) => { g(d, 'banco').revisores.push('revisor-tela'); g(d, 'banco').caminhos.push('^extra/'); }), (c) => assert.equal(lerRevisao(c).erro, null), 'somar pode');
   assert.equal(revisaoDeObjeto(com((d) => { d.sempre = []; delete d.grande; }).revisao, { pisos: false }).erro, null, 'sem os pisos (a base de um diff) aceita');
   comArquivo(com((d) => { d.sempre = ['revisor-arquitetura']; }), (c) => assert.equal(lerRevisao(c).erro, null), 'o sempre pode ter nomes ou ficar vazio');
-  comArquivo(com((d) => { d.grande.revisores.push('revisor-lgpd'); d.grande.gatilhos.push('permissao'); }), (c) => assert.equal(lerRevisao(c).erro, null), 'o grande também só soma');
+  comArquivo(com((d) => { d.grande.revisores.push('revisor-tela'); d.grande.gatilhos.push('permissao'); }), (c) => assert.equal(lerRevisao(c).erro, null), 'o grande também só soma');
   const projeto = lerRevisao().valor;
   assert.deepEqual(projeto.sempre, [], 'o sempre do projeto está vazio');
   assert.deepEqual(projeto.grande, { revisores: PISO_GRANDE.revisores, gatilhos: ['banco'] });
@@ -194,15 +167,11 @@ test('revisao: a do projeto compila e cumpre os pisos; gatilho repetido, regex i
   comArquivo(com((d) => { delete d.comportamento_ignorar; }), (c) => assert.deepEqual(lerRevisao(c).valor.comportamento_ignorar, []), 'a chave é opcional');
 });
 
-test('ajuste: janela e rodadas_altas do projeto; a escada vem do código e o piso fora dela é erro', () => {
+test('ajuste: janela e rodadas_altas do projeto (a escada é do papeis.mjs, D11)', () => {
   const a = lerAjuste();
   assert.equal(a.erro, null);
-  assert.deepEqual(a.valor.escada, ESCADA);
+  assert.deepEqual(Object.keys(a.valor).sort(), ['janela', 'rodadas_altas']);
   assert.equal(a.valor.janela, 3);
-  assert.equal(conferirPisos(), null);
-  assert.match(conferirPisos({ agentes: { qa: 'haiku:low' } }), /haiku:low de agentes\.qa está fora da escada/);
-  assert.match(conferirPisos(PISOS, ['sonnet:low']), /fora da escada/);
-  for (const [niveis, pisos] of Object.entries(PISOS)) for (const p of Object.values(pisos)) assert.ok(ESCADA.includes(p), `${niveis}: ${p}`);
   const certo = dadosReais().ajuste;
   for (const ruim of [{ ...certo, janela: 0 }, { ...certo, rodadas_altas: 1.5 }, undefined]) {
     comArquivo({ ajuste: ruim }, (c) => assert.match(lerAjuste(c).erro, /ajuste/, JSON.stringify(ruim)));
@@ -246,7 +215,7 @@ test('lockfile não é código: package-lock.json, pnpm-lock.yaml, yarn.lock e b
 test('toda cópia do mesmoArquivo (a que decide se o hook roda) cai para a comparação dos textos quando o realpath falha', () => {
   const aqui = dirname(fileURLToPath(import.meta.url));
   const copias = readdirSync(aqui).filter((f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs')).filter((f) => readFileSync(join(aqui, f), 'utf8').includes('const mesmoArquivo'));
-  assert.equal(copias.length, 13, `as cópias: ${copias.join(', ')}`);
+  assert.equal(copias.length, 15, `as cópias: ${copias.join(', ')}`);
   for (const f of copias) {
     const texto = readFileSync(join(aqui, f), 'utf8');
     assert.match(texto, /const mesmoArquivo = \(a, b\) => \{\n  if \(a === b\) return true;\n  try \{\n    return realpathSync\(a\) === realpathSync\(b\);\n  \} catch \{\n    return a === b;\n  \}\n\};/, `${f}: o erro do realpath não pode calar o hook quando os textos já são iguais`);

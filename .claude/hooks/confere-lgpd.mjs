@@ -180,8 +180,8 @@ export function relatorio(achados, { todos = false } = {}) {
       `Legado: ${legado.length} achado(s) em trechos que já estavam assim em legadoAte; não bloqueiam, e o trecho mexido tem de sair limpo${todos ? ':' : ' (--todos lista).'}`,
       ...(todos ? legado.map(item) : []),
     ]),
-    ...(suprimidos.length === 0 ? [] : ['Suprimidos (o revisor-lgpd confere o motivo de cada um):', ...suprimidos.map((a) => `- ${a.arquivo}:${a.linha} ${a.regra.id}`)]),
-    'Falso positivo: na linha (ou num comentário na linha de cima), "lgpd-ignora: <regra> -- <motivo>". O revisor-lgpd confere cada supressão.',
+    ...(suprimidos.length === 0 ? [] : ['Suprimidos (o revisor-seguranca confere o motivo de cada um, D34):', ...suprimidos.map((a) => `- ${a.arquivo}:${a.linha} ${a.regra.id}`)]),
+    'Falso positivo: na linha (ou num comentário na linha de cima), "lgpd-ignora: <regra> -- <motivo>". O revisor-seguranca confere cada supressão (D34).',
   ].join('\n');
 }
 

@@ -2,7 +2,8 @@
 // do confere-lgpd e a mídia binária. Tudo dentro do processo: escolher() com um diff montado à mão, sem git (a linha de comando tem os testes dela).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lerAgentes, lerNiveis, lerPastas, lerRevisao } from './config.mjs';
+import { lerPastas, lerRevisao } from './config.mjs';
+import { lerAgentes, lerNiveis } from './papeis.mjs';
 import { escolher } from './escolhe-revisores.mjs';
 
 const cfg = { agentes: lerAgentes().valor, niveis: lerNiveis().valor, revisao: lerRevisao().valor, pastas: lerPastas().valor };
@@ -17,6 +18,8 @@ const chama = (arquivos, nome, gatilho) => {
   const r = esc(arquivos).obrigatorios.find((x) => x.nome === nome);
   return r !== undefined && (gatilho === undefined || r.motivos.some((m) => m.gatilho === gatilho));
 };
+/** Os avisos do confere-lgpd nas linhas novas (D34: sem revisor, só no relatório): `[arquivo, regra]` de cada um. */
+const avisos = (arquivos) => esc(arquivos).avisosLgpd.motivos.map((m) => [m.arquivo, m.por]);
 const nomesDe = (arquivos) => esc(arquivos).obrigatorios.map((r) => r.nome).sort();
 const linha = (l, gatilho, revisor = 'revisor-seguranca', caminho = 'src/x/dados.ts') => chama([arq(caminho, [l])], revisor, gatilho);
 
@@ -95,20 +98,19 @@ test('banco: o filtro de consulta preso a quem chama (o receptor de .from( (clie
 
 // ---------- dado_pessoal ----------
 
-test('dado_pessoal: o nome composto também chama (data_nascimento, cliente_cpf, email_hmac, rg, cnpj, documento, whatsapp, endereço, endereço de entrega, anonimizar, purgar, cep, phone)', () => {
+test('dado_pessoal: o nome composto também chama (data_nascimento, cliente_cpf, email_hmac, rg, cnpj, telefone, endereço de entrega, anonimizar, purgar, cep, phone)', () => {
   for (const l of ['data_nascimento date', 'cliente_cpf text', 'email_hmac text', 'const cpf = 1', 'const userEmail = 1', 'e_mail', 'celular', 'telefone', 'phoneNumber', 'send(whatsapp)', 'endereço', 'endereco', 'anonimizar(x)', 'purgarDados()', 'cnpj', 'cliente_cnpj', 'cnpjEmpresa', 'cep',
     'rg', 'rg_numero', 'cliente_rg', 'const documento = 1', 'documentoFiscal', 'shipping_address', 'billingAddress', 'home_address text', 'postal_address', 'street_address', 'emailAddress', 'address_line2', 'addressLine1', 'cliente.address', 'user.address.street', 'const e = pessoa.address;', 'customer.address', 'client.address', 'person.address', 'contact.address', 'order.address', 'shipping.address', 'billing.address', 'contato.address', 'pedido.address']) {
-    assert.ok(linha(l, 'dado_pessoal', 'revisor-lgpd'), l);
-    assert.ok(linha(l, 'dado_pessoal', 'revisor-seguranca'), `segurança: ${l}`);
+    assert.ok(linha(l, 'dado_pessoal'), l);
   }
   for (const l of ['const sig = hmac(secret);', 'color: rgb(0, 0, 0)', 'accept(x)', 'except', 'purple', 'const ip address = 1', 'logger.info("ip address", ip)', 'const ipAddress = req.ip;', 'mac_address', 'const org = 1;', 'documentation', 'server.address()', 'socket.address()', 'wallet.address', 'contract.address', 'const a = reorder.address;', 'req.socket.address()', 'const rgba = 1', 'burg', 'const address = x;']) {
-    assert.ok(!linha(l, 'dado_pessoal', 'revisor-lgpd'), `${l} não é dado pessoal`);
+    assert.ok(!linha(l, 'dado_pessoal'), `${l} não é dado pessoal`);
   }
 });
 
-test('dado_pessoal: a linha removida também chama a LGPD (tirar o campo, a anonimização ou a purga muda o tratamento)', () => {
-  assert.ok(chama([arq('src/x/dados.ts', [], ['await anonimizar(cliente)'])], 'revisor-lgpd', 'dado_pessoal'));
-  assert.ok(chama([arq('db/migrations/1.sql', [], ['alter table t drop column data_nascimento;'])], 'revisor-lgpd', 'dado_pessoal'));
+test('dado_pessoal: a linha removida também chama a segurança (tirar o campo, a anonimização ou a purga muda o tratamento)', () => {
+  assert.ok(chama([arq('src/x/dados.ts', [], ['await anonimizar(cliente)'])], 'revisor-seguranca', 'dado_pessoal'));
+  assert.ok(chama([arq('db/migrations/1.sql', [], ['alter table t drop column data_nascimento;'])], 'revisor-seguranca', 'dado_pessoal'));
 });
 
 // ---------- tela ----------
@@ -125,9 +127,9 @@ test('tela: arquivo de tela com layout chama o revisor-tela, mas o de teste, de 
 
 test('ignorar_conteudo: .md, .test/.spec/.cy, __tests__, __mocks__ e tests/ não acionam gatilho de conteúdo; o gatilho de caminho continua valendo', () => {
   for (const c of ['docs/a.md', 'src/x/a.test.ts', 'src/x/a.spec.tsx', 'cypress/a.cy.js', 'src/__tests__/a.ts', 'src/__mocks__/a.ts', 'tests/a.ts', 'test/a.ts', 'src/x/a.test.mjs']) {
-    assert.ok(!chama([arq(c, ['const cpf = 1; grant select; fetch("x"); q.where(1)'])], 'revisor-lgpd'), `${c} não aciona o conteúdo`);
+    assert.ok(!chama([arq(c, ['const cpf = 1; grant select; fetch("x"); q.where(1)'])], 'revisor-seguranca', 'dado_pessoal'), `${c} não aciona o conteúdo`);
   }
-  assert.ok(chama([arq('src/x/a.ts', ['const cpf = 1'])], 'revisor-lgpd'));
+  assert.ok(chama([arq('src/x/a.ts', ['const cpf = 1'])], 'revisor-seguranca', 'dado_pessoal'));
   assert.ok(chama([arq('tests/auth/x.ts', ['const a = 1'])], 'revisor-seguranca', 'permissao'), 'o caminho auth/ vale em teste');
 });
 
@@ -139,10 +141,10 @@ test('os gatilhos de caminho não valem para documentação (só por extensão: 
     const r = escolher([arq(c, ['x'])], cfg);
     assert.ok(!r.obrigatorios.some((x) => x.motivos.some((m) => m.por === 'caminho')), `${c}: documentação não dispara gatilho de caminho`);
   }
-  for (const c of ['.claude/agents/qa.md', '.claude/agents/revisor-lgpd.md', '.claude/skills/pipeline/SKILL.md']) {
+  for (const c of ['.claude/agents/qa.md', '.claude/skills/pipeline/SKILL.md']) {
     assert.ok(chama([arq(c, ['x'])], 'revisor-seguranca', 'config_pipeline') || c.includes('skills/pipeline'), c);
   }
-  assert.ok(chama([arq('.claude/agents/revisor-lgpd.md', ['x'])], 'revisor-lgpd', 'lgpd_regras'), 'o lgpd_regras cobre o .md');
+  assert.ok(chama([arq('.claude/hooks/confere-lgpd.mjs', ['x'])], 'revisor-seguranca', 'lgpd_regras'), 'o lgpd_regras cobre as regras');
   assert.ok(chama([arq('.claude/agents/qa.md', ['x'])], 'revisor-seguranca', 'config_pipeline'), 'o config_pipeline cobre o .md');
   assert.ok(chama([arq('src/auth/x.ts', ['x'])], 'revisor-seguranca', 'permissao'), 'o código segue valendo');
   assert.ok(!chama([arq('docs/login.md', ['grant select'])], 'revisor-seguranca', 'permissao'), 'e o conteúdo do .md já não valia');
@@ -170,19 +172,22 @@ test('lockfile não é código: sozinho não chama o sempre, o qa nem gatilho ne
 
 // ---------- o aviso do confere-lgpd ----------
 
-test('um aviso do confere-lgpd (médio) chama o revisor-lgpd, com o motivo "confere-lgpd: <regra>"; o suprimido e o que passa, não', () => {
+test('um aviso do confere-lgpd (médio) chama o revisor-seguranca (D34), com o motivo "confere-lgpd: <regra>", e vai também a avisosLgpd; o suprimido e o que passa, não', () => {
   const r = esc([arq('src/x.ts', ['const a = 1;', "const perfil = { religiao: 'x' };"])]);
-  const lgpd = r.obrigatorios.find((x) => x.nome === 'revisor-lgpd');
-  assert.ok(lgpd, 'religião num src/x.ts: campo sensível');
-  const m = lgpd.motivos.find((x) => x.gatilho === 'confere-lgpd');
-  assert.equal(m.arquivo, 'src/x.ts');
-  assert.equal(m.linha, 2, 'a linha é a do diff');
-  assert.equal(m.por, 'campo_sensivel_no_codigo');
-  assert.ok(!r.obrigatorios.some((x) => x.nome === 'revisor-seguranca' && x.motivos.some((y) => y.gatilho === 'confere-lgpd')), 'só a LGPD');
+  const seg = r.obrigatorios.find((x) => x.nome === 'revisor-seguranca');
+  assert.deepEqual(seg?.motivos.map((y) => [y.gatilho, y.por]), [['confere-lgpd', 'campo_sensivel_no_codigo']], 'o aviso chama a segurança');
+  assert.ok(!r.obrigatorios.some((x) => x.nome === 'revisor-lgpd'), 'o revisor-lgpd não existe mais');
+  assert.equal(r.avisosLgpd.total, 1, 'religião num src/x.ts: campo sensível');
+  const m = r.avisosLgpd.motivos[0];
+  assert.deepEqual([m.gatilho, m.arquivo, m.linha, m.por], ['confere-lgpd', 'src/x.ts', 2, 'campo_sensivel_no_codigo'], 'a linha é a do diff');
   const supressao = ['lgpd-ignora:', 'campo_sensivel_no_codigo', '-- vem de um enum fechado do teste'].join(' '); // montado: este arquivo não pode ser, ele mesmo, uma supressão
-  assert.ok(!chama([arq('src/x.ts', [`const perfil = { religiao: 'x' }; // ${supressao}`])], 'revisor-lgpd', 'confere-lgpd'), 'suprimido');
-  assert.ok(!chama([arq('src/x.ts', ['const a = 1;'])], 'revisor-lgpd'));
-  assert.ok(chama([arq('src/x.ts', ["import * as Sentry from '@sentry/node';"])], 'revisor-lgpd', 'confere-lgpd'), 'telemetria de fora (médio)');
+  assert.deepEqual(avisos([arq('src/x.ts', [`const perfil = { religiao: 'x' }; // ${supressao}`])]), [], 'suprimido');
+  assert.ok(!chama([arq('src/x.ts', [`const perfil = { religiao: 'x' }; // ${supressao}`])], 'revisor-seguranca', 'confere-lgpd'), 'o suprimido não chama pelo confere-lgpd');
+  assert.ok(!chama([arq('src/x.ts', ['const a = 1;'])], 'revisor-seguranca'), 'sem aviso, sem a segurança');
+  const logDeIp = `logger.info('acesso', ${['req', 'ip'].join('.')});`; // montado: este arquivo não pode ter, ele mesmo, o log com o IP
+  assert.ok(chama([arq('src/lib/x.ts', [logDeIp])], 'revisor-seguranca', 'confere-lgpd'), 'o log com o IP (regra media) em src/lib chama a segurança');
+  assert.deepEqual(avisos([arq('src/x.ts', ['const a = 1;'])]), []);
+  assert.equal(avisos([arq('src/x.ts', ["import * as Sentry from '@sentry/node';"])]).length, 1, 'telemetria de fora (médio)');
 });
 
 test('o aviso do confere-lgpd não repete o trecho achado na saída de formatar', async () => {
@@ -194,37 +199,38 @@ test('o aviso do confere-lgpd não repete o trecho achado na saída de formatar'
 
 // ---------- mídia binária ----------
 
-test('o binário roda só as regras de caminho e de binário do confere-lgpd: a imagem nova chama o revisor-lgpd (regra de print) e não dispara gatilho de conteúdo', () => {
+test('o binário roda só as regras de caminho e de binário do confere-lgpd: a imagem nova chama o revisor-seguranca pela regra de print (D34) e não dispara gatilho de conteúdo', () => {
   const binario = (caminho) => ({ caminho, binario: true, linhas: [], removidas: [] });
   for (const c of ['src/public/a.png', 'src/x/b.jpg', 'src/x/c.jpeg', 'src/x/d.gif', 'src/x/e.webp', 'src/x/O.PNG', 'docs/print.png']) {
     const r = esc([binario(c)]);
-    assert.deepEqual(r.obrigatorios.map((x) => x.nome), ['revisor-lgpd'], `${c}: só a LGPD`);
-    assert.deepEqual(r.obrigatorios[0].motivos.map((m) => [m.gatilho, m.por]), [['confere-lgpd', 'imagem_no_repositorio']], c);
+    assert.deepEqual(r.obrigatorios.map((x) => [x.nome, x.motivos.map((m) => [m.gatilho, m.por])]), [['revisor-seguranca', [['confere-lgpd', 'imagem_no_repositorio']]]], `${c}: só a segurança, pelo confere-lgpd`);
+    assert.deepEqual(r.avisosLgpd.motivos.map((m) => [m.gatilho, m.por]), [['confere-lgpd', 'imagem_no_repositorio']], c);
   }
   // o ícone, a fonte, o pdf e o vídeo não têm regra de caminho nem são binário desconhecido: nada os chama
   for (const c of ['src/x/f.ico', 'src/x/h.woff', 'src/x/i.woff2', 'src/x/j.ttf', 'src/x/k.otf', 'src/x/m.mp4', 'src/x/n.webm']) {
-    assert.deepEqual(esc([binario(c)]).obrigatorios, [], c);
+    assert.deepEqual([esc([binario(c)]).obrigatorios, esc([binario(c)]).avisosLgpd.total], [[], 0], c);
   }
   // o pdf cai na regra de arquivo de dados do confere-lgpd (o conteúdo não se confere, e pode ser a base de clientes)
-  assert.deepEqual(esc([binario('src/x/l.pdf')]).obrigatorios.map((x) => [x.nome, x.motivos.map((m) => m.por)]), [['revisor-lgpd', ['arquivo_de_dados']]]);
+  assert.deepEqual(avisos([binario('src/x/l.pdf')]), [['src/x/l.pdf', 'arquivo_de_dados']]);
+  assert.ok(chama([binario('src/x/l.pdf')], 'revisor-seguranca', 'confere-lgpd'), 'o pdf chama a segurança pelo confere-lgpd');
   // o avif não está no "fora" do binario_desconhecido do confere-lgpd: quem o usa põe a extensão lá (a regra diz como)
-  assert.deepEqual(esc([binario('src/x/g.avif')]).obrigatorios.map((x) => x.motivos.map((m) => m.por)), [['binario_desconhecido']]);
+  assert.deepEqual(avisos([binario('src/x/g.avif')]), [['src/x/g.avif', 'binario_desconhecido']]);
 });
 
-test('só a imagem removida deixa de chamar o revisor-lgpd; a adicionada, a mudada e a renomeada (mesmo sem mudar: git mv docs/print.png public/print.png publica o print) chamam', () => {
+test('só a imagem removida deixa de dar aviso do confere-lgpd; a adicionada, a mudada e a renomeada (mesmo sem mudar: mover docs/print.png para public/print.png publica o print) dão', () => {
   const imagem = (status) => ({ caminho: 'docs/print.png', binario: true, ...(status === undefined ? {} : { status }), linhas: [], removidas: [] });
-  assert.deepEqual(esc([imagem('D')]).obrigatorios, [], 'D');
+  assert.deepEqual(avisos([imagem('D')]), [], 'D');
   for (const status of ['A', 'M', 'R100', 'R090', 'R050', undefined]) {
-    assert.deepEqual(esc([imagem(status)]).obrigatorios.map((x) => [x.nome, x.motivos.map((m) => m.por)]), [['revisor-lgpd', ['imagem_no_repositorio']]], String(status));
+    assert.deepEqual(avisos([imagem(status)]), [['docs/print.png', 'imagem_no_repositorio']], String(status));
   }
 });
 
 test('o outro binário em pasta de trabalho continua disparando os gatilhos de conteúdo, e o do confere-lgpd (binário desconhecido) também', () => {
   const binario = (caminho) => ({ caminho, binario: true, linhas: [], removidas: [] });
   const r = esc([binario('src/x/dados.dat')]);
-  assert.deepEqual(r.obrigatorios.map((x) => x.nome).sort(), ['revisor-lgpd', 'revisor-seguranca']);
-  assert.ok(r.obrigatorios.find((x) => x.nome === 'revisor-lgpd').motivos.some((m) => m.gatilho === 'confere-lgpd' && m.por === 'binario_desconhecido'));
-  assert.deepEqual(nomesDe([binario('docs/dados.dat')]), ['revisor-lgpd'], 'fora da pasta de trabalho só a regra do confere-lgpd');
+  assert.deepEqual(r.obrigatorios.map((x) => x.nome).sort(), ['revisor-seguranca']);
+  assert.ok(r.avisosLgpd.motivos.some((m) => m.gatilho === 'confere-lgpd' && m.por === 'binario_desconhecido'));
+  assert.deepEqual(nomesDe([binario('docs/dados.dat')]), ['revisor-seguranca'], 'fora da pasta de trabalho só a regra do confere-lgpd, que chama a segurança (D34)');
 });
 
 // ---------- erros com a mensagem certa ----------
@@ -238,10 +244,19 @@ test('revisor com nome errado em qualquer lugar do revisao é recusado ao carreg
   assert.doesNotThrow(() => escolher(sem, cfg));
 });
 
-test('mexer no legadoAte (em qualquer arquivo) chama o revisor-lgpd pelo gatilho lgpd_regras', () => {
-  for (const c of ['.claude/pipeline.json', 'src/x/dados.ts']) {
-    assert.ok(chama([arq(c, ['  "lgpd": { "legadoAte": "abc1234" }'])], 'revisor-lgpd', 'lgpd_regras'), c);
+test('mexer no legadoAte (em qualquer arquivo) chama o revisor-seguranca pelo gatilho lgpd_regras (D34)', () => {
+  for (const c of ['src/x/dados.ts', '.claude/pipeline.json', 'package.json', 'docs/x/lgpd.json']) {
+    assert.ok(chama([arq(c, ['  "lgpd": { "legadoAte": "abc1234" }'])], 'revisor-seguranca', 'lgpd_regras'), c);
   }
-  assert.ok(chama([arq('.claude/pipeline.json', [], ['  "lgpd": { "legadoAte": "abc1234" }'])], 'revisor-lgpd', 'lgpd_regras'), 'tirar a chave também chama (remocoes): tirar e pôr de volta não passa batido');
-  assert.ok(!chama([arq('docs/a.md', ['legadoAte'])], 'revisor-lgpd', 'lgpd_regras'), 'documentação não');
+  assert.ok(chama([arq('.claude/pipeline.json', [], ['  "lgpd": { "legadoAte": "abc1234" }'])], 'revisor-seguranca', 'lgpd_regras'), 'tirar a chave também chama (remocoes): tirar e pôr de volta não passa batido');
+  assert.ok(!chama([arq('docs/a.md', ['legadoAte'])], 'revisor-seguranca', 'lgpd_regras'), 'documentação não');
+});
+
+test('rapido (D34): o aviso do confere-lgpd, a supressão lgpd-ignora e a régua (lgpd_regras) recusam o esforço rapido', () => {
+  const supressao = ['lgpd-ignora:', 'campo_sensivel_no_codigo', '-- vem de um enum fechado do teste'].join(' '); // montado: este arquivo não pode ser, ele mesmo, uma supressão
+  assert.throws(() => esc([arq('src/x.ts', ["const perfil = { religiao: 'x' };"])], { esforco: 'rapido' }), /gatilho de risco \(confere-lgpd\)/);
+  assert.throws(() => esc([arq('docs/a.md', [`<!-- ${supressao} -->`])], { esforco: 'rapido' }), /gatilho de risco \(lgpd_ignora\)/);
+  assert.throws(() => esc([arq('src/x.ts', ["const cpf = '1';"])], { esforco: 'rapido' }), /gatilho de risco \(dado_pessoal\)/);
+  for (const c of ['docs/decisoes.md', 'docs/arquitetura.md']) assert.throws(() => esc([arq(c, ['x'])], { esforco: 'rapido' }), /gatilho de risco \(lgpd_regras\)/, c);
+  assert.deepEqual(esc([arq('docs/plano.md', ['x'])], { esforco: 'rapido' }).obrigatorios, [], 'outro .md de docs/ segue livre no rapido');
 });

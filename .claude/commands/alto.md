@@ -1,5 +1,5 @@
 ---
-description: Roda a tarefa no esforço alto do pipeline (todos os revisores, incluindo revisor-arquitetura e revisor-lgpd, QA e autoanálise, D64).
+description: Roda a tarefa no esforço alto do pipeline (todos os revisores, incluindo revisor-arquitetura, QA e autoanálise, D64; sem revisor de LGPD, D34).
 argument-hint: <tarefa>
 ---
 O usuário pediu explicitamente o esforço **alto** (`alto`, D64) para a tarefa abaixo.

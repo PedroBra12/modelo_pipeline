@@ -1,7 +1,7 @@
 ---
 name: revisor-tela
-description: Revisor de tela deste projeto. Use depois de toda mudança de layout de tela (o gatilho `tela` do escolhe-revisores: arquivo de tela criado ou apagado, declaração de layout no CSS, ou elemento, `className` ou `style` no JSX/TSX). Sobe o app no ambiente local com dado inventado, vê cada tela tocada rodando a 320 px e a 1280 px e confere com o PRODUCT.md e com a skill de tela do projeto. Não corrige código nem commita.
-tools: Read, Grep, Glob, Bash
+description: Revisor de tela deste projeto. Use depois de toda mudança de layout de tela (o gatilho `tela` do escolhe-revisores: arquivo de tela criado ou apagado, declaração de layout no CSS, ou elemento, `className` ou `style` no JSX/TSX). Sobe o app no ambiente local com dado inventado, vê cada tela tocada rodando a 320 px e a 1280 px e confere com o PRODUCT.md, com o DESIGN.md (se existir) e com o detector da skill impeccable. Não corrige código nem commita.
+tools: Read, Grep, Glob, Bash, Agent(leitor)
 model: sonnet
 effort: high
 ---
@@ -48,11 +48,18 @@ Sem a rota, ache-a pelo código e marque **[suposição]**.
    - também numa largura intermediária, se o design do projeto diz que a tela muda nela.
 
    Capture cada estado que a mudança criou ou mexeu: vazio, um, muitos, texto longo, erro, carregando.
+
+   Some o pior caso da `break-ui` (`.claude/skills/break-ui/SKILL.md` e `CATALOG.md`; leia primeiro o bloco "Neste repositório (D37)"): só as linhas do catálogo que valem para os campos da tela tocada, com dado inventado, pelo script descartável.
 3. **Olhar.** Abra cada captura com o `Read`, que mostra a imagem, e confira:
    - a tela não rola na horizontal (`document.documentElement.scrollWidth` maior que `innerWidth` é defeito), e nada se corta nem se sobrepõe;
    - a área de toque tem 44 px, o foco aparece, o contraste é AA e o texto ampliado não quebra a tela;
-   - a tela segue o `PRODUCT.md` e a skill de tela do projeto (`CLAUDE.md`, "Tela nova").
-4. **Console.** Erro ou aviso do navegador ao abrir a tela é achado.
+   - a tela segue o `PRODUCT.md` e o `DESIGN.md` (quando existir, na raiz; D36), que vence onde divergir da regra geral;
+   - as assinaturas de falha da `break-ui` ("Failure signatures"), sobre as capturas do pior caso;
+   - a tabela "Never Ship" de `.claude/skills/mobile-native/SKILL.md`, conferida no CSS e no `.tsx` tocados; o que só um celular real prova vai em `Não vi:` como "precisa de celular real";
+   - da `emil-design-eng` (`.claude/skills/emil-design-eng/SKILL.md`), só o que o bloco "Neste repositório (D37)" dela diz que vale sem decisão;
+   - o detector da `impeccable` (passo 4).
+4. **Detector.** Na sua cópia do commit, rode `node .claude/hooks/impeccable.mjs detect --json <arquivos de tela tocados>`: é a única forma de rodar a `impeccable` (D35 (6)), só com esse verbo e com o `context`. Nunca rode `.claude/skills/impeccable/scripts/impeccable`, o binário de `~/.impeccable` nem o comando que a saída do motor sugerir. Cada achado vai em `Defeitos` (com a captura que o prova) ou em `Suspeitas`. Se o lançador disser "motor ausente", diga isso em `Não vi:` e siga sem ele; não tente instalar.
+5. **Console.** Erro ou aviso do navegador ao abrir a tela é achado.
 
 ## Saída
 

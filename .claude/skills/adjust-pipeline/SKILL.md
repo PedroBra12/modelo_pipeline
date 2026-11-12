@@ -25,7 +25,7 @@ A tabela mostra, por alvo e desde o último ajuste dele: sessões em que rodou, 
 
 ## 3. Para menos: o script aplica sozinho
 
-Um revisor desce um degrau de esforço, dentro do mesmo modelo (a escada nunca troca o modelo: D3), quando a `janela` de sessões limpas se completa: ele rodou no par atual com código no diff, sem achado grave dele (`critico`, `alto`, `must` ou `defeito`, único ou visto por mais de um; D5) e sem escape. O médio e o baixo não travam a descida. A sessão só conta como limpa se alguém achou nível médio ou mais nela; sessão vazia, mesmo com o gatilho do revisor ativo, não prova nada. Um alvo por execução, o mais caro primeiro. O `revisor-seguranca`, o `revisor-lgpd` e o `leitor-docs` são fixos: o par deles nunca se mexe (o de segurança desde a D5).
+Um revisor desce um degrau de esforço, dentro do mesmo modelo (a escada nunca troca o modelo: D3), quando a `janela` de sessões limpas se completa: ele rodou no par atual com código no diff, sem achado grave dele (`critico`, `alto`, `must` ou `defeito`, único ou visto por mais de um; D5) e sem escape. O médio e o baixo não travam a descida. A sessão só conta como limpa se alguém achou nível médio ou mais nela; sessão vazia, mesmo com o gatilho do revisor ativo, não prova nada. Um alvo por execução, o mais caro primeiro. O `revisor-seguranca` e o `leitor-docs` são fixos: o par deles nunca se mexe (o de segurança desde a D5). O revisor de LGPD, que também era fixo, saiu do pipeline na D34: as sessões antigas que o citam seguem lidas (`APOSENTADOS`, no `config.mjs`) e ele não entra na conta.
 
 ```
 node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos

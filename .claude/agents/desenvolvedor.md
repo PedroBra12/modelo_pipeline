@@ -3,7 +3,7 @@ name: desenvolvedor
 description: Agente de código deste projeto. Escreve código, teste ou migração numa pasta, num worktree, com o pacote de contexto do orquestrador; roda os portões e só commita no branch dele.
 model: sonnet
 effort: medium
-tools: Read, Edit, Write, Bash, Grep, Glob
+tools: Read, Edit, Write, Bash, Grep, Glob, Agent(leitor)
 omitClaudeMd: true
 ---
 Você escreve código numa pasta, com o pacote do orquestrador (D4). Este arquivo faz o papel do `CLAUDE.md`.

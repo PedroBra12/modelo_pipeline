@@ -4,13 +4,18 @@
 // `node:*`, sem ler arquivo. A guarda dos subagentes chama `problemas` em toda chamada; `sincronizar` é o que o
 // `ajusta-pipeline.mjs --sincronizar-desenvolvedor` grava; `mesmaParteFixa` é a conta da exceção do `escolhe-revisores`.
 
-/** O cabeçalho exato, com o fim de linha LF; qualquer outro (campo a mais, CRLF, aspas) é problema. */
-export const CABECALHO = `---
+const DESCRICAO = 'Agente de código deste projeto. Escreve código, teste ou migração numa pasta, num worktree, com o pacote de contexto do orquestrador; roda os portões e só commita no branch dele.';
+
+/**
+ * O cabeçalho exato, com o fim de linha LF, gerado da entrada `agentes.desenvolvedor` do pipeline.json (`model`, `effort`,
+ * `tools`, D11); qualquer outro (campo a mais, CRLF, aspas, valor diferente) é problema. Puro: quem chama passa a entrada.
+ */
+export const cabecalho = (entrada) => `---
 name: desenvolvedor
-description: Agente de código deste projeto. Escreve código, teste ou migração numa pasta, num worktree, com o pacote de contexto do orquestrador; roda os portões e só commita no branch dele.
-model: sonnet
-effort: medium
-tools: Read, Edit, Write, Bash, Grep, Glob
+description: ${DESCRICAO}
+model: ${entrada.model}
+effort: ${entrada.effort}
+tools: ${entrada.tools}
 omitClaudeMd: true
 ---
 `;
@@ -201,15 +206,17 @@ function problemaDeFonte(linha, fontes) {
 /**
  * Os problemas do agente, em frases (lista vazia = nada a dizer): o cabeçalho, os marcadores, os tetos, o formato da parte
  * do projeto fora do bloco `dominio`, a presença do bloco `dominio` e a fonte de cada item (toda linha `- ` fora do bloco tem marca).
- * `fontes` é `{ 'CLAUDE.md': texto, 'docs/arquitetura.md': texto, ajuste(data) }`, com `ajuste` devolvendo o texto de
+ * `entrada` é `agentes.desenvolvedor` do pipeline.json (o cabeçalho sai dela). `fontes` é
+ * `{ 'CLAUDE.md': texto, 'docs/arquitetura.md': texto, ajuste(data) }`, com `ajuste` devolvendo o texto de
  * `docs/pipeline/ajustes/<data>-desenvolvedor.md` ou `null`.
  * Não compara os blocos gerados com o CLAUDE.md: isso é do teste (D8: não barrar o agente no meio da sessão).
  */
-export function problemas(texto, fontes) {
+export function problemas(texto, fontes, entrada) {
+  if (entrada === undefined) return ['falta agentes.desenvolvedor no pipeline.json: sem ele não há cabeçalho para comparar'];
   const p = partes(texto);
   if (p.erro !== undefined) return [p.erro];
   const achados = [];
-  if (p.cabecalho !== CABECALHO) achados.push('o cabeçalho não é o do modelo, byte a byte (campo a mais, repetido, fim de linha ou valor diferente)');
+  if (p.cabecalho !== cabecalho(entrada)) achados.push('o cabeçalho não é o do modelo, byte a byte (campo a mais, repetido, fim de linha ou valor diferente)');
   for (const [rotulo, parte, teto] of [['o corpo', p.corpo, TETO_CORPO], ['a parte fixa', p.fixa, TETO_FIXA], ['a parte do projeto', p.projeto, TETO_PROJETO]]) {
     if (tokens(parte) > teto) achados.push(`${rotulo} estima ${tokens(parte)} tokens (tamanho ÷ ${CARACTERES_POR_TOKEN}), acima do teto de ${teto}`);
   }

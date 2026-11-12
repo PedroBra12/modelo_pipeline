@@ -22,9 +22,9 @@ Leia o pedido e o `AGENTS.md` das pastas que ele toca (e os das pastas acima). E
 | só uma pergunta | responda; sem portão |
 
 Defina também o **esforço do pipeline (D7)** e grave-o em `.claude/estado/esforco` (`mkdir -p .claude/estado && printf '%s\n' <esforco> > .claude/estado/esforco`; atalhos: `/rapido`, `/medio` e `/alto` em `.claude/commands/`):
-- `medio` (**padrão** quando o usuário não pede outro): roda os portões, o `qa` e os revisores acionados pelos gatilhos, **sem** `revisor-arquitetura` e `revisor-lgpd` na revisão do código (`revisor-seguranca`, `ponytail-review` no `grande`, `revisor-tela` no layout novo e `qa` continuam).
+- `medio` (**padrão** quando o usuário não pede outro): roda os portões, o `qa` e os revisores acionados pelos gatilhos, **sem** `revisor-arquitetura` na revisão do código (D12; desde a D34 não há revisor de LGPD: o `revisor-seguranca` cobre os gatilhos `dado_pessoal`, `lgpd_ignora` e `lgpd_regras` e o aviso do `confere-lgpd` nas linhas novas; `revisor-seguranca`, `ponytail-review` no `grande`, `revisor-tela` no layout novo e `qa` continuam).
 - `rapido` (mudança pontual em parte não essencial, quando o usuário pede "rápido" ou `/rapido`): escreve o código e roda só os portões mecânicos da seção 3 (`portaoRapido`, `confere-lgpd`, `confere-docs`) mais o `escolhe-revisores.mjs` para conferir que nenhum gatilho de risco foi tocado; **sem revisores, sem `qa` e sem autoanálise da sessão**.
-- `alto` (mudança crítica de arquitetura/banco/LGPD, fase inteira, ou quando o usuário pede "alto" ou `/alto`): roda todos os revisores acionados (`revisor-arquitetura` e `revisor-lgpd` inclusive), o `qa` e a autoanálise.
+- `alto` (mudança crítica de arquitetura/banco/LGPD, fase inteira, ou quando o usuário pede "alto" ou `/alto`): roda todos os revisores acionados (`revisor-arquitetura` inclusive, sem revisor de LGPD, D34), o `qa` e a autoanálise.
 - **Guardrails mecânicos (D7):** (1) a `guarda-agentes.mjs` exige `.claude/estado/esforco` antes de delegar (sem ele só o `leitor-docs` passa) e bloqueia (`deny`) qualquer chamada de agente fora do esforço gravado; (2) a `guarda-git.mjs` e o `confere-lgpd.mjs` pedem confirmação do usuário (`ask`) ao gravar `rapido` em `.claude/estado/esforco`; (3) o `escolhe-revisores.mjs` lê `.claude/estado/esforco` (ou `--esforco`) e, no `rapido`, recusa com erro 2 se o diff acionar gatilho de risco (`banco`, `permissao`, `dado_pessoal`, `config_pipeline`, `lgpd_ignora`, `lgpd_regras`, `confere-lgpd`); (4) o `portao.mjs` libera no verde sem cobrar revisão quando o esforço é `rapido`.
 
 **Pronto quando:** a 1ª linha da resposta diz o caminho e o esforço (`Pipeline: feature · esforço: medio`), `.claude/estado/esforco` está gravado e a lista de tarefas tem os passos do playbook, copiados.
@@ -35,7 +35,7 @@ Defina também o **esforço do pipeline (D7)** e grave-o em `.claude/estado/esfo
 - **Estilo:** a menor mudança completa (skill `ponytail`). As camadas que a arquitetura pede (contrato, provedor, ponto de extensão) são deliberadas e ficam.
 - **Perguntas:** na dúvida sobre onde uma regra ou decisão (`D<n>`) está em `docs/` ou nos `AGENTS.md`, só o chat principal (o `orquestrador`) aciona o subagente `leitor-docs`, que apenas lê e aponta os arquivos e linhas onde focar; o agente de worktree não o aciona e relata a dúvida ao orquestrador. Fato no código se busca com `Explore` (nível leve da seção 7); só a decisão vai para o usuário.
 - **Pacote de contexto por agente (D4):** antes de lançar um subagente (código, revisor ou `qa`), o orquestrador grava no scratchpad um pacote só para ele: a decisão e o contrato já fechados, os fatos com a fonte, os arquivos e as LINHAS por onde começar e o que mudar. O pedido aponta o pacote.
-  - **Fato** é comando mais saída, ou `arquivo:linha`. A saída que a seção 4 manda passar (a do `confere-lgpd` ao `revisor-lgpd`, a dos portões ao `qa`) vai inteira, ou pelo caminho do arquivo que a guarda. O que o código faz entra como ponteiro, nunca como fato conferido.
+  - **Fato** é comando mais saída, ou `arquivo:linha`. A saída que a seção 4 manda passar (a do `confere-lgpd` ao `revisor-seguranca`, a dos portões ao `qa`) vai inteira, ou pelo caminho do arquivo que a guarda. O que o código faz entra como ponteiro, nunca como fato conferido.
   - **Sem dado pessoal nem segredo**, como na autoanálise: nem nome, código de cliente, celular, e-mail, CPF ou cidade. O scratchpad fica fora do repositório, e os hooks não o conferem.
   - **Teto de 50 mil tokens (D5):** o pedido e os arquivos fora do repositório que ele cita por caminho absoluto (o pacote) somam no máximo 50 mil tokens, estimados pelo tamanho ÷ 3; a `guarda-agentes` nega acima disso. Passou, resuma para a função daquele agente: o que ele precisa para executar, não tudo o que você sabe. A retomada por `SendMessage`, que a guarda não vê, segue o mesmo teto.
   - **Agente de código (D8):** é o `desenvolvedor`, sempre em worktree. O pacote dele se chama `desenvolvedor-<assunto>.md` (o `--repetidas` o acha pelo nome) e não repete o que o `.claude/agents/desenvolvedor.md` já diz (regras, portões, commit, relatório). Ele lê só o que o pacote aponta e diz no relatório o que leu a mais.
@@ -65,7 +65,7 @@ Enquanto o projeto não tiver os comandos dos portões 1 e 2, eles não existem:
 
 ## 4. Revisão e QA
 
-Depois dos portões, o chat principal (o `orquestrador`; subagente não abre outro subagente) roda sempre o script, que lê `.claude/estado/esforco` (ou `--esforco rapido|medio|alto`, padrão `medio`, D7) e dá o **mínimo obrigatório** (no esforço `rapido`, o script confere que nenhum gatilho de risco foi tocado — se foi, sai com erro 2 obrigando a subir para `medio` ou `alto` — e imprime zero obrigatórios; a `guarda-agentes` nega revisores e `qa`):
+Depois dos portões, o chat principal (o `orquestrador`; o subagente só abre o neto `leitor`, D11, nunca um revisor) roda sempre o script, que lê `.claude/estado/esforco` (ou `--esforco rapido|medio|alto`, padrão `medio`, D7) e dá o **mínimo obrigatório** (no esforço `rapido`, o script confere que nenhum gatilho de risco foi tocado — se foi, sai com erro 2 obrigando a subir para `medio` ou `alto` — e imprime zero obrigatórios; a `guarda-agentes` nega revisores e `qa`):
 
 ```
 node .claude/hooks/escolhe-revisores.mjs <base> <head> [--esforco rapido|medio|alto]
@@ -103,7 +103,7 @@ Como lançar cada nome:
   - o `qa` roda no modo curto, sobre os casos corrigidos e os vizinhos deles;
   - o revisor que achou um item de risco (bug, permissão, dado pessoal, regra que não se negocia) confere só aquele item, num agente novo com um pacote pequeno: o item, o delta e o ponteiro da regra. Se ele tem menos de ~100 mil tokens de contexto, a seção 2 deixa retomá-lo com `SendMessage`;
   - o item de texto ou de documentação não volta a revisor: o orquestrador o confere;
-  - **LGPD na correção (D6):** se o `confere-lgpd` do delta mostra supressão nova, ou se o `escolhe-revisores.mjs <commit anterior> <head>` imprime o `revisor-lgpd` (gatilho `dado_pessoal`, `lgpd_ignora` ou `confere-lgpd`), o `revisor-lgpd` confere só esse ponto, num agente novo com um pacote pequeno.
+  - **LGPD na correção (D6, D34):** se o `confere-lgpd` do delta mostra supressão nova, ou se o `escolhe-revisores.mjs <commit anterior> <head>` imprime o `revisor-seguranca` (gatilho `dado_pessoal`, `lgpd_ignora` ou `confere-lgpd`), o `revisor-seguranca` confere só esse ponto, num agente novo com um pacote pequeno.
 
   O delta não reabre o conjunto: o `escolhe-revisores` roda sobre ele só para o item da LGPD acima. A rede da correção são os portões, o `qa` curto e quem achou o item. **Risco aceito (D6):** a correção pode criar defeito que só um revisor de fora do item veria; a rede final é o PR, que o usuário revisa antes do merge.
 - **Fechar.** A correção sem defeito novo nos portões e no `qa` curto fecha, e o resto vai para o relatório. Defeito novo abre outra correção, que conta no teto.
@@ -118,7 +118,7 @@ Com os portões verdes, a revisão feita e o `qa` aprovado, num branch `pr/<assu
 - `git add` só dos arquivos da tarefa;
 - o commit que toca `.claude/` roda os testes do pipeline no `pre-commit` (uns 2 min): no Bash, passe `timeout: 600000` ao `git commit`;
 - mensagem em português: `<pasta>: <o que mudou>` na 1ª linha; no corpo, o porquê; para cada pasta cujo código mudou sem o `AGENTS.md` mudar, releia o arquivo e, se ele ainda diz o que a pasta é, ponha a linha `Docs-conferidos: <pasta>/AGENTS.md` (arquivo de `gerado/` que o `AGENTS.md` da pasta cita não conta como código); por último, a linha de coautoria que o Claude Code pedir;
-- o hook `pre-commit` do git (`confere-lgpd`) recusa o commit com dado pessoal exposto: corrija o arquivo, ou suprima com o motivo, que o `revisor-lgpd` confere;
+- o hook `pre-commit` do git (`confere-lgpd`) recusa o commit com dado pessoal exposto: corrija o arquivo, ou suprima com o motivo, que o `revisor-seguranca` confere (D34);
 - o hook `commit-msg` do git (`confere-docs`) recusa o commit quando a documentação não bate com o código: corrija o `AGENTS.md`, nunca só a mensagem. `--no-verify` não existe aqui (a guarda nega);
 - num worktree, o subagente commita no branch dele (depois dos portões da seção 3) e devolve o hash e os arquivos ao `orquestrador`, que roda a seção 4;
 - **push e PR:** só o orquestrador (o agente `.claude/agents/orquestrador.md`, que roda como agente do chat principal), e cada um com a confirmação do usuário: mostre o comando antes, e a guarda pede a confirmação de novo.
@@ -148,11 +148,11 @@ O relatório, curto, em português:
 
 **A regra do par (D3):** o papel dá o modelo, que não se ajusta: julgar lendo é `opus`, escrever ou rodar é `sonnet`, só apontar é `haiku`. O custo do erro dá o esforço de partida, do mais alto ao mais baixo: quem orquestra e o revisor cujo erro vaza dado entre donos ou abre a guarda; quem revisa ou testa e o código que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`); o resto do código; o trivial. Depois, só a conta da D2 ou uma ordem do usuário (D4) mexe, um degrau de esforço, sem trocar o modelo. O par vigente de cada um é o da tabela abaixo.
 
-O orquestrador é `opus xhigh`, sempre: a `guarda-agentes` nega delegar com o chat principal em outro par.
+O orquestrador roda no par do nível `orquestracao` da tabela abaixo (D3, D11): a `guarda-agentes` nega delegar com o chat principal em outro par.
 
-**Nenhum subagente comum herda o modelo do chat principal** (que roda no nível `orquestracao`). A fonte de modelo e esforço é `.claude/pipeline.json` (seções `agentes` e `niveis`; D2): a `guarda-agentes` lê `agentes`, os cabeçalhos de `.claude/agents/` repetem o mesmo valor (um teste confere) e a tabela abaixo é gerada dali (`node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela`; um teste confere). Mudar o modelo ou o esforço de alguém é mudar o `pipeline.json`, pela skill `adjust-pipeline`. Fora dos agentes fixos, toda chamada passa `model` e `effort` (`low`, `medium` ou `high`), o padrão é o `sonnet`, e o `opus` só entra nas propostas `Plan` de uma decisão de arquitetura (`effort: high`), com o motivo no `description` e a confirmação do usuário. `haiku` fora do `leitor-docs` não se usa. O `desenvolvedor` (D8) traz o modelo e as ferramentas no cabeçalho, que a `guarda-agentes` compara byte a byte, e recebe na chamada o `effort` do nível de código (`leve`, `medio` ou `codigo-seguranca`), obrigatório. Ele só roda com `isolation: "worktree"`, e com worktree só ele passa. Na dúvida entre dois níveis de `sonnet`, use o mais alto. Os pisos e o teto moram no código, não no JSON (`config.mjs` e `guarda-agentes.mjs`): o ajuste nunca passa deles, e um `pipeline.json` fora deles é recusado.
+**Nenhum subagente comum herda o modelo do chat principal** (que roda no nível `orquestracao`). A fonte de modelo e esforço é `.claude/pipeline.json` (seções `familias`, `escada`, `comum`, `neto`, `agentes` e `niveis`; D2, D11), que só o `papeis.mjs` lê: os cabeçalhos de `.claude/agents/`, o `model`, o `effortLevel` e o `env` do `.claude/settings.json` (a versão de cada família) e a tabela abaixo são gerados dali (`node .claude/hooks/sincroniza-pares.mjs`; o `--conferir` e um teste acusam a divergência). Mudar o modelo ou o esforço de alguém é mudar o `pipeline.json`, pela skill `adjust-pipeline`. Fora dos agentes fixos, toda chamada passa `model` e `effort` (`low`, `medium` ou `high`), o padrão é o `sonnet`, e o `opus` só entra nas propostas `Plan` de uma decisão de arquitetura (`effort: high`), com o motivo no `description` e a confirmação do usuário. `haiku` fora do `leitor-docs` e do neto `leitor` não se usa. O `desenvolvedor` (D8) traz o modelo e as ferramentas no cabeçalho, que a `guarda-agentes` compara byte a byte, e recebe na chamada o `effort` do nível de código (`leve`, `medio` ou `codigo-seguranca`), obrigatório. Ele só roda com `isolation: "worktree"`, e com worktree só ele passa. Na dúvida entre dois níveis de `sonnet`, use o mais alto. Os pisos, os tetos, a escada e a versão de cada família também moram no `pipeline.json` (D11): a entrada sem `piso` e `teto` é fixa, o ajuste nunca passa do piso nem do teto da entrada, e o código só guarda a estrutura (família `opus`/`sonnet`/`haiku`, `piso ≤ par ≤ teto` no mesmo modelo, o neto só lendo). A `guarda-agentes` pede a confirmação do usuário quando o `pipeline.json` da árvore difere do da `main`, e subagente não edita `.claude/` fora do próprio worktree.
 
-<!-- tabela-agentes:inicio (gerada por ajusta-pipeline.mjs --sincronizar-tabela; não edite) -->
+<!-- tabela-agentes:inicio (gerada por sincroniza-pares.mjs; não edite) -->
 | Quem | Tarefa | `model` | `effort` |
 |---|---|---|---|
 | nível `leve` | renomear, buscar (`Explore`), conferir um fato ou um arquivo, mudança trivial (no `desenvolvedor`), `ponytail-debt` | `sonnet` | `low` |
@@ -164,14 +164,16 @@ O orquestrador é `opus xhigh`, sempre: a `guarda-agentes` nega delegar com o ch
 | nível `forte` | as propostas `Plan` de uma decisão de arquitetura (`decisao.md`) | `opus` | `high` |
 | agente `revisor-seguranca` (`.claude/agents/`) | revisão de risco: banco, permissão, dado pessoal, rede, segredo, isolamento entre donos de dado | `opus` | `xhigh` |
 | agente `revisor-arquitetura` (`.claude/agents/`) | revisão de arquitetura: fronteiras entre pastas, contrato, AGENTS.md, decisão registrada | `opus` | `high` |
-| agente `revisor-lgpd` (`.claude/agents/`) | revisão de LGPD: finalidade, caminho do dado pessoal, retenção, supressões | `opus` | `high` |
 | agente `qa` (`.claude/agents/`) | rodar a coisa de verdade e tentar quebrar | `sonnet` | `high` |
-| agente `revisor-tela` (`.claude/agents/`) | ver a tela tocada rodando a 320 px e a 1280 px no ambiente local, com a skill de tela do projeto, contra o PRODUCT.md (portão 5) | `sonnet` | `high` |
+| agente `revisor-tela` (`.claude/agents/`) | ver a tela tocada rodando a 320 px e a 1280 px no ambiente local, com o detector da `impeccable` (pelo lançador preso) e o `DESIGN.md`, contra o PRODUCT.md (portão 5) | `sonnet` | `high` |
+| agente `designer-ui` (`.claude/agents/`) | escrever a tela de `apps/web` (o `.tsx` de `app/` e de `componentes/` e o `estilos.css`): vê a tela rodando no ambiente local, critica com a skill `impeccable` dentro do PRODUCT.md e do DESIGN.md e se confere a 320 px e a 1280 px (D35) | `sonnet` | `high` |
 | agente `leitor-docs` (`.claude/agents/`) | ler `docs/` e os `AGENTS.md` e apontar os arquivos e linhas onde focar | `haiku` | `low` |
+| agente `leitor` (`.claude/agents/`) | neto (D11): só um subagente o chama; acha no repositório onde um fato está e aponta arquivo e linha | `haiku` | `low` |
 <!-- tabela-agentes:fim -->
 
 - Fork (`subagent_type: "fork"`) herda o modelo e o esforço de quem o lança, então não se usa.
-- O chat principal é o `orquestrador` em `opus xhigh` (D3): o `.claude/settings.json` abre toda sessão como esse agente (`agent`), com `model: opus` (vence o modelo do `settings.json` do usuário) e `effortLevel: xhigh`. O usuário ainda pode trocar com `/model` ou `/effort`, e aí a `guarda-agentes` nega delegar até ele voltar (`/model opus` e `/effort xhigh`). A `guarda-agentes` também nega o `orquestrador` como subagente.
+- O chat principal é o `orquestrador` no par do nível `orquestracao` (D3, D11): o `.claude/settings.json`, gerado do `pipeline.json`, abre toda sessão como esse agente (`agent`), com o `model` (vence o modelo do `settings.json` do usuário) e o `effortLevel` desse nível. O usuário ainda pode trocar com `/model` ou `/effort`, e aí a `guarda-agentes` nega delegar até ele voltar ao par. A `guarda-agentes` também nega o `orquestrador` como subagente.
+- **O neto (D11):** um subagente pode abrir só o agente do `neto` do `pipeline.json` (o `leitor`, que só lê; o par dele está na tabela acima), sem worktree, para achar onde um fato está; o neto não abre outro (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` 2 no `env`), e a chamada dele passa pelo teto de 50 mil tokens e pelo esforço gravado. O chat principal usa o `leitor-docs` ou o `Explore`, não o neto.
 
 ## Mapa das skills
 
@@ -180,12 +182,12 @@ O orquestrador é `opus xhigh`, sempre: a `guarda-agentes` nega delegar com o ch
 | entender um pedido vago | ler `.claude/skills/in-your-own-words/SKILL.md` e `.claude/skills/sharpen/SKILL.md` |
 | decisão em aberto | `grilling`, `codebase-design`, `domain-modeling`; ler `.claude/skills/to-questionnaire/SKILL.md` quando quem decide é outra pessoa |
 | desenhar tipos e dados | `principle-foundational-thinking`, `principle-model-the-domain`, `principle-type-system-discipline`, `typescript-best-practices`, `principle-boundary-discipline` |
-| desenhar tela | `frontend-design` (plugin oficial), dentro do `PRODUCT.md`; o subagente `revisor-tela` a vê rodando |
+| desenhar tela | o subagente `designer-ui` (D35), que escreve a tela de `apps/web` com a skill `impeccable` (só pelo lançador preso `.claude/hooks/impeccable.mjs`), dentro do `PRODUCT.md` e do `DESIGN.md`; o subagente `revisor-tela` a vê rodando; os dois leem, por caminho e como lentes, as quatro skills da D37: `pick-ui-library`, `break-ui`, `mobile-native` e `emil-design-eng` |
 | escrever | o subagente `desenvolvedor` (D8), `ponytail`, ler `.claude/skills/tdd/SKILL.md`, `principle-test-behavior-not-implementation`, `principle-make-operations-idempotent`, `principle-build-the-lever` |
 | consertar | `diagnosing-bugs`, `principle-fix-root-causes`, `principle-attack-the-premise` |
 | reorganizar | `principle-subtract-before-you-add`, `principle-migrate-callers-then-delete-legacy-apis`, `principle-minimize-reader-load`, `principle-sequence-verifiable-units`, `principle-outcome-oriented-execution` |
 | conferir | `principle-prove-it-works`, `principle-explain-the-number` (antes de confiar num número medido), o subagente `qa` |
-| revisar | `ponytail-review`, `revisor-arquitetura`, `revisor-seguranca`, `revisor-lgpd`, `revisor-tela` |
+| revisar | `ponytail-review`, `revisor-arquitetura`, `revisor-seguranca`, `revisor-tela` |
 | fechar uma fase | `ponytail-audit`, `ponytail-debt`, `principle-encode-lessons-in-structure` |
 | escrever para agentes | `writing-for-agents`; ler `.claude/skills/unslop/SKILL.md` |
 

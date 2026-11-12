@@ -22,7 +22,7 @@ Toda alteração no repositório passa pelas mesmas etapas, na mesma ordem:
 | [`.claude/agents/`](.claude/agents/orquestrador.md) | Agentes fixos com papel, ferramentas, modelo e esforço travados |
 | [`.claude/hooks/AGENTS.md`](.claude/hooks/AGENTS.md) | Guardas, portões e scripts do pipeline (Node 24 + Git, sem pacotes externos) |
 | [`.claude/pipeline.json`](.claude/pipeline.json) | A configuração que os hooks leem: `repositorio`, `portaoRapido`, `pastasDeTrabalho`, e o par (modelo e esforço) de cada agente e nível, os gatilhos de revisão e a regra do ajuste |
-| [`.claude/settings.json`](.claude/settings.json) | Abre toda sessão como o `orquestrador` em `opus` e `xhigh` (D3), liga os hooks do Claude Code (`PreToolUse`, `PostToolUse`, `Stop`) e o plugin `frontend-design` |
+| [`.claude/settings.json`](.claude/settings.json) | Abre toda sessão como o `orquestrador` em `opus` e `xhigh` (D3), e liga os hooks do Claude Code (`PreToolUse`, `PostToolUse`, `Stop`) |
 | [`docs/pipeline/sessoes/`](docs/pipeline/sessoes/MODELO.md) | A autoanálise de cada sessão (`MODELO.md` é o formato); os ajustes ficam em `docs/pipeline/ajustes/` |
 | [`CLAUDE.md`](CLAUDE.md), [`AGENTS.md`](AGENTS.md), [`PRODUCT.md`](PRODUCT.md), [`docs/`](docs/arquitetura.md) | Modelos de documentação e regras do projeto com marcadores `<...>` para preencher. [`docs/decisoes.md`](docs/decisoes.md) já traz D1 (o pipeline), D2 (o autoajuste) e D3 (a regra do par) |
 
@@ -37,7 +37,9 @@ O modelo separa quem **planeja e julga** (`opus`) de quem **localiza documentaç
   - a terceira, para o resto do código;
   - a mais baixa, para o trivial.
 - **Depois, só a conta do autoajuste mexe no esforço**, um degrau por vez e sem trocar o modelo (seção 4).
-- **O orquestrador é `opus xhigh`, sempre.** O `settings.json` abre toda sessão assim e vence o `settings.json` do usuário. A `guarda-agentes` nega delegar se o chat for trocado para outro par.
+- **O orquestrador roda no par do nível `orquestracao` do `pipeline.json` (D11).** O `settings.json`, gerado dali, abre toda sessão assim e vence o `settings.json` do usuário. A `guarda-agentes` nega delegar se o chat for trocado para outro par.
+- **Tudo num arquivo só (D11).** Os pares, os pisos, os tetos, a escada e a versão de cada família (`familias`, que vai para o `env` do `settings.json` como `ANTHROPIC_DEFAULT_*_MODEL`) moram no `.claude/pipeline.json`. Mudou o arquivo, rode `node .claude/hooks/sincroniza-pares.mjs`: ele regera os cabeçalhos dos agentes, o `settings.json` e a tabela da skill. Enquanto o arquivo difere do da `main`, a `guarda-agentes` pede a sua confirmação a cada delegação.
+- **O neto (D11).** Um subagente pode abrir só o `leitor` (o neto do `pipeline.json`, que só lê), um nível, para achar onde um fato está.
 
 | Agente | Modelo | Papel |
 |---|---|---|
@@ -47,9 +49,9 @@ O modelo separa quem **planeja e julga** (`opus`) de quem **localiza documentaç
 | `general-purpose` (`ponytail-review`) | `sonnet` | Revisão de qualidade com experimentos: roda o código para achar o defeito de comportamento que quem só lê não acha |
 | [`qa`](.claude/agents/qa.md) | `sonnet` | Roda o projeto localmente depois dos portões verdes (sem repeti-los), testa casos de borda e devolve cada defeito com o comando que o reproduz |
 | [`revisor-arquitetura`](.claude/agents/revisor-arquitetura.md) | `opus` | Confere fronteiras entre pastas, contratos públicos, tipagem, `AGENTS.md` e decisões em [`docs/decisoes.md`](docs/decisoes.md) |
-| [`revisor-seguranca`](.claude/agents/revisor-seguranca.md) | `opus` | Confere isolamento entre donos de dado, autenticação/permissão, superfície de rede, injeção e segredos, inclusive no código do próprio pipeline |
-| [`revisor-lgpd`](.claude/agents/revisor-lgpd.md) | `opus` | Confere finalidade, base legal, direitos do titular, retenção e supressões `lgpd-ignora` |
-| [`revisor-tela`](.claude/agents/revisor-tela.md) | `sonnet` | Dono do portão 5: sobe o app local com dado inventado, vê cada tela tocada a 320 px e a 1280 px e confere com o `PRODUCT.md` |
+| [`revisor-seguranca`](.claude/agents/revisor-seguranca.md) | `opus` | Confere isolamento entre donos de dado, autenticação/permissão, superfície de rede, injeção e segredos, inclusive no código do próprio pipeline e regras de LGPD |
+| [`designer-ui`](.claude/agents/designer-ui.md) | `sonnet` | Escreve a tela de `apps/web` (o `.tsx` de `app/` e de `componentes/` e o `estilos.css`), vê a tela rodando no ambiente local, critica com a skill `impeccable` e se confere a 320 px e a 1280 px (D35) |
+| [`revisor-tela`](.claude/agents/revisor-tela.md) | `sonnet` | Dono do portão 5: sobe o app local com dado inventado, vê cada tela tocada a 320 px e a 1280 px e confere com o `PRODUCT.md` e o `DESIGN.md` |
 
 O esforço de cada um mora em [`.claude/pipeline.json`](.claude/pipeline.json), e a tabela da [skill `pipeline`, seção 7](.claude/skills/pipeline/SKILL.md) é gerada dali. Ele não se repete em nenhum outro documento: um teste recusa a cópia, para que o ajuste nunca deixe texto desatualizado.
 
@@ -63,11 +65,12 @@ As regras inegociáveis não dependem só da memória do LLM; elas são fiscaliz
     - nega desligar os hooks do Git pelo ambiente (`GIT_CONFIG_*`, `NODE_OPTIONS`, `-c include.path`);
     - pede confirmação explícita do usuário em todo `git push` e escrita em PR.
   - [`guarda-agentes.mjs`](.claude/hooks/guarda-agentes.mjs) (`PreToolUse` em `Agent`):
-    - nega delegar quando o chat principal não está em `opus xhigh`;
-    - nega subagente que abre subagente e o `fork`, que herdaria o modelo do chat;
+    - nega delegar quando o chat principal não está no par do nível `orquestracao`;
+    - deixa o subagente abrir só o neto `leitor` (D11) e nega o `fork`, que herdaria o modelo do chat;
+    - pede confirmação a cada delegação enquanto o `pipeline.json` difere do da `main` (D11);
     - exige `model` e `effort` explícitos nos subagentes comuns;
     - garante que os agentes fixos rodem no par do `pipeline.json` com o cabeçalho íntegro;
-    - pede confirmação acima do teto do código ou quando um subagente comum pede `opus`.
+    - pede confirmação quando um subagente comum pede `opus` (o piso e o teto de cada agente estão no `pipeline.json`, e o arquivo fora deles é recusado).
   - [`confere-lgpd.mjs`](.claude/hooks/confere-lgpd.mjs) (`PreToolUse` em edições de arquivo e `pre-commit` no Git):
     - barra dado pessoal literal (CPF válido, cartão com Luhn, telefone com DDD real, e-mail fora de domínios de teste), chaves e segredos, `select *` em tabela pessoal, SQL concatenado e PII em logs e URLs (regras em [`lgpd-regras.mjs`](.claude/hooks/lgpd-regras.mjs));
     - o "legado" é opcional, para o projeto que adota o modelo com dívida antiga: com `"lgpd": { "legadoAte": "<sha>" }` no `pipeline.json`, o achado que já estava igual naquele commit não bloqueia, só é contado (`--todos` o lista). O trecho achado que muda tem de sair limpo, e CPF, cartão e chave nunca viram legado. Sem a chave, não há legado.
@@ -83,7 +86,7 @@ As regras inegociáveis não dependem só da memória do LLM; elas são fiscaliz
 - **Scripts que o orquestrador roda:**
   - [`escolhe-revisores.mjs`](.claude/hooks/escolhe-revisores.mjs) `<base> <head>` (ou `--trabalho`, antes do commit): lê o diff e os gatilhos de `revisao` no `pipeline.json` e imprime o **mínimo obrigatório** de revisores, com modelo, esforço e o motivo de cada um (gatilho, arquivo e linha).
     - Conta como código todo arquivo com extensão de código, em qualquer pasta (a lista mora no `config.mjs`).
-    - O aviso do `confere-lgpd` nas linhas novas também chama o `revisor-lgpd`.
+    - O aviso do `confere-lgpd` nas linhas novas também chama o `revisor-seguranca` (D34).
     - O orquestrador soma um revisor por julgamento, com o motivo no relatório, mas nunca tira.
     - `--sem-comportamento "<motivo>"` dispensa o `qa` na troca de CSS, texto ou renome. `--sem-tela "<motivo>"` dispensa o `revisor-tela` só na troca de texto, cópia ou renome.
   - [`ajusta-pipeline.mjs`](.claude/hooks/ajusta-pipeline.mjs): a conta do autoajuste (seção 4).
@@ -133,7 +136,7 @@ A subida não espera a janela: um escape vira proposta na hora.
 
 **5. O que o ajuste nunca faz:**
 - **Passar do piso ou do teto.** Os pisos moram no código ([`config.mjs`](.claude/hooks/config.mjs): `PISOS`, `FIXOS`, `PISO_GATILHOS`, `PISO_REVISAO`) e o teto na [`guarda-agentes.mjs`](.claude/hooks/guarda-agentes.mjs) (`TETO`). Um `pipeline.json` afrouxado não afrouxa a regra: abaixo do piso é erro, e acima do teto a guarda pede confirmação.
-- **Mexer nos fixos:** o `revisor-lgpd`, o `leitor-docs`, o orquestrador, o nível `leve` e o `Plan` não se ajustam.
+- **Mexer nos fixos:** o `designer-ui`, o `leitor-docs`, o orquestrador, o nível `leve` e o `Plan` não se ajustam.
 - **Pôr código no `opus`:** o código só sobe dentro do `sonnet`.
 - **Encolher a cobertura:** os gatilhos só crescem, e os do piso e o `qa` por caminho ficam. Descer é o esforço do revisor, não a cobertura.
 - **Pôr ou tirar agente sozinho.** Pela D3, um agente **entra** quando, em 2 sessões, um portão obrigatório fica sem dono ou o mesmo tipo de defeito escapa de todos. Ele **sai** quando, já no piso, roda a janela inteira sem achado único. O orquestrador propõe, e o usuário decide.
@@ -209,7 +212,7 @@ Para abrir direto com um alias (`nome_alias`), adicione ao seu terminal:
   - Some as pastas do seu projeto em `revisao.gatilhos`, em `comportamento_caminhos` (o `qa`) e no gatilho `tela` do `pipeline.json`. Para que não possam ser tirados sem revisão, some-os também no `PISO_GATILHOS` e no `PISO_REVISAO` do [`config.mjs`](.claude/hooks/config.mjs).
   - O modelo já traz alguns padrões de provedor comum (`service_role`, `Deno.env`, `auth.admin`, `.rpc(`, o `where: {` do Prisma). Eles não casam onde o provedor não existe e não custam nada. Para Supabase, some ao gatilho `permissao` os conteúdos `\bauth\.(uid|jwt|role|users)` e `\bauthenticated\b`.
   - Rode `node .claude/hooks/escolhe-revisores.mjs main HEAD` num diff real que toque cada pasta: o gatilho escrito de memória costuma não casar com nenhum arquivo.
-- **Projeto que já tem dado pessoal no histórico:** ponha `"lgpd": { "legadoAte": "<sha do commit em que adotou o modelo>" }` no `pipeline.json`. Faça isso num PR só com a chave, e junte-o antes dos outros: o push confere com a chave que já está na `main`. O que já estava naquele commit fica como dívida contada (`node .claude/hooks/confere-lgpd.mjs --todos <pastas>`). Ela sai quando alguém muda o trecho achado; mexer em outra parte da mesma linha não a cobra. O `legadoAte` só vale se for o commit que trouxe o pipeline ou um anterior a ele, então o legado só perdoa o que é de antes do pipeline. Ele só pode recuar ou sair: o `pre-commit` recusa movê-lo para a frente, e mexer nele, inclusive tirá-lo, chama o `revisor-lgpd`. Avalie com o jurídico se o dado real no histórico é um incidente.
+- **Projeto que já tem dado pessoal no histórico:** ponha `"lgpd": { "legadoAte": "<sha do commit em que adotou o modelo>" }` no `pipeline.json`. Faça isso num PR só com a chave, e junte-o antes dos outros: o push confere com a chave que já está na `main`. O que já estava naquele commit fica como dívida contada (`node .claude/hooks/confere-lgpd.mjs --todos <pastas>`). Ela sai quando alguém muda o trecho achado; mexer em outra parte da mesma linha não a cobra. O `legadoAte` só vale se for o commit que trouxe o pipeline ou um anterior a ele, então o legado só perdoa o que é de antes do pipeline. Ele só pode recuar ou sair: o `pre-commit` recusa movê-lo para a frente, e mexer nele, inclusive tirá-lo, chama o `revisor-seguranca`. Avalie com o jurídico se o dado real no histórico é um incidente.
 - **Projeto sem dados pessoais (sem LGPD):**
   1. Remova o bloco do matcher `Edit|Write|MultiEdit|NotebookEdit` em `PreToolUse` no [`.claude/settings.json`](.claude/settings.json), e a chamada do `confere-lgpd.mjs` em [`.claude/hooks/git/pre-commit`](.claude/hooks/git/pre-commit) e no `git/pre-merge-commit`.
   2. Apague os gatilhos `lgpd_ignora` e `lgpd_regras` inteiros, e tire o `revisor-lgpd` do `dado_pessoal`, no `pipeline.json` e no `PISO_GATILHOS`.
@@ -221,15 +224,13 @@ Para abrir direto com um alias (`nome_alias`), adicione ao seu terminal:
   2. Tire o `revisor-tela` dos `PISOS`, do `TETO` e de `agentes`, e apague `.claude/agents/revisor-tela.md`.
   3. Desligue o plugin `frontend-design` no `settings.json`.
   4. Faça a mesma limpeza nos testes e nos documentos: o portão 5 e a seção 4 da skill `pipeline`, o `feature.md` e o `orquestrador.md`.
-- **Criar ou alterar um agente fixo:** um agente fixo precisa de seis coisas, ou a guarda bloqueia a execução e os testes falham:
-  - o arquivo `.claude/agents/<nome>.md`, com `name`, `model`, `effort` e `tools` no cabeçalho;
-  - a entrada em `agentes` no `pipeline.json`, com o mesmo par e as mesmas ferramentas;
-  - o teto em `TETO`, na `guarda-agentes.mjs`;
-  - o piso em `PISOS`, ou o par exato em `FIXOS`, no `config.mjs`;
-  - quem o chama: o nome em `revisao.sempre` ou num gatilho (e no `PISO_GATILHOS`, para travar);
-  - a tabela da skill `pipeline` regerada com `node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela`.
+- **Criar ou alterar um agente fixo:** um agente fixo precisa de quatro coisas, ou a guarda bloqueia a execução e os testes falham:
+  - a entrada em `agentes` no `pipeline.json`, com `model`, `effort`, `tools` e, se o par pode andar, `piso` e `teto` (sem eles, o par é fixo; D11);
+  - o arquivo `.claude/agents/<nome>.md`, com `name` e `description` no cabeçalho (só as chaves `name`, `description`, `model`, `effort`, `tools`);
+  - `node .claude/hooks/sincroniza-pares.mjs`, que escreve `model`, `effort` e `tools` no cabeçalho e regera a tabela da skill `pipeline`;
+  - quem o chama: o nome em `revisao.sempre` ou num gatilho (e no `PISO_GATILHOS`, para travar).
 
   Pela D3, o modelo vem do papel e o esforço de partida, do custo do erro.
 - **Checagem obrigatória no GitHub (recomendada):** um workflow do GitHub Actions marcado como obrigatório no PR, que rode `node --test ".claude/hooks/*.test.mjs"` e o `confere-lgpd` sobre cada commit do PR. É a única trava que o agente não desliga da máquina dele. Custa minutos do Actions: grátis em repositório público, e da cota do plano em privado. Decida antes de ligar.
-- **Regras específicas do domínio do projeto:** escreva as invariantes de negócio, isolamento de dados, autenticação e integrações no item 8 de [`CLAUDE.md`](CLAUDE.md) e detalhe em [`docs/arquitetura.md`](docs/arquitetura.md). Os agentes [`revisor-arquitetura`](.claude/agents/revisor-arquitetura.md), [`revisor-seguranca`](.claude/agents/revisor-seguranca.md) e [`revisor-lgpd`](.claude/agents/revisor-lgpd.md) leem diretamente desses dois arquivos.
+- **Regras específicas do domínio do projeto:** escreva as invariantes de negócio, isolamento de dados, autenticação e integrações no item 8 de [`CLAUDE.md`](CLAUDE.md) e detalhe em [`docs/arquitetura.md`](docs/arquitetura.md). Os agentes [`revisor-arquitetura`](.claude/agents/revisor-arquitetura.md) e [`revisor-seguranca`](.claude/agents/revisor-seguranca.md) leem diretamente desses dois arquivos.
 - **Layout de pastas (`monorepo` ou pacote único):** ajuste o array `pastasDeTrabalho` em [`.claude/pipeline.json`](.claude/pipeline.json). Mantenha o sufixo `(?=/)` nas regex, para que pastas agrupadoras como `apps/` ou `src/` não sejam cobradas como pastas de trabalho folha.

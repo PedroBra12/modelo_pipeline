@@ -1,20 +1,21 @@
 // Autoanálise do pipeline (D2): lê as sessões de docs/pipeline/sessoes/ e os ajustes de docs/pipeline/ajustes/, faz a
-// conta por revisor e por nível e diz o que descer (aplica sozinho, dentro dos pisos do config.mjs), o que subir
+// conta por revisor e por nível e diz o que descer (aplica sozinho, dentro do piso e do teto de cada entrada, no pipeline.json (papeis.mjs)), o que subir
 // (propõe; só se aplica com o "sim" do usuário) e que gatilho falta. A skill `adjust-pipeline` diz quando rodar. Uso:
 //   node .claude/hooks/ajusta-pipeline.mjs [--relatorio] [--json] [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos [--data AAAA-MM-DD] [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --aplicar-mais <alvo> [--data AAAA-MM-DD] [--raiz <pasta>]
-//   node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --repetidas <pasta> [--json] [--raiz <pasta>]   (só lê; sai antes de ler o pipeline.json)
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ESCADA, FIXOS, PISOS, SUPRESSAO, lerAgentes, lerAjuste, lerNiveis, localizar, par } from './config.mjs';
+import { APOSENTADOS, SUPRESSAO, lerAjuste, localizar } from './config.mjs';
+import { agentesFixos, degrau, ehFixo, lerPapeis, orquestrador, par } from './papeis.mjs';
 import { varrer } from './confere-lgpd.mjs';
-import { CARACTERES_POR_TOKEN, TETO } from './guarda-agentes.mjs';
+import { CARACTERES_POR_TOKEN } from './guarda-agentes.mjs';
 import { partes, sincronizar } from './desenvolvedor.mjs';
+import { gravar, montar } from './sincroniza-pares.mjs';
 
 const RAIZ_PADRAO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GRAVES = new Set(['critico', 'alto', 'must']);
@@ -33,23 +34,24 @@ const ID_DE_PESSOA = /(cliente|lead|contato|titular)\s*#?\d{3,}/i;
 const ID_DE_PESSOA_NO_NOME = /(cliente|lead|contato|titular)[-_\s]*#?\d{3,}/i;
 const ASSUNTO_KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const MAX_ASSUNTO = 60;
-const INICIO = '<!-- tabela-agentes:inicio (gerada por ajusta-pipeline.mjs --sincronizar-tabela; não edite) -->';
-const FIM = '<!-- tabela-agentes:fim -->';
 const DATA = /^\d{4}-\d{2}-\d{2}$/;
 
 const caminhos = (raiz) => ({
   config: join(raiz, '.claude', 'pipeline.json'),
   agentes: join(raiz, '.claude', 'agents'),
-  skill: join(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md'),
   sessoes: join(raiz, 'docs', 'pipeline', 'sessoes'),
   ajustes: join(raiz, 'docs', 'pipeline', 'ajustes'),
 });
 
-/** A configuração que a conta usa. */
+/**
+ * A configuração que a conta usa: `papeis` (tudo do `papeis.mjs`: escada, famílias, entradas com piso e teto), `agentes` (os
+ * agentes fixos, sem o `desenvolvedor`, que não é alvo do ajuste), `niveis` e `ajuste` (`janela`, `rodadas_altas`).
+ */
 export function lerConfig(arquivo) {
-  const lidos = { agentes: lerAgentes(arquivo), niveis: lerNiveis(arquivo), ajuste: lerAjuste(arquivo) };
+  const lidos = { papeis: lerPapeis(arquivo), ajuste: lerAjuste(arquivo) };
   for (const r of Object.values(lidos)) if (r.erro !== null) throw new Error(r.erro);
-  return Object.fromEntries(Object.entries(lidos).map(([k, r]) => [k, r.valor]));
+  const p = lidos.papeis.valor;
+  return { papeis: p, agentes: agentesFixos(p), niveis: { ...p.niveis }, ajuste: lidos.ajuste.valor };
 }
 
 /** O `id` (`secao.chave`) de um nome usado numa sessão, ou undefined. `ponytail-review` é o `revisor` de um nível. */
@@ -116,7 +118,7 @@ export function validarSessao(dados, nome, cfg) {
       ...dados.agentes.map((a) => a.tipo), ...dados.achados.flatMap((a) => [a.revisor, ...(a.escapou_de ?? []), ...(a.nao_rodou ?? []), ...(a.visto_por ?? [])]),
       ...(dados.gatilho_falso ?? []), ...(dados.adiar ?? []).map((d) => d.alvo),
     ];
-    const desconhecido = nomes.find((n) => idDe(cfg, n) === undefined);
+    const desconhecido = nomes.find((n) => idDe(cfg, n) === undefined && !APOSENTADOS.has(n));
     if (desconhecido !== undefined) falta(`o nome ${desconhecido} não existe em agentes nem em niveis do pipeline.json (erro de digitação?)`);
     const achado = varrer(JSON.stringify(dados), 'sessao.md').find((x) => !x.suprimido && ['critico', 'alto'].includes(x.regra.nivel));
     if (achado !== undefined) falta(`dado pessoal no bloco (regra ${achado.regra.id}): a sessão só leva módulo, pasta, arquivo e o achado técnico`);
@@ -158,9 +160,9 @@ const nomeDe = (s) => s.arquivo ?? `${s.sessao.data}-${s.sessao.assunto}.md`;
 
 /** O par em que o chat principal rodou, para o relatório ("haiku:null"). */
 const parDaSessao = (s) => (s.sessao.orquestrador ? `${s.sessao.orquestrador.model}:${s.sessao.orquestrador.effort}` : 'desconhecido:desconhecido');
-/** O orquestrador da sessão está no par de `FIXOS.niveis.orquestracao` (D3; o do código, não o do pipeline.json): o modelo contém o esperado e o esforço é igual, sem caixa nem espaços nas pontas. */
-const noParDoOrquestrador = (s) => {
-  const [modelo, esforco] = FIXOS.niveis.orquestracao.split(':');
+/** O orquestrador da sessão está no par de `niveis.orquestracao` (D3, lido pelo `papeis.mjs`): o modelo contém o esperado e o esforço é igual, sem caixa nem espaços nas pontas. */
+const noParDoOrquestrador = (s, p) => {
+  const { model: modelo, effort: esforco } = orquestrador(p);
   const limpa = (v) => (typeof v === 'string' ? v.trim().toLowerCase() : undefined);
   const o = s.sessao.orquestrador;
   return limpa(o?.model)?.includes(modelo) === true && limpa(o?.effort) === esforco;
@@ -168,31 +170,8 @@ const noParDoOrquestrador = (s) => {
 
 /** Os alvos do ajuste: todo agente fixo e todo nível, com `id` (`secao.chave`) e se é revisor (agente ou nível com `revisor`). */
 const alvosDe = (cfg) => ['agentes', 'niveis'].flatMap((secao) => Object.entries(cfg[secao]).map(([chave, entrada]) => ({
-  secao, chave, entrada, id: `${secao}.${chave}`, revisor: secao === 'agentes' || entrada.revisor !== undefined, fixo: Object.hasOwn(FIXOS[secao], chave),
+  secao, chave, entrada, id: `${secao}.${chave}`, revisor: secao === 'agentes' || entrada.revisor !== undefined, fixo: ehFixo(entrada),
 })));
-
-/**
- * Um degrau da escada: `{ de, para }` ou `{ erro }`. O ajuste só mexe no esforço, dentro do mesmo modelo (D3: o modelo vem do papel):
- * o próximo par de outro modelo é topo ou começo do modelo, não um degrau. Para cima: agente fixo até o teto da guarda; código e
- * ponytail só em sonnet. Para baixo: até o piso.
- */
-function degrau(alvo, delta) {
-  const atual = par(alvo.entrada);
-  if (alvo.fixo) return { erro: `${alvo.chave} é fixo em ${atual}: o par dele não se ajusta` };
-  const i = ESCADA.indexOf(atual);
-  if (i === -1) return { erro: `${atual} está fora da escada: não se ajusta` };
-  const proximo = ESCADA[i + delta];
-  if (proximo === undefined) return { erro: `${atual} já é o ${delta > 0 ? 'topo' : 'começo'} da escada` };
-  if (delta > 0) {
-    if (alvo.secao === 'agentes' && ESCADA.indexOf(proximo) > ESCADA.indexOf(par(TETO[alvo.chave]))) return { erro: `${alvo.chave} já está no teto da guarda (${par(TETO[alvo.chave])})` };
-  } else if (ESCADA.indexOf(proximo) < ESCADA.indexOf(PISOS[alvo.secao][alvo.chave])) {
-    return { erro: `${atual} já está no piso (${PISOS[alvo.secao][alvo.chave]})` };
-  }
-  if (delta > 0 && alvo.secao === 'niveis' && !proximo.startsWith('sonnet:')) return { erro: `o nível ${alvo.chave} não passa de sonnet: o opus só entra no Plan de uma decisão` };
-  const modelo = atual.split(':')[0];
-  if (proximo.split(':')[0] !== modelo) return { erro: `${atual} já é o ${delta > 0 ? 'topo' : 'começo'} do ${modelo}: o ajuste só mexe no esforço, o modelo vem do papel` };
-  return { de: atual, para: proximo };
-}
 
 const evidencia = (a) => `${a.sessao} ${a.modulo ?? ''} (${a.revisor}, ${a.severidade}): ${a.resumo ?? 'sem resumo'}`.replace(/\s+/g, ' ');
 
@@ -233,7 +212,7 @@ export function analisar(sessoes, ajustes, cfg) {
   const { janela: tamanho, rodadas_altas: altas } = cfg.ajuste;
   const todas = [...sessoes].sort((a, b) => nomeDe(a).localeCompare(nomeDe(b)));
   const baseline = todas.filter((s) => s.sessao.baseline === true);
-  const fora = todas.filter((s) => s.sessao.baseline !== true && !noParDoOrquestrador(s));
+  const fora = todas.filter((s) => s.sessao.baseline !== true && !noParDoOrquestrador(s, cfg.papeis));
   const validas = todas.filter((s) => !baseline.includes(s) && !fora.includes(s));
   const base = todas.filter((s) => baseline.includes(s) || fora.includes(s));
   const r = { janela: tamanho, datas: validas.slice(-tamanho).map((s) => s.sessao.data), baseline: baseline.map(nomeDe), foraDaConta: fora.map((s) => ({ arquivo: nomeDe(s), orquestrador: parDaSessao(s) })), completa: validas.length >= tamanho, alvos: [], linhaDeBase: [], subir: [], gatilhos: [], descer: [], pendentes: [], adiados: [], estreitar: [], bloqueios: [], relatos: [] };
@@ -247,7 +226,7 @@ export function analisar(sessoes, ajustes, cfg) {
     r.alvos.push(linha);
     if (alvo.fixo && !alvo.revisor) continue;
     const subir = (motivo, provas, soComJanela = false) => {
-      const d = degrau(alvo, +1);
+      const d = degrau(cfg.papeis, alvo, +1);
       if (d.erro) r.bloqueios.push({ id: alvo.id, motivo: d.erro });
       else if (soComJanela && !completa) r.relatos.push({ id: alvo.id, secao: alvo.secao, chave: alvo.chave, ...d, tipo: 'mais', motivo, relato: `janela incompleta (${posteriores.length} de ${tamanho} sessões desde o último ajuste): só relato`, provas: [] });
       else r.subir.push({ id: alvo.id, secao: alvo.secao, chave: alvo.chave, ...d, tipo: 'mais', motivo, provas: provas.map(evidencia) });
@@ -272,7 +251,7 @@ export function analisar(sessoes, ajustes, cfg) {
       const apto = !alvo.fixo && limpas.length >= tamanho && limpas.every((s) => !s.achados.some((a) => travaDescida(a))) && escapes.length === 0;
       if (apto) {
         const adiar = janela.flatMap((s) => (s.adiar ?? []).filter((d) => idDe(cfg, d.alvo) === alvo.id));
-        const d = degrau(alvo, -1);
+        const d = degrau(cfg.papeis, alvo, -1);
         if (adiar.length > 0) r.adiados.push({ id: alvo.id, motivo: `descida adiada: ${adiar.at(-1).motivo}` });
         else if (d.erro) r.bloqueios.push({ id: alvo.id, motivo: d.erro });
         else candidatos.push({ id: alvo.id, secao: alvo.secao, chave: alvo.chave, ...d, tipo: 'menos', motivo: `${tamanho} sessões com código em que ele rodou, sem achado grave seu (crítico, alto, must ou defeito) e sem escape`, provas: [] });
@@ -281,7 +260,7 @@ export function analisar(sessoes, ajustes, cfg) {
       subir(`média de ${linha.mediaRodadas} rodadas de correção em ${rodadas.length} agentes (limite ${altas})`, [], true);
     }
   }
-  candidatos.sort((a, b) => ESCADA.indexOf(b.de) - ESCADA.indexOf(a.de) || a.id.localeCompare(b.id));
+  candidatos.sort((a, b) => cfg.papeis.escada.indexOf(b.de) - cfg.papeis.escada.indexOf(a.de) || a.id.localeCompare(b.id));
   r.descer = candidatos.slice(0, 1);
   r.pendentes = candidatos.slice(1).map((c) => ({ id: c.id, motivo: `${c.de} -> ${c.para}: fica para a próxima execução (um alvo por vez, o mais caro primeiro)` }));
   return r;
@@ -323,27 +302,6 @@ export function formatar(r) {
   return o.join('\n');
 }
 
-// ---------- tabela da seção 7 ----------
-
-/** A tabela de modelo e esforço da seção 7 da skill `pipeline`, gerada do pipeline.json. */
-export function tabela(cfg) {
-  const linhas = ['| Quem | Tarefa | `model` | `effort` |', '|---|---|---|---|'];
-  for (const [chave, e] of Object.entries(cfg.niveis)) linhas.push(`| nível \`${chave}\` | ${e.tarefa ?? ''} | \`${e.model}\` | \`${e.effort}\` |`);
-  for (const [chave, e] of Object.entries(cfg.agentes)) linhas.push(`| agente \`${chave}\` (\`.claude/agents/\`) | ${e.tarefa ?? ''} | \`${e.model}\` | \`${e.effort}\` |`);
-  return `${INICIO}\n${linhas.join('\n')}\n${FIM}`;
-}
-
-/** O texto da skill com a tabela entre as marcas trocada pela gerada. Lança se as marcas faltam. */
-export function comTabela(skill, cfg) {
-  const a = skill.indexOf(INICIO);
-  const b = skill.indexOf(FIM);
-  if (a === -1 || b === -1 || b < a) throw new Error('SKILL.md sem as marcas da tabela (tabela-agentes:inicio e tabela-agentes:fim)');
-  // o fim de linha é o que a skill já usa (CRLF ou LF): a tabela é gerada em LF e convertida, para o arquivo não ficar misturado
-  const nl = skill.indexOf('\n', a);
-  const eol = nl > 0 ? (skill[nl - 1] === '\r' ? '\r\n' : '\n') : (skill.includes('\r\n') ? '\r\n' : '\n');
-  return skill.slice(0, a) + tabela(cfg).replace(/\n/g, eol) + skill.slice(b + FIM.length);
-}
-
 // ---------- aplicar um ajuste ----------
 
 const trocarPar = (texto, secao, chave, [model, effort]) => {
@@ -354,16 +312,10 @@ const trocarPar = (texto, secao, chave, [model, effort]) => {
   return texto.slice(0, ini) + resto.replace(re, `$1${model}$2${effort}$3`);
 };
 
-const trocarCabecalho = (texto, chave, [model, effort]) => {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(texto);
-  if (m === null || !/^model:.*$/m.test(m[1]) || !/^effort:.*$/m.test(m[1])) throw new Error(`o cabeçalho de .claude/agents/${chave}.md não tem model: e effort:`);
-  return texto.replace(m[1], m[1].replace(/^model:.*$/m, `model: ${model}`).replace(/^effort:.*$/m, `effort: ${effort}`));
-};
-
 /**
  * Aplica os ajustes de `itens` (`analisar`: `descer` ou um de `subir`): edita o pipeline.json (só a linha do par do alvo),
- * o cabeçalho do agente e a tabela da skill, e grava um arquivo por ajuste em docs/pipeline/ajustes/. Só grava se tudo
- * deu certo. Devolve as linhas para o relatório.
+ * regrava com o `sincroniza-pares.mjs` os cabeçalhos dos agentes, o settings.json e a tabela da skill a partir dele, e grava
+ * um arquivo por ajuste em docs/pipeline/ajustes/. Só grava se tudo deu certo. Devolve as linhas para o relatório.
  */
 export function aplicar(raiz, itens, data, vistas) {
   if (itens.length === 0) return [];
@@ -375,10 +327,6 @@ export function aplicar(raiz, itens, data, vistas) {
   itens.forEach((d, k) => {
     const para = d.para.split(':');
     json = trocarPar(json, d.secao, d.chave, para);
-    if (d.secao === 'agentes') {
-      const arquivo = join(c.agentes, `${d.chave}.md`);
-      arquivos.push([arquivo, trocarCabecalho(readFileSync(arquivo, 'utf8'), d.chave, para)]);
-    }
     let nome = `${data}-${d.chave}.md`;
     for (let n = 2; existsSync(join(c.ajustes, nome)) || arquivos.some(([f]) => f === join(c.ajustes, nome)); n += 1) nome = `${data}-${d.chave}-${n}.md`;
     const registro = { alvo: d.chave, tipo: d.tipo, data, de: d.de, para: d.para, vistas, ordem: existentes.length + k + 1, motivo: d.motivo };
@@ -394,19 +342,18 @@ export function aplicar(raiz, itens, data, vistas) {
   } finally {
     rmSync(pasta, { recursive: true, force: true });
   }
-  for (const d of itens) if (par(cfg[d.secao][d.chave]) !== d.para) throw new Error(`${d.id}: o pipeline.json novo não ficou em ${d.para}`);
-  const skill = comTabela(readFileSync(c.skill, 'utf8'), cfg);
+  for (const d of itens) {
+    const entrada = cfg[d.secao]?.[d.chave];
+    if (entrada === undefined) throw new Error(`${d.id}: não é alvo do ajuste (o desenvolvedor e o que não está no pipeline.json ficam de fora)`);
+    if (ehFixo(entrada)) throw new Error(`${d.id}: ${d.chave} é fixo em ${d.de}: o par dele não se ajusta`);
+    if (par(entrada) !== d.para) throw new Error(`${d.id}: o pipeline.json novo não ficou em ${d.para}`);
+  }
+  const derivados = montar(raiz, cfg.papeis);
   mkdirSync(c.ajustes, { recursive: true });
   writeFileSync(c.config, json);
-  writeFileSync(c.skill, skill);
+  gravar(derivados);
   for (const [arquivo, texto] of arquivos) writeFileSync(arquivo, texto);
   return escritas;
-}
-
-/** Regrava a tabela da skill a partir do pipeline.json. */
-export function sincronizarTabela(raiz) {
-  const c = caminhos(raiz);
-  writeFileSync(c.skill, comTabela(readFileSync(c.skill, 'utf8'), lerConfig(c.config)));
 }
 
 /**
@@ -503,7 +450,7 @@ export function formatarRepetidas(r) {
 // ---------- linha de comando ----------
 
 const COM_VALOR = new Set(['--raiz', '--data', '--aplicar-mais', '--repetidas']);
-const SEM_VALOR = new Set(['--relatorio', '--json', '--aplicar-menos', '--sincronizar-tabela', '--sincronizar-desenvolvedor']);
+const SEM_VALOR = new Set(['--relatorio', '--json', '--aplicar-menos', '--sincronizar-desenvolvedor']);
 
 function opcoes(argv) {
   const o = {};
@@ -524,11 +471,6 @@ function principal(argv) {
   const o = opcoes(argv);
   const raiz = resolve(o['--raiz'] ?? RAIZ_PADRAO);
   const c = caminhos(raiz);
-  if (o['--sincronizar-tabela']) {
-    sincronizarTabela(raiz);
-    console.log('tabela da seção 7 da skill pipeline sincronizada com o pipeline.json');
-    return;
-  }
   if (o['--sincronizar-desenvolvedor']) {
     const mudou = sincronizarDesenvolvedor(raiz);
     console.log(mudou.length === 0 ? 'desenvolvedor.md já estava em dia com o CLAUDE.md' : `desenvolvedor.md regravado: ${mudou.join(', ')}`);

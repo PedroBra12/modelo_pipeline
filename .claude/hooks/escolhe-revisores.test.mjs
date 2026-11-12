@@ -10,8 +10,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ARQUIVO, lerAgentes, lerNiveis, lerPastas, lerRevisao, par, revisaoDeObjeto } from './config.mjs';
-import { escolher, formatar, interpretarDiff, juntarRenomes, rotaDe, unirRevisao } from './escolhe-revisores.mjs';
+import { ARQUIVO, lerPastas, lerRevisao, revisaoDeObjeto } from './config.mjs';
+import { lerAgentes, lerNiveis, par } from './papeis.mjs';
+import { GATILHOS_BLOQUEADOS_NO_RAPIDO, escolher, formatar, interpretarDiff, juntarRenomes, rotaDe, unirRevisao } from './escolhe-revisores.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, 'escolhe-revisores.mjs');
@@ -57,6 +58,8 @@ function diffDe(antes, depois, apagar = []) {
 const em = (antes, depois, { apagar = [], esforco = 'alto', ...opcoes } = {}) => escolher(diffDe(antes, depois, apagar), config(), { esforco, ...opcoes });
 const texto = (antes, depois, { apagar = [], ...opcoes } = {}) => formatar(em(antes, depois, { apagar, ...opcoes }), 'HEAD~1', 'HEAD');
 const seguranca = (r) => r.obrigatorios.find((x) => x.nome === 'revisor-seguranca');
+/** O gatilho acionou? (D34: o dado_pessoal e o lgpd_ignora chamam só o revisor-seguranca.) */
+const acionou = (r, gatilho) => seguranca(r)?.motivos.some((m) => m.gatilho === gatilho) === true;
 
 // ---------- num git de verdade ----------
 
@@ -115,7 +118,7 @@ test('uma tela de uma rota só: o revisor-tela e o qa, sem arquitetura nem ponyt
   const t = texto(antes, depois);
   assert.ok(t.includes(`qa  ${nivel('qa')}\n      comportamento: toca src/x/`));
   assert.ok(t.includes(`revisor-tela  ${nivel('revisor-tela')}\n      gatilho tela: src/x/Tela.jsx:1 (layout no JSX: tag, className ou style mudou)`));
-  assert.doesNotMatch(t, /revisor-seguranca|revisor-lgpd|revisor-arquitetura|ponytail-review/);
+  assert.doesNotMatch(t, /revisor-seguranca|revisor-lgpd|revisor-arquitetura|ponytail-review/, 'D34: nem o revisor-lgpd, que saiu');
   const sem = em(antes, depois, { semComportamento: 'só CSS e texto, sem lógica' });
   assert.deepEqual(nomes(sem.obrigatorios), ['revisor-tela']);
   assert.deepEqual(sem.dispensados, [{ nome: 'qa', motivo: 'só CSS e texto, sem lógica' }]);
@@ -130,10 +133,10 @@ test('código fora das pastas do produto (.claude/hooks): o qa fica condicional 
   assert.deepEqual(forcado.condicionais, []);
 });
 
-test('mudar um dado pessoal (cpf): LGPD e segurança, pelo gatilho dado_pessoal; o trecho achado nunca é repetido na saída', () => {
+test('mudar um dado pessoal (cpf): só a segurança (D34), pelo gatilho dado_pessoal; o trecho achado nunca é repetido na saída', () => {
   const t = texto({ 'src/contatos/x.js': 'export const a = 1;\n' }, { 'src/contatos/x.js': "export const a = 1;\nexport const q = 'select cpf from pessoas';\n" });
-  assert.ok(t.includes(`revisor-lgpd  ${nivel('revisor-lgpd')}\n      gatilho dado_pessoal: src/contatos/x.js:2 (conteudo /cpf/)`));
-  assert.ok(t.includes(`revisor-seguranca  ${nivel('revisor-seguranca')}\n      gatilho dado_pessoal`));
+  assert.ok(t.includes(`revisor-seguranca  ${nivel('revisor-seguranca')}\n      gatilho dado_pessoal: src/contatos/x.js:2 (conteudo /cpf/)`));
+  assert.doesNotMatch(t, /revisor-lgpd/, 'o dado_pessoal imprime só o revisor-seguranca');
   assert.doesNotMatch(t, /select cpf/, 'a linha do diff não vai para a saída');
 });
 
@@ -141,9 +144,9 @@ test('markdown, arquivo de teste e linha apagada sem gatilho de remoção não a
   assert.deepEqual(em({ 'docs/z.md': 'a\n' }, { 'docs/z.md': 'grant e cpf e security definer\n' }).obrigatorios, []);
   const testes = em({ 'src/x/a.test.mjs': 'a\n', 'src/__tests__/b.js': 'a\n', '.claude/hooks/x.test.mjs': 'a\n' },
     { 'src/x/a.test.mjs': "const cpf = 'x';\n", 'src/__tests__/b.js': 'const celular = 1;\n', '.claude/hooks/x.test.mjs': 'const celular = 1;\n' });
-  assert.ok(!nomes(testes.obrigatorios).includes('revisor-lgpd'), 'a linha de teste não aciona o gatilho de conteúdo');
+  assert.ok(!acionou(testes, 'dado_pessoal'), 'a linha de teste não aciona o gatilho de conteúdo');
   const apagada = em({ 'src/lib/y.js': 'const cpf = 1;\n' }, { 'src/lib/y.js': 'const outro = 1;\n' });
-  assert.ok(nomes(apagada.obrigatorios).includes('revisor-lgpd'), 'apagar uma linha de dado pessoal também chama a LGPD (dado_pessoal conta remoção: tirar o campo, a anonimização ou a purga é mudança de tratamento)');
+  assert.ok(acionou(apagada, 'dado_pessoal'), 'apagar uma linha de dado pessoal também chama a segurança (dado_pessoal conta remoção: tirar o campo, a anonimização ou a purga é mudança de tratamento)');
 });
 
 test('um .sql fora das pastas de trabalho (docs/) conta pelo conteúdo e pelo gatilho banco (mudança grande)', () => {
@@ -221,16 +224,18 @@ test('a linha de autorização removida chama o revisor-seguranca (permissao con
   assert.ok(seg.motivos.some((m) => m.gatilho === 'rede_rota' && m.arquivo === 'src/api/y/route.js'));
 });
 
-test('o lgpd-ignora vale em todo arquivo e em toda forma de comentário (a regex é a do confere-lgpd): teste, __tests__ e markdown chamam o revisor-lgpd', () => {
+test('o lgpd-ignora vale em todo arquivo e em toda forma de comentário (a regex é a do confere-lgpd): teste, __tests__ e markdown chamam o revisor-seguranca (D34)', () => {
   const t = ['lgpd-ignora:', 'celular', '-- dado inventado para o teste'].join(' '); // montado: este arquivo não pode ser, ele mesmo, uma supressão
   const formas = [`// ${t}`, ` * ${t}`, `/** ${t} */`, `-- ${t}`, `# ${t}`, `<!-- ${t} -->`];
   for (const caminho of ['src/__tests__/x.js', 'src/x/y.test.mjs', 'docs/z.md', '.claude/hooks/w.test.mjs']) {
-    const lgpd = em({ [caminho]: 'a\n' }, { [caminho]: `${formas.join('\n')}\n` }).obrigatorios.find((r) => r.nome === 'revisor-lgpd');
+    const saida = em({ [caminho]: 'a\n' }, { [caminho]: `${formas.join('\n')}\n` });
+    assert.ok(!nomes(saida.obrigatorios).includes('revisor-lgpd'), 'o revisor-lgpd saiu (D34)');
+    const lgpd = saida.obrigatorios.find((r) => r.nome === 'revisor-seguranca');
     const linhas = lgpd?.motivos.filter((m) => m.gatilho === 'lgpd_ignora' && m.arquivo === caminho).map((m) => m.linha);
-    assert.deepEqual(linhas, [1, 2, 3], caminho); // o corte mostra 3 motivos; as seis linhas casam
+    assert.deepEqual(linhas, caminho.startsWith('.claude/') ? [1, 2] : [1, 2, 3], caminho); // o corte mostra 3 motivos (no .claude/ o config_pipeline ocupa um); as seis linhas casam
     assert.equal(lgpd.total >= formas.length, true, `${caminho}: as ${formas.length} formas casam`);
   }
-  assert.ok(!nomes(em({ 'src/lib/y.js': 'a\n' }, { 'src/lib/y.js': '// lgpd-ignora: regra_x\n' }).obrigatorios).includes('revisor-lgpd'), 'sem o "-- motivo" não é supressão do confere-lgpd');
+  assert.ok(!acionou(em({ 'src/lib/y.js': 'a\n' }, { 'src/lib/y.js': '// lgpd-ignora: regra_x\n' }), 'lgpd_ignora'), 'sem o "-- motivo" não é supressão do confere-lgpd');
 });
 
 test('mudar o .claude/pipeline.json chama a segurança e a arquitetura; a regex dele não aciona o dado_pessoal', () => {
@@ -238,7 +243,6 @@ test('mudar o .claude/pipeline.json chama a segurança e a arquitetura; a regex 
   const saida = em({ '.claude/pipeline.json': JSON.stringify(real, null, 2) }, { '.claude/pipeline.json': JSON.stringify({ ...real, nota: 'celular cpf' }, null, 2) });
   assert.deepEqual(nomes(saida.obrigatorios), ['revisor-arquitetura', 'revisor-seguranca'], 'o config_pipeline chama segurança e arquitetura');
   assert.ok(seguranca(saida).motivos.every((m) => m.gatilho === 'config_pipeline'));
-  assert.ok(!nomes(saida.obrigatorios).includes('revisor-lgpd'));
 });
 
 test('escolher: um revisor que não existe no pipeline.json é erro, não omissão', () => {
@@ -255,33 +259,37 @@ test('formatar mostra o intervalo, o esforço, os níveis do pipeline.json e o c
   assert.match(t, /Obrigatórios \(lance todos; pode acrescentar, nunca tirar\)/);
 });
 
-test('o .claude/ fica fora do conteúdo do dado_pessoal: mexer nos hooks e no pipeline não chama o revisor-lgpd, mas mexer na regra do confere-lgpd chama', () => {
+test('o .claude/ fica fora do conteúdo do dado_pessoal: mexer nos hooks e no pipeline só aciona o config_pipeline, mas mexer na regra do confere-lgpd e na régua (docs/decisoes.md, docs/arquitetura.md) chama também o revisor-seguranca pelo lgpd_regras (D34)', () => {
   const saida = em({ '.claude/hooks/x.mjs': 'a\n' }, { '.claude/hooks/x.mjs': "const q = 'celular cpf';\n" });
-  assert.ok(!nomes(saida.obrigatorios).includes('revisor-lgpd'), 'palavra de dado pessoal em código do pipeline não é dado pessoal');
+  assert.ok(!acionou(saida, 'dado_pessoal'), 'palavra de dado pessoal em código do pipeline não é dado pessoal');
   assert.ok(nomes(saida.obrigatorios).includes('revisor-seguranca'), 'o config_pipeline chama a segurança');
-  for (const caminho of ['.claude/hooks/lgpd-regras.mjs', '.claude/hooks/config.mjs', '.claude/hooks/confere-lgpd.mjs', '.claude/hooks/confere-lgpd.test.mjs', '.claude/agents/revisor-lgpd.md']) {
-    const lgpd = em({ [caminho]: 'a\n' }, { [caminho]: 'b\n' }).obrigatorios.find((r) => r.nome === 'revisor-lgpd');
-    assert.ok(lgpd?.motivos.some((m) => m.gatilho === 'lgpd_regras' && m.arquivo === caminho), caminho);
+  for (const caminho of ['.claude/hooks/lgpd-regras.mjs', '.claude/hooks/config.mjs', '.claude/hooks/confere-lgpd.mjs', '.claude/hooks/confere-lgpd.test.mjs']) {
+    const s = em({ [caminho]: 'a\n' }, { [caminho]: 'b\n' });
+    assert.ok(seguranca(s)?.motivos.some((m) => m.gatilho === 'lgpd_regras' && m.arquivo === caminho), caminho);
+    assert.ok(!nomes(s.obrigatorios).includes('revisor-lgpd'), caminho);
+  }
+  for (const caminho of ['docs/decisoes.md', 'docs/arquitetura.md']) {
+    const s = em({ [caminho]: 'a\n' }, { [caminho]: 'b\n' });
+    assert.deepEqual(nomes(s.obrigatorios), ['revisor-seguranca'], caminho);
+    assert.ok(seguranca(s).motivos.every((m) => m.gatilho === 'lgpd_regras'), `${caminho}: só o lgpd_regras`);
   }
 });
 
 test('o .claude/ não aciona a permissao nem o dado_pessoal pelo conteúdo: a linha de permissão e a de celular ali ficam com o config_pipeline', () => {
   const saida = em({ '.claude/hooks/z.mjs': 'a\n' }, { '.claude/hooks/z.mjs': `const celular = 1;\n${GRANT}` });
   assert.ok(nomes(saida.obrigatorios).includes('revisor-seguranca'), 'o config_pipeline chama a segurança');
-  assert.ok(!nomes(saida.obrigatorios).includes('revisor-lgpd'));
   assert.ok(seguranca(saida).motivos.every((m) => m.gatilho === 'config_pipeline'));
 });
 
-test('um branch que afrouxa o ignorar do dado_pessoal pede o revisor-lgpd uma vez; com a regra já na base, não pede mais', () => {
+test('um branch que afrouxa o ignorar do dado_pessoal pede a segurança uma vez; com a regra já na base, não pede mais', () => {
   const real = JSON.parse(PIPELINE);
   const velha = structuredClone(real);
   velha.revisao.gatilhos.find((g) => g.nome === 'dado_pessoal').ignorar = [];
   const arquivos = diffDe({ '.claude/hooks/x.mjs': 'a\n' }, { '.claude/hooks/x.mjs': "const q = 'celular cpf';\n" });
   const doBranch = { ...config(), revisao: unirRevisao(revisaoDeObjeto(velha.revisao).valor, revisaoDeObjeto(real.revisao).valor) };
-  const lgpd = escolher(arquivos, doBranch, { esforco: 'alto' }).obrigatorios.find((r) => r.nome === 'revisor-lgpd');
-  assert.ok(lgpd?.motivos.some((m) => m.gatilho === 'dado_pessoal'), 'a base não ignorava o .claude/: afrouxar a regra no mesmo branch não cala o gatilho');
+  assert.ok(acionou(escolher(arquivos, doBranch, { esforco: 'alto' }), 'dado_pessoal'), 'a base não ignorava o .claude/: afrouxar a regra no mesmo branch não cala o gatilho');
   const jaNaBase = { ...config(), revisao: unirRevisao(revisaoDeObjeto(real.revisao).valor, revisaoDeObjeto(real.revisao).valor) };
-  assert.ok(!nomes(escolher(arquivos, jaNaBase, { esforco: 'alto' }).obrigatorios).includes('revisor-lgpd'), 'com a regra já na base, o próximo branch não pede');
+  assert.ok(!acionou(escolher(arquivos, jaNaBase, { esforco: 'alto' }), 'dado_pessoal'), 'com a regra já na base, o próximo branch não pede');
 });
 
 test('um ignorar que cala um gatilho de proteção, no gatilho ou no global, é recusado já na leitura do revisao', () => {
@@ -401,7 +409,8 @@ test('um .sql só com comentário mudado (D63) não aciona gatilho por caminho, 
   assert.ok(nomes(comGrant.obrigatorios).includes('qa'));
   const supressao = ['-- lgpd-ignora:', 'regra_x', '-- motivo de teste longo'].join(' ');
   const comSupressao = em({ [MIGRATION]: base }, { [MIGRATION]: `${supressao}\ncreate table t (id int);\n` });
-  assert.deepEqual(nomes(comSupressao.obrigatorios), ['revisor-lgpd'], 'a supressão num comentário de .sql chama só o revisor-lgpd');
+  assert.deepEqual(nomes(comSupressao.obrigatorios), ['revisor-seguranca'], 'a supressão num comentário de .sql chama só o revisor-seguranca (D34)');
+  assert.ok(acionou(comSupressao, 'lgpd_ignora'));
 });
 
 test('comportamento_ignorar (D63): só .md e arquivo de teste não tornam o qa obrigatório; um .js de src/ torna; --comportamento ainda força', () => {
@@ -466,11 +475,11 @@ test('um binário numa pasta de trabalho aciona os gatilhos de conteúdo (não d
     git('add', '-A');
     git('commit', '-q', '-m', 'head');
     const saida = rodar(raiz, 'HEAD~1', 'HEAD', '--json').json();
-    assert.deepEqual(nomes(saida.obrigatorios), ['revisor-lgpd', 'revisor-seguranca'], 'o .bin não é código (sem o grande nem o qa), mas não se lê');
-    const motivos = saida.obrigatorios.flatMap((r) => r.motivos);
+    assert.deepEqual(nomes(saida.obrigatorios), ['revisor-seguranca'], 'o .bin não é código (sem o grande nem o qa), mas não se lê');
+    const motivos = [...saida.obrigatorios.flatMap((r) => r.motivos), ...saida.avisosLgpd.motivos];
     assert.ok(motivos.some((m) => /binário/.test(m.por) && m.arquivo === 'src/public/dados.bin'));
-    assert.ok(!saida.obrigatorios.find((r) => r.nome === 'revisor-seguranca').motivos.some((m) => m.arquivo === 'src/public/logo.png'), 'o logo.png binário não dispara gatilho de conteúdo (a segurança não o vê)');
-    assert.ok(saida.obrigatorios.find((r) => r.nome === 'revisor-lgpd').total >= 3, 'a LGPD vê o .bin (gatilho e binário desconhecido) e a imagem (regra de print)');
+    assert.ok(!seguranca(saida).motivos.some((m) => m.arquivo === 'src/public/logo.png' && m.gatilho !== 'confere-lgpd'), 'o logo.png binário não dispara gatilho de conteúdo: a segurança só o vê, se o vê, pela regra de print do confere-lgpd');
+    assert.deepEqual(saida.avisosLgpd.motivos.map((m) => m.por).sort(), ['binario_desconhecido', 'imagem_no_repositorio'], 'o confere-lgpd vê o .bin (binário desconhecido) e a imagem (regra de print): vão ao relatório e chamam a segurança (D34)');
   });
 });
 
@@ -483,7 +492,9 @@ test('só a imagem removida deixa de chamar o revisor-lgpd; a adicionada, a muda
     writeFileSync(join(raiz, 'docs', 'f.png'), png(4));
     git('add', '-A');
     git('commit', '-q', '-m', 'imagens');
-    const lgpd = rodar(raiz, 'HEAD~1', 'HEAD', '--json').json().obrigatorios.find((r) => r.nome === 'revisor-lgpd');
+    const saida = rodar(raiz, 'HEAD~1', 'HEAD', '--json').json();
+    const lgpd = saida.avisosLgpd;
+    assert.deepEqual(nomes(saida.obrigatorios), ['revisor-seguranca'], 'a imagem chama a segurança');
     assert.deepEqual(lgpd.motivos.map((m) => m.arquivo).sort(), ['docs/d.png', 'docs/e.png', 'docs/f.png'], 'a mudada (d), a renomeada sem mudar (e) e a adicionada (f); a removida (b) não');
     assert.equal(lgpd.total, 3);
   });
@@ -601,7 +612,7 @@ test('referência que não existe: "a referência <x> não existe"; a main que a
 
 // ---- os três esforços do pipeline: rapido, medio (padrão) e alto (D64) ----
 
-test('três esforços (D64): medio é o padrão e dispensa revisor-arquitetura e revisor-lgpd; rapido dispensa todos os revisores e o qa em diff sem gatilho de risco e recusa diff de risco; alto mantém todos', () => {
+test('três esforços (D64): medio é o padrão e dispensa só o revisor-arquitetura (D12); rapido dispensa todos os revisores e o qa em diff sem gatilho de risco e recusa diff de risco; alto mantém todos', () => {
   const diffCompleto = {
     'packages/db/migrations/20261101000000_x.sql': `create table t (id int);\n${GRANT}`,
     'src/contatos/x.js': "export const q = 'select cpf from pessoas';\n",
@@ -612,10 +623,7 @@ test('três esforços (D64): medio é o padrão e dispensa revisor-arquitetura e
     const medio = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--json').json();
     assert.equal(medio.esforco, 'medio');
     assert.deepEqual(nomes(medio.obrigatorios), ['ponytail-review', 'qa', 'revisor-seguranca', 'revisor-tela']);
-    assert.deepEqual(medio.dispensados.map((d) => [d.nome, d.motivo]).sort(), [
-      ['revisor-arquitetura', 'esforço medio (D64)'],
-      ['revisor-lgpd', 'esforço medio (D64)'],
-    ]);
+    assert.deepEqual(medio.dispensados.map((d) => [d.nome, d.motivo]).sort(), [['revisor-arquitetura', 'esforço medio (D64)']]);
     assert.match(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD').stdout, /Revisores de HEAD~1\.\.HEAD \(esforço medio\)/);
 
     // rapido em diff com gatilho de risco: recusado com erro 2
@@ -626,7 +634,7 @@ test('três esforços (D64): medio é o padrão e dispensa revisor-arquitetura e
     // alto: mantém todos
     const alto = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'alto', '--json').json();
     assert.equal(alto.esforco, 'alto');
-    assert.deepEqual(nomes(alto.obrigatorios), ['ponytail-review', 'qa', 'revisor-arquitetura', 'revisor-lgpd', 'revisor-seguranca', 'revisor-tela']);
+    assert.deepEqual(nomes(alto.obrigatorios), ['ponytail-review', 'qa', 'revisor-arquitetura', 'revisor-seguranca', 'revisor-tela']);
     assert.deepEqual(alto.dispensados, []);
   });
 
@@ -643,6 +651,29 @@ test('três esforços (D64): medio é o padrão e dispensa revisor-arquitetura e
     assert.deepEqual(rapido.condicionais, []);
     assert.deepEqual(rapido.dispensados.map((d) => d.nome).sort(), ['ponytail-review', 'qa', 'revisor-arquitetura', 'revisor-tela']);
     assert.ok(rapido.dispensados.every((d) => d.motivo === 'esforço rapido (D64)'));
+  });
+});
+
+test('rapido trava o rede_rota: um diff só em src/api/rota.js sai 2, e todo gatilho de risco do pipeline.json (menos a tela) está na lista do rapido', () => {
+  com(doisCommits({}, { 'src/api/rota.js': "export const s = fetch('https://example.com');\n" }), ({ raiz }) => {
+    const r = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'rapido');
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /gatilho de risco \(rede_rota\)/);
+    assert.equal(rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'medio').status, 0);
+  });
+  for (const g of lerRevisao().valor.gatilhos.filter((x) => x.nome !== 'tela')) assert.ok(GATILHOS_BLOQUEADOS_NO_RAPIDO.has(g.nome), `${g.nome} fora do GATILHOS_BLOQUEADOS_NO_RAPIDO`);
+});
+
+test('D34: no medio, o diff com telefone chama só o revisor-seguranca (dado_pessoal) e o revisor-arquitetura segue dispensado; sem dado pessoal, o gatilho não dispara', () => {
+  com(doisCommits({}, { 'src/contatos/x.js': "export const telefone = '20 91234-5678';\n" }), ({ raiz }) => {
+    const medio = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'medio', '--json').json();
+    assert.ok(acionou(medio, 'dado_pessoal'), 'o gatilho dado_pessoal chama o revisor-seguranca no medio');
+    assert.ok(!nomes(medio.obrigatorios).includes('revisor-arquitetura'));
+    assert.ok(!nomes(medio.obrigatorios).includes('revisor-lgpd'), 'o revisor-lgpd saiu (D34)');
+  });
+  com(doisCommits({}, { 'src/lib/x.js': 'export const x = 1;\n' }), ({ raiz }) => {
+    const medio = rodarSemEsforco(raiz, 'HEAD~1', 'HEAD', '--esforco', 'medio', '--json').json();
+    assert.ok(!acionou(medio, 'dado_pessoal'), 'sem dado pessoal o gatilho não dispara');
   });
 });
 

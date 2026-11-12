@@ -2,8 +2,11 @@
   "agent": "orquestrador",
   "model": "opus",
   "effortLevel": "xhigh",
-  "enabledPlugins": {
-    "frontend-design@claude-plugins-official": true
+  "env": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-5-5",
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "2"
   },
   "hooks": {
     "PreToolUse": [

@@ -11,7 +11,7 @@ Em vez de pedir código em um chat solto onde um único modelo faz tudo, esquece
 - **Chat principal ([`orquestrador`](.claude/agents/orquestrador.md)):** planeja lendo os mapas das pastas (`AGENTS.md`), divide a tarefa, delega e revisa. Ele **não** escreve código direto.
 - **O agente de código `desenvolvedor` (`sonnet`, sempre em worktree isolado, D8):** escreve o código e os testes apenas na pasta que recebeu. Roda sem o `CLAUDE.md`, com as regras de código no próprio arquivo e uma parte do projeto que o orquestrador preenche.
 - **Portões e Guardas (`.claude/hooks/`):** scripts em Node.js + Git que bloqueiam commit na `main`, vazamento de dados pessoais (LGPD), falta de documentação (`AGENTS.md`), `git push --force`, merge de PR pela IA ou fim de turno com testes quebrados.
-- **Revisores e QA (`.claude/agents/`):** agentes especializados (`revisor-seguranca`, `revisor-tela`, `revisor-arquitetura`, `revisor-lgpd`, `ponytail-review` e `qa`) escolhidos mecanicamente pelo diff da mudança.
+- **Revisores e QA (`.claude/agents/`):** agentes especializados (`revisor-seguranca`, `revisor-tela`, `revisor-arquitetura`, `ponytail-review` e `qa`), mais o `designer-ui` para telas, escolhidos mecanicamente pelo diff da mudança.
 
 ---
 
@@ -114,9 +114,9 @@ O pipeline tem **3 níveis de esforço** (`rapido`, `medio` e `alto`):
 
 | Esforço | O que roda | Quando usar |
 |---|---|---|
-| **`medio` (padrão)** | Código + portões + `revisor-seguranca`, `ponytail-review` (se mudança grande), `revisor-tela` (se mudou layout), `qa` e autoanálise _(sem `revisor-arquitetura` e `revisor-lgpd`)_ | **Dia a dia (90% das tarefas):** features comuns, correções de bug, refatorações normais |
+| **`medio` (padrão)** | Código + portões + `revisor-seguranca`, `ponytail-review` (se mudança grande), `revisor-tela` (se mudou layout), `qa` e autoanálise _(sem `revisor-arquitetura`; sem revisor de LGPD desde a D34)_ | **Dia a dia (90% das tarefas):** features comuns, correções de bug, refatorações normais |
 | **`rapido`** | Código + portões mecânicos (`portaoRapido`, `confere-lgpd`, `confere-docs`) _(sem revisores, sem `qa` e sem autoanálise; trava se o diff tocar gatilho de risco)_ | Ajustes pontuais em partes não essenciais (textos, estilos simples, scripts internos sem risco) |
-| **`alto`** | Código + portões + **todos** os revisores acionados (`revisor-arquitetura` e `revisor-lgpd` inclusive) + `qa` + autoanálise | Mudanças críticas de arquitetura, banco de dados/migrations, permissões, autenticação ou LGPD |
+| **`alto`** | Código + portões + **todos** os revisores acionados (`revisor-arquitetura` inclusive; sem revisor de LGPD desde a D34) + `qa` + autoanálise | Mudanças críticas de arquitetura, banco de dados/migrations, permissões, autenticação ou LGPD |
 
 Você pode escolher o esforço de **duas formas**: **Hard** (100% travado por você no sistema operacional/disco, sem passar pela decisão da LLM) ou **Soft** (pedindo no chat com confirmação).
 

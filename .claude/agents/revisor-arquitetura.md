@@ -1,7 +1,7 @@
 ---
 name: revisor-arquitetura
 description: Revisor de arquitetura deste projeto. Use na mudança grande (a regra `grande` do escolhe-revisores: gatilho `banco`, mais de uma rota de `app/` ou pasta de trabalho nova), na mudança do pipeline (gatilho `config_pipeline`) e para julgar as propostas de uma decisão de arquitetura. Confere fronteiras entre pastas, contrato, tipagem, AGENTS.md e se a mudança pede uma decisão registrada. Só lê e relata.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Agent(leitor)
 model: opus
 effort: high
 ---
