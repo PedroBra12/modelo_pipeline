@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { ARQUIVO } from './config.mjs';
 import { cabecalho, sincronizar } from './desenvolvedor.mjs';
 import { lerAgentes, lerNiveis, lerPapeis, orquestrador, papeisDeObjeto } from './papeis.mjs';
-import { ambienteDaMain, copiarHooks, papeisDeExemplo } from './teste-apoio.mjs';
+import { cabecalhoDe } from './sincroniza-pares.mjs';
+import { ambienteDaMain, copiarAgentesPara, copiarHooks, comNeto as comNetoDe, papeisDeExemplo, semNeto as semNetoDe } from './teste-apoio.mjs';
 import { TETO_TOKENS, SO_NO_CHAT, CODIGO, caminhosCitados, decidirAgente as decidirAgenteCom, lerFontesDoDesenvolvedor, decidirEsforcoPipeline, decidirTeto, tamanhoDoArquivo, decidirChamador, decidirContraAMain, ehChatPrincipal, lerPipelineDaMain, CHAVES_DO_CABECALHO, decidirOrquestrador as decidirOrquestradorCom, juntarDecisoes, lerCabecalhoDoArquivo, lerEsforcoDoEstado, lerParDoRegistro, lerRegistroDoArquivo, parDoChat } from './guarda-agentes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -61,7 +62,8 @@ const decide = (entrada) => decidirAgente({ description: 'revisar', prompt: 'x',
 const passa = { decisao: null, motivo: null };
 
 // O desenvolvedor (D8): o agente de verdade, e um CLAUDE.md inventado que ainda não foi adotado.
-const AGENTE = readFileSync(join(AGENTES, 'desenvolvedor.md'), 'utf8');
+// (o cabeçalho é o gerado dos papéis P, sem o neto: o do arquivo de verdade leva o `Agent(<neto>)` quando o neto está ligado)
+const AGENTE = cabecalhoDe(P, 'desenvolvedor', readFileSync(join(AGENTES, 'desenvolvedor.md'), 'utf8'));
 // `ajuste(data)` é o leitor do registro `docs/pipeline/ajustes/<data>-desenvolvedor.md`: só o de 2026-01-01 existe.
 const ITEM_DO_AJUSTE = '`npm run checar:rapido`: tipos e testes.';
 const ajusteFalso = (data) => (data === '2026-01-01' ? `# Ajuste\n\n- entra: ${ITEM_DO_AJUSTE}\n` : null);
@@ -339,8 +341,9 @@ test('os cabeçalhos de verdade de .claude/agents/ batem com a tabela da guarda 
     assert.equal(name, tipo, `${arquivo}: name ${name}`);
     assert.equal(problema, undefined, `${arquivo}: ${problema}`);
     if (tipo === CODIGO) {
-      assert.deepEqual({ model, effort, tools: ferramentas }, { model: 'sonnet', effort: 'medium', tools: 'Read, Edit, Write, Bash, Grep, Glob' }, `${arquivo}: o cabeçalho do desenvolvedor`);
-      assert.ok(readFileSync(join(AGENTES, arquivo), 'utf8').startsWith(cabecalho(P.agentes[CODIGO])), `${arquivo}: o cabeçalho byte a byte`);
+      const { model: m, effort: e, tools: t } = REAL.agentes[CODIGO]; // o esperado vem do arquivo, com ou sem o `Agent(<neto>)`
+      assert.deepEqual({ model, effort, tools: ferramentas }, { model: m, effort: e, tools: t }, `${arquivo}: o cabeçalho do desenvolvedor`);
+      assert.ok(readFileSync(join(AGENTES, arquivo), 'utf8').startsWith(cabecalho(REAL.agentes[CODIGO])), `${arquivo}: o cabeçalho byte a byte`);
     } else if (tipo === SO_NO_CHAT) {
       const { model: modeloDoJson, effort: esforcoDoJson } = lerNiveis().valor.orquestracao;
       assert.equal(model, modeloDoJson, `${arquivo}: model ${model}`);
@@ -587,10 +590,9 @@ test('a janela do registro: a única linha do chat no começo de um arquivo de m
 });
 
 test('o hook de ponta a ponta, sem neto no pipeline.json: o subagente não abre subagente e só o chat principal (sem agent_id, agent_type ausente ou que não é agente do pipeline.json) segue (D11)', () => {
-  const hook = (entrada) => {
-    const r = spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8' });
-    return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
-  };
+  // numa cópia do projeto com o pipeline.json de verdade SEM o neto (o arquivo de verdade pode estar com ele ligado)
+  const semONeto = JSON.stringify(semNetoDe(JSON.parse(readFileSync(ARQUIVO, 'utf8'))), null, 2);
+  const hook = (entrada) => hookNeto({ pipeline: semONeto, entrada });
   const chamada = { subagent_type: 'leitor-docs', description: 'x' };
   const com = (extra, par) => JSON.stringify({ ...JSON.parse(entradaDoHook(chamada, par)), ...extra });
   const dentro = hook(com({ agent_id: 'abc', agent_type: 'general-purpose' }));
@@ -1222,13 +1224,15 @@ test('o neto: o que o pipeline.json diz de `neto` vale; outro agente fixo como n
 });
 
 /** Roda o hook numa cópia em pasta temporária (`raiz/hooks`, `raiz/agents`, `raiz/pipeline.json`), com o pipeline.json e o `env` dados; com `leitor.md`. */
-function hookNeto({ pipeline = JSON.stringify(comNeto(JSON.parse(readFileSync(ARQUIVO, 'utf8'))), null, 2), entrada, env = {}, main = pipeline }) {
+function hookNeto({ pipeline = JSON.stringify(comNetoDe(JSON.parse(readFileSync(ARQUIVO, 'utf8'))), null, 2), entrada, env = {}, main = pipeline }) {
   const raiz = mkdtempSync(join(tmpdir(), 'guarda-agentes-neto-'));
   try {
     mkdirSync(join(raiz, 'hooks'));
     for (const f of ['guarda-agentes.mjs', 'desenvolvedor.mjs', 'config.mjs', 'papeis.mjs']) cpSync(join(AQUI, f), join(raiz, 'hooks', f));
-    cpSync(AGENTES, join(raiz, 'agents'), { recursive: true });
-    writeFileSync(join(raiz, 'agents', 'leitor.md'), '---\nname: leitor\ndescription: Leitor de apoio\nmodel: haiku\neffort: low\ntools: Read, Grep, Glob\n---\ncorpo\n');
+    const lido = papeisDeObjeto(JSON.parse(pipeline)); // o pipeline inválido de um teste não passa por aqui: a guarda nega antes de ler o cabeçalho
+    if (lido.erro === null) copiarAgentesPara(AGENTES, join(raiz, 'agents'), lido.valor); // os cabeçalhos dizem o mesmo que o pipeline.json da cópia
+    else cpSync(AGENTES, join(raiz, 'agents'), { recursive: true });
+    if (lido.erro !== null || lido.valor.neto !== undefined) writeFileSync(join(raiz, 'agents', 'leitor.md'), '---\nname: leitor\ndescription: Leitor de apoio\nmodel: haiku\neffort: low\ntools: Read, Grep, Glob\n---\ncorpo\n');
     writeFileSync(join(raiz, 'pipeline.json'), pipeline);
     const limpo = { ...process.env, PIPELINE_ESFORCO: 'alto', ...ambienteDaMain(main), ...env };
     for (const [k, v] of Object.entries(limpo)) if (v === undefined) delete limpo[k];
@@ -1256,6 +1260,7 @@ test('o hook de ponta a ponta com neto: o subagente abre o leitor e nada mais; o
 
 test('o hook de ponta a ponta: com o pipeline.json inválido a guarda nega todo mundo, o neto inclusive; sem a chave neto o subagente não abre nada', () => {
   const real = JSON.parse(readFileSync(ARQUIVO, 'utf8'));
+  const comNeto = comNetoDe; // as fixtures com o neto partem do arquivo, ligado ou não (o `comNeto` do módulo é o dos papéis do exemplo)
   const invalidos = {
     'neto que não existe': { ...comNeto(real), neto: 'fantasma' },
     'neto com piso e teto': (() => { const j = comNeto(real); Object.assign(j.agentes.leitor, { piso: 'haiku:low', teto: 'haiku:low' }); return j; })(),
@@ -1268,14 +1273,15 @@ test('o hook de ponta a ponta: com o pipeline.json inválido a guarda nega todo 
     assert.match(subagente.saida.permissionDecisionReason, /pipeline\.json ilegível: neto/, rotulo);
     assert.equal(hookNeto({ pipeline: JSON.stringify(json), main: JSON.stringify(json), entrada: entradaNeto({}) }).saida?.permissionDecision, 'deny', `${rotulo}: o chat principal também`);
   }
-  const semNeto = hookNeto({ pipeline: JSON.stringify(real), entrada: entradaNeto(DE_SUBAGENTE, { subagent_type: 'leitor-docs', description: 'x' }) });
-  assert.equal(semNeto.saida?.permissionDecision, 'deny');
-  assert.match(semNeto.saida.permissionDecisionReason, /subagente não abre subagente.*\(D11\)/);
+  const semONeto = hookNeto({ pipeline: JSON.stringify(semNetoDe(real)), entrada: entradaNeto(DE_SUBAGENTE, { subagent_type: 'leitor-docs', description: 'x' }) });
+  assert.equal(semONeto.saida?.permissionDecision, 'deny');
+  assert.match(semONeto.saida.permissionDecisionReason, /subagente não abre subagente.*\(D11\)/);
 });
 
 // ---------- o pipeline.json contra a main (D11) ----------
 
-const REAL_TEXTO = readFileSync(ARQUIVO, 'utf8');
+// o pipeline.json de verdade sem o neto (o arquivo pode tê-lo ligado): a base dos testes da main; o que precisa do neto usa `comNeto`
+const REAL_TEXTO = JSON.stringify(semNetoDe(JSON.parse(readFileSync(ARQUIVO, 'utf8'))), null, 2);
 const doTexto = (texto) => papeisDeObjeto(JSON.parse(texto)).valor;
 const emTexto = (mexer) => { const j = JSON.parse(REAL_TEXTO); mexer(j); return JSON.stringify(j); };
 
@@ -1345,8 +1351,8 @@ function projetoGit(naMain, naArvore = naMain) {
   git('add', '.claude/pipeline.json');
   git('commit', '-q', '-m', 'main');
   writeFileSync(join(raiz, '.claude', 'pipeline.json'), naArvore);
-  cpSync(AGENTES, join(raiz, '.claude', 'agents'), { recursive: true });
-  const rodar = (entrada = entradaDoHook({ subagent_type: 'leitor-docs', description: 'x' }), envExtra = {}) => {
+  copiarAgentesPara(AGENTES, join(raiz, '.claude', 'agents'), doTexto(naMain)); // os cabeçalhos dizem o mesmo que o pipeline.json (com ou sem o neto)
+  const rodar =(entrada = entradaDoHook({ subagent_type: 'leitor-docs', description: 'x' }), envExtra = {}) => {
     const r = spawnSyncDoNode(process.execPath, [join(raiz, '.claude', 'hooks', 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8', env: { ...env, ...envExtra } });
     return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
   };

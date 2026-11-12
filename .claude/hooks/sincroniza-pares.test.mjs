@@ -10,8 +10,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARQUIVO } from './config.mjs';
 import { cabecalho } from './desenvolvedor.mjs';
-import { lerPapeis, orquestrador, papel, versoes } from './papeis.mjs';
+import { lerPapeis, neto, orquestrador, papel, versoes } from './papeis.mjs';
 import { CHAVES_DO_ENV, cabecalhoDe, conferirLocal, envDe, montar, settingsDe, tabela, tabelaDe } from './sincroniza-pares.mjs';
+import { comNeto, semNeto } from './teste-apoio.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const CLAUDE = join(AQUI, '..');
@@ -124,14 +125,17 @@ test('cabecalhoDe mantém o fim de linha do arquivo (CRLF) e o texto depois do c
 
 test('envDe: as 4 chaves, em texto, com a versão de cada família e a profundidade 1 sem o neto, 2 com ele', () => {
   const v = versoes(P);
-  assert.deepEqual(envDe(P), {
+  const chaves = (profundidade) => ({
     ANTHROPIC_DEFAULT_OPUS_MODEL: v.opus,
     ANTHROPIC_DEFAULT_SONNET_MODEL: v.sonnet,
     ANTHROPIC_DEFAULT_HAIKU_MODEL: v.haiku,
-    CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: '1',
+    CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: profundidade,
   });
+  // o arquivo de verdade tem o neto ou não: o esperado vem dele; o "sem" e o "com" vêm de fixtures
+  assert.deepEqual(envDe(P), chaves(neto(P) === undefined ? '1' : '2'), 'o arquivo de verdade');
+  assert.deepEqual(envDe(semNeto(P)), chaves('1'), 'sem o neto');
+  assert.deepEqual(envDe(comNeto(P)), chaves('2'), 'com o neto');
   assert.deepEqual(Object.keys(envDe(P)), CHAVES_DO_ENV);
-  assert.equal(envDe({ ...P, neto: { model: 'haiku', effort: 'low' } }).CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, '2');
 });
 
 test('settingsDe: model, effortLevel e env do pipeline.json; o resto (hooks inclusive) igual, com recuo de 2, fim de linha e \\n final', () => {

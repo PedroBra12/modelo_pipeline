@@ -28,8 +28,8 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   com os dois, o par anda só entre eles, no mesmo modelo (hoje o `revisor-arquitetura`, o `qa` e o `revisor-tela`; os valores estão no arquivo, e este documento não os repete).
                   É a fonte do modelo e do esforço (D2): a `guarda-agentes.mjs` lê daqui e um teste confere que o cabeçalho de cada
                   `.claude/agents/<nome>.md` diz o mesmo.
-                - `neto` (D11, opcional): o nome de um agente de `agentes`, o único que um subagente pode abrir (ver `guarda-agentes.mjs`). O arquivo de hoje não tem a chave (o subagente segue sem abrir subagente); o orquestrador a
-                  liga depois, com o agente `leitor` (`haiku low`, `Read, Grep, Glob`). O `papeis.mjs` recusa (falha fechado) a chave cujo agente não existe em `agentes`, não é fixo (tem `piso` e `teto`), é o `desenvolvedor` ou tem em `tools`
+                - `neto` (D11, opcional): o nome de um agente de `agentes`, o único que um subagente pode abrir (ver `guarda-agentes.mjs`). Sem a chave o subagente não abre subagente; o orquestrador a
+                  liga com o agente `leitor` (o par e as ferramentas dele estão na entrada de `agentes`, no arquivo, não aqui). O `papeis.mjs` recusa (falha fechado) a chave cujo agente não existe em `agentes`, não é fixo (tem `piso` e `teto`), é o `desenvolvedor` ou tem em `tools`
                   algo fora de `Read, Grep, Glob` (nem `Agent`, nem `Agent(<nome>)`, nem `Bash`). Nas `tools` dos outros agentes vale `Agent` e a forma `Agent(<nome>)` (ex.: `Agent(leitor)`); a regra da linha única continua.
                 - `niveis`: os níveis dos subagentes comuns (`leve`, `medio`, `codigo-seguranca`, `revisao-ponytail`,
                   `orquestracao` (obrigatório: é o par do chat principal), `forte`, `autoanalise`), com `model`, `effort`, `tarefa`, `piso` e `teto` opcionais como nos agentes
@@ -415,6 +415,10 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 a cópia de um projeto nesse estado; `papeisDeExemplo`, os papéis do arquivo com os pares do `EXEMPLO`, para os testes da guarda; `pisosDoProjeto`, o `piso` de cada entrada, para o
                 `ciclo-completo`): os testes da conta e da guarda não leem os pares do `pipeline.json` de
                 verdade, que o ajuste automático muda. O `fixarPares` regrava a tabela da skill com o `tabelaDe` do `sincroniza-pares.mjs`.
+                O neto (D11) também muda no arquivo de verdade (o orquestrador o liga e o desliga), então o teste que lê o arquivo, os cabeçalhos ou o `.claude/settings.json` deriva o esperado
+                do próprio arquivo (`papeis`: `neto(p)`, a entrada, `versoes(p)`), e o que precisa de "sem neto" ou "com neto" usa fixture: `semNeto` e `comNeto` (sobre o objeto do `pipeline.json` ou os papéis),
+                `copiarAgentesPara` (os agentes com o cabeçalho gerado de um `p`, sem o `.md` que o `p` não tem) e, numa cópia do projeto, `ligarNeto`, `desligarNeto` e `inverterNeto`
+                (o `LEITOR_MD` e a `LEITOR_ENTRADA` são o fixture do `leitor`; cada um roda o `sincroniza-pares.mjs` da cópia). O `papeisDeExemplo` já vem sem o neto.
 Não faz:      a regra do pipeline (está na skill `.claude/skills/pipeline`); a decisão de subir um revisor ou criar um
               gatilho (o `ajusta-pipeline.mjs` propõe, o usuário diz "sim"); a mudança de regra do `CLAUDE.md`; a conferência do que o AGENTS.md diz em
               prosa (é do revisor-arquitetura); o julgamento de risco e dado pessoal (é do revisor-seguranca; o revisor-lgpd saiu na D34); os hooks globais do usuário não são daqui.
@@ -480,7 +484,8 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
               - O `ciclo-completo.test.mjs` copia só o que os testes que leem o `pipeline.json` de verdade usam
                 (`config`, `papeis`, `guarda-agentes`, `ajusta-pipeline`, `settings` e `sincroniza-pares`), baixa todos os alvos ao piso (cabeçalhos e
                 tabela sincronizados) e roda esses seis lá (~9 s): um teste que crava um par quebraria no 1º ajuste
-                automático e o pre-commit recusaria o commit.
+                automático e o pre-commit recusaria o commit. Roda uma 2ª vez com o neto virado na cópia (`inverterNeto`: liga se o arquivo não tem, desliga se tem,
+                e roda o gerador), para que o teste cravado no estado do arquivo quebre aqui e não no commit que liga ou desliga o neto.
               - O `pre-commit.test.mjs` usa um git de verdade com os hooks copiados e **sem `package.json`**: o commit que toca `.claude/` roda o
                 `node --test` (vermelho recusa, verde passa, sem teste nenhum recusa, e o script `test:pipeline` de um `package.json` não
                 vale), com `NODE_TEST_CONTEXT=child` e `NODE_OPTIONS` quebrado no ambiente do commit, e o que não toca `.claude/` não roda

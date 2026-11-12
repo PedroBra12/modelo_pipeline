@@ -20,12 +20,12 @@ function comArquivo(conteudo, fn) {
   }
 }
 
-test('o pipeline.json do projeto é JSON válido e tem os dez campos, e só o lgpd é opcional; o repositorio é o marcador ou um dono/repo', () => {
+test('o pipeline.json do projeto é JSON válido e tem os dez campos, e só o lgpd e o neto são opcionais; o repositorio é o marcador ou um dono/repo', () => {
   const dados = JSON.parse(readFileSync(ARQUIVO, 'utf8'));
   const obrigatorios = ['agentes', 'ajuste', 'comum', 'escada', 'familias', 'niveis', 'pastasDeTrabalho', 'portaoRapido', 'repositorio', 'revisao'];
   const chaves = Object.keys(dados).sort();
   for (const c of obrigatorios) assert.ok(chaves.includes(c), `falta ${c}`);
-  assert.deepEqual(chaves.filter((c) => !obrigatorios.includes(c)).filter((c) => c !== 'lgpd'), [], 'além dos dez, só o lgpd (opcional)');
+  assert.deepEqual(chaves.filter((c) => !obrigatorios.includes(c)).filter((c) => !['lgpd', 'neto'].includes(c)), [], 'além dos dez, só o lgpd e o neto (opcionais)');
   const repo = lerRepositorio();
   if (dados.repositorio === MARCADOR) assert.ok(repo.erro?.startsWith(CONFIGURE), 'o marcador falha fechado');
   else assert.deepEqual(repo, { valor: dados.repositorio, erro: null });

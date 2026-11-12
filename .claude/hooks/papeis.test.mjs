@@ -7,14 +7,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARQUIVO } from './config.mjs';
+import { semNeto } from './teste-apoio.mjs';
 import { agentesFixos, comum, degrau, ehFixo, esforcosDe, esforcosNegados, faixa, lerAgentes, lerNiveis, lerPapeis, mudancas, neto, nomesDeAgentes, orquestrador, papel, papeisDeObjeto, par, TOOLS_DO_NETO, versoes } from './papeis.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const dados = () => JSON.parse(readFileSync(ARQUIVO, 'utf8'));
-/** O pipeline.json de verdade com `muda(dados)` aplicado (a cópia é nossa). */
-const com = (muda) => { const d = dados(); muda(d); return d; };
+// Os testes de estrutura partem do pipeline.json de verdade SEM o neto (`semNeto`), ligado ou não no arquivo: o orquestrador o liga e desliga.
+// O que depende do neto de verdade (a chave, a entrada) deriva do próprio arquivo, no teste do arquivo do projeto.
+/** O pipeline.json de verdade, sem o neto, com `muda(dados)` aplicado (a cópia é nossa). */
+const com = (muda) => { const d = semNeto(dados()); muda(d); return d; };
 const erro = (d) => papeisDeObjeto(d).erro;
-const P = papeisDeObjeto(dados()).valor;
+const P = papeisDeObjeto(semNeto(dados())).valor;
 
 /** Roda `fn(caminho)` com um pipeline.json temporário (objeto vira JSON; texto vai como está; undefined = sem arquivo). */
 function comArquivo(conteudo, fn) {
@@ -33,7 +36,10 @@ function comArquivo(conteudo, fn) {
 test('o pipeline.json do projeto carrega: famílias com versão, escada, comum, o desenvolvedor e a orquestração', () => {
   const r = lerPapeis();
   assert.equal(r.erro, null);
-  assert.deepEqual(Object.keys(r.valor).sort(), ['agentes', 'comum', 'escada', 'familias', 'niveis']);
+  const comONeto = Object.hasOwn(dados(), 'neto'); // a chave é opcional: o esperado vem do arquivo
+  assert.deepEqual(Object.keys(r.valor).sort(), ['agentes', 'comum', 'escada', 'familias', ...(comONeto ? ['neto'] : []), 'niveis']);
+  assert.equal(neto(r.valor), dados().neto);
+  if (comONeto) assert.ok(papel(r.valor, 'agentes', neto(r.valor)), 'o neto do arquivo é um agente de agentes');
   assert.deepEqual(Object.keys(versoes(r.valor)).sort(), ['haiku', 'opus', 'sonnet']);
   assert.ok(r.valor.escada.length >= 3);
   assert.ok(papel(r.valor, 'agentes', 'desenvolvedor'));
@@ -58,7 +64,7 @@ test('as entradas de verdade: o que é fixo, o que anda entre piso e teto, e o d
   assert.deepEqual(orquestrador(P), { model: 'opus', effort: 'xhigh' });
   assert.equal(Object.hasOwn(agentesFixos(P), 'desenvolvedor'), false, 'o desenvolvedor não é agente fixo (tem as regras da D8)');
   assert.equal(nomesDeAgentes(P).includes('desenvolvedor'), true);
-  assert.deepEqual(Object.keys(lerAgentes().valor), Object.keys(agentesFixos(P)));
+  assert.deepEqual(Object.keys(lerAgentes().valor), Object.keys(agentesFixos(lerPapeis().valor)), 'os fixos do arquivo, com o neto se ele está ligado');
   assert.deepEqual(Object.keys(lerNiveis().valor), Object.keys(P.niveis));
 });
 
@@ -67,7 +73,8 @@ test('lerPapeis: arquivo ausente, ilegível e objeto que não é objeto falham c
   comArquivo('{ quebrado', (c) => assert.match(lerPapeis(c).erro, /não é JSON válido/));
   comArquivo('[]', (c) => assert.match(lerPapeis(c).erro, /tem de ser um objeto JSON/));
   comArquivo(`﻿${JSON.stringify(dados())}`, (c) => assert.equal(lerPapeis(c).erro, null));
-  comArquivo(dados(), (c) => assert.deepEqual(lerPapeis(c).valor, P));
+  comArquivo(semNeto(dados()), (c) => assert.deepEqual(lerPapeis(c).valor, P));
+  comArquivo(dados(), (c) => assert.deepEqual(lerPapeis(c).valor, lerPapeis().valor));
   for (const ler of [lerAgentes, lerNiveis]) comArquivo('{ quebrado', (c) => assert.notEqual(ler(c).erro, null));
 });
 
