@@ -4,7 +4,6 @@
 //   node .claude/hooks/ajusta-pipeline.mjs [--relatorio] [--json] [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos [--data AAAA-MM-DD] [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --aplicar-mais <alvo> [--data AAAA-MM-DD] [--raiz <pasta>]
-//   node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor [--raiz <pasta>]
 //   node .claude/hooks/ajusta-pipeline.mjs --repetidas <pasta> [--json] [--raiz <pasta>]   (só lê; sai antes de ler o pipeline.json)
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -16,6 +15,7 @@ import { agentesFixos, degrau, ehFixo, lerPapeis, orquestrador, par } from './pa
 import { varrer } from './confere-lgpd.mjs';
 import { CARACTERES_POR_TOKEN } from './guarda-agentes.mjs';
 import { partes, sincronizar } from './desenvolvedor.mjs';
+import { gravar, montar } from './sincroniza-pares.mjs';
 
 const RAIZ_PADRAO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GRAVES = new Set(['critico', 'alto', 'must']);
@@ -34,14 +34,11 @@ const ID_DE_PESSOA = /(cliente|lead|contato|titular)\s*#?\d{3,}/i;
 const ID_DE_PESSOA_NO_NOME = /(cliente|lead|contato|titular)[-_\s]*#?\d{3,}/i;
 const ASSUNTO_KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const MAX_ASSUNTO = 60;
-const INICIO = '<!-- tabela-agentes:inicio (gerada por ajusta-pipeline.mjs --sincronizar-tabela; não edite) -->';
-const FIM = '<!-- tabela-agentes:fim -->';
 const DATA = /^\d{4}-\d{2}-\d{2}$/;
 
 const caminhos = (raiz) => ({
   config: join(raiz, '.claude', 'pipeline.json'),
   agentes: join(raiz, '.claude', 'agents'),
-  skill: join(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md'),
   sessoes: join(raiz, 'docs', 'pipeline', 'sessoes'),
   ajustes: join(raiz, 'docs', 'pipeline', 'ajustes'),
 });
@@ -305,27 +302,6 @@ export function formatar(r) {
   return o.join('\n');
 }
 
-// ---------- tabela da seção 7 ----------
-
-/** A tabela de modelo e esforço da seção 7 da skill `pipeline`, gerada do pipeline.json. */
-export function tabela(cfg) {
-  const linhas = ['| Quem | Tarefa | `model` | `effort` |', '|---|---|---|---|'];
-  for (const [chave, e] of Object.entries(cfg.niveis)) linhas.push(`| nível \`${chave}\` | ${e.tarefa ?? ''} | \`${e.model}\` | \`${e.effort}\` |`);
-  for (const [chave, e] of Object.entries(cfg.agentes)) linhas.push(`| agente \`${chave}\` (\`.claude/agents/\`) | ${e.tarefa ?? ''} | \`${e.model}\` | \`${e.effort}\` |`);
-  return `${INICIO}\n${linhas.join('\n')}\n${FIM}`;
-}
-
-/** O texto da skill com a tabela entre as marcas trocada pela gerada. Lança se as marcas faltam. */
-export function comTabela(skill, cfg) {
-  const a = skill.indexOf(INICIO);
-  const b = skill.indexOf(FIM);
-  if (a === -1 || b === -1 || b < a) throw new Error('SKILL.md sem as marcas da tabela (tabela-agentes:inicio e tabela-agentes:fim)');
-  // o fim de linha é o que a skill já usa (CRLF ou LF): a tabela é gerada em LF e convertida, para o arquivo não ficar misturado
-  const nl = skill.indexOf('\n', a);
-  const eol = nl > 0 ? (skill[nl - 1] === '\r' ? '\r\n' : '\n') : (skill.includes('\r\n') ? '\r\n' : '\n');
-  return skill.slice(0, a) + tabela(cfg).replace(/\n/g, eol) + skill.slice(b + FIM.length);
-}
-
 // ---------- aplicar um ajuste ----------
 
 const trocarPar = (texto, secao, chave, [model, effort]) => {
@@ -336,16 +312,10 @@ const trocarPar = (texto, secao, chave, [model, effort]) => {
   return texto.slice(0, ini) + resto.replace(re, `$1${model}$2${effort}$3`);
 };
 
-const trocarCabecalho = (texto, chave, [model, effort]) => {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(texto);
-  if (m === null || !/^model:.*$/m.test(m[1]) || !/^effort:.*$/m.test(m[1])) throw new Error(`o cabeçalho de .claude/agents/${chave}.md não tem model: e effort:`);
-  return texto.replace(m[1], m[1].replace(/^model:.*$/m, `model: ${model}`).replace(/^effort:.*$/m, `effort: ${effort}`));
-};
-
 /**
  * Aplica os ajustes de `itens` (`analisar`: `descer` ou um de `subir`): edita o pipeline.json (só a linha do par do alvo),
- * o cabeçalho do agente e a tabela da skill, e grava um arquivo por ajuste em docs/pipeline/ajustes/. Só grava se tudo
- * deu certo. Devolve as linhas para o relatório.
+ * regrava com o `sincroniza-pares.mjs` os cabeçalhos dos agentes, o settings.json e a tabela da skill a partir dele, e grava
+ * um arquivo por ajuste em docs/pipeline/ajustes/. Só grava se tudo deu certo. Devolve as linhas para o relatório.
  */
 export function aplicar(raiz, itens, data, vistas) {
   if (itens.length === 0) return [];
@@ -357,10 +327,6 @@ export function aplicar(raiz, itens, data, vistas) {
   itens.forEach((d, k) => {
     const para = d.para.split(':');
     json = trocarPar(json, d.secao, d.chave, para);
-    if (d.secao === 'agentes') {
-      const arquivo = join(c.agentes, `${d.chave}.md`);
-      arquivos.push([arquivo, trocarCabecalho(readFileSync(arquivo, 'utf8'), d.chave, para)]);
-    }
     let nome = `${data}-${d.chave}.md`;
     for (let n = 2; existsSync(join(c.ajustes, nome)) || arquivos.some(([f]) => f === join(c.ajustes, nome)); n += 1) nome = `${data}-${d.chave}-${n}.md`;
     const registro = { alvo: d.chave, tipo: d.tipo, data, de: d.de, para: d.para, vistas, ordem: existentes.length + k + 1, motivo: d.motivo };
@@ -382,18 +348,12 @@ export function aplicar(raiz, itens, data, vistas) {
     if (ehFixo(entrada)) throw new Error(`${d.id}: ${d.chave} é fixo em ${d.de}: o par dele não se ajusta`);
     if (par(entrada) !== d.para) throw new Error(`${d.id}: o pipeline.json novo não ficou em ${d.para}`);
   }
-  const skill = comTabela(readFileSync(c.skill, 'utf8'), cfg);
+  const derivados = montar(raiz, cfg.papeis);
   mkdirSync(c.ajustes, { recursive: true });
   writeFileSync(c.config, json);
-  writeFileSync(c.skill, skill);
+  gravar(derivados);
   for (const [arquivo, texto] of arquivos) writeFileSync(arquivo, texto);
   return escritas;
-}
-
-/** Regrava a tabela da skill a partir do pipeline.json. */
-export function sincronizarTabela(raiz) {
-  const c = caminhos(raiz);
-  writeFileSync(c.skill, comTabela(readFileSync(c.skill, 'utf8'), lerConfig(c.config)));
 }
 
 /**
@@ -490,7 +450,7 @@ export function formatarRepetidas(r) {
 // ---------- linha de comando ----------
 
 const COM_VALOR = new Set(['--raiz', '--data', '--aplicar-mais', '--repetidas']);
-const SEM_VALOR = new Set(['--relatorio', '--json', '--aplicar-menos', '--sincronizar-tabela', '--sincronizar-desenvolvedor']);
+const SEM_VALOR = new Set(['--relatorio', '--json', '--aplicar-menos', '--sincronizar-desenvolvedor']);
 
 function opcoes(argv) {
   const o = {};
@@ -511,11 +471,6 @@ function principal(argv) {
   const o = opcoes(argv);
   const raiz = resolve(o['--raiz'] ?? RAIZ_PADRAO);
   const c = caminhos(raiz);
-  if (o['--sincronizar-tabela']) {
-    sincronizarTabela(raiz);
-    console.log('tabela da seção 7 da skill pipeline sincronizada com o pipeline.json');
-    return;
-  }
   if (o['--sincronizar-desenvolvedor']) {
     const mudou = sincronizarDesenvolvedor(raiz);
     console.log(mudou.length === 0 ? 'desenvolvedor.md já estava em dia com o CLAUDE.md' : `desenvolvedor.md regravado: ${mudou.join(', ')}`);

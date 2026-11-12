@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { fixarPares, pisosDoProjeto } from './teste-apoio.mjs';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const TESTES = ['config.test.mjs', 'papeis.test.mjs', 'guarda-agentes.test.mjs', 'ajusta-pipeline.test.mjs', 'settings.test.mjs'];
+const TESTES = ['config.test.mjs', 'papeis.test.mjs', 'guarda-agentes.test.mjs', 'ajusta-pipeline.test.mjs', 'settings.test.mjs', 'sincroniza-pares.test.mjs'];
 
 test('com os alvos no piso, os testes que leem o pipeline.json de verdade continuam verdes', { timeout: 300_000 }, () => {
   const raiz = mkdtempSync(join(tmpdir(), 'ciclo-'));

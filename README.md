@@ -227,7 +227,7 @@ Para abrir direto com um alias (`nome_alias`), adicione ao seu terminal:
   - o teto em `TETO`, na `guarda-agentes.mjs`;
   - o piso em `PISOS`, ou o par exato em `FIXOS`, no `config.mjs`;
   - quem o chama: o nome em `revisao.sempre` ou num gatilho (e no `PISO_GATILHOS`, para travar);
-  - a tabela da skill `pipeline` regerada com `node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela`.
+  - a tabela da skill `pipeline` regerada com `node .claude/hooks/sincroniza-pares.mjs`.
 
   Pela D3, o modelo vem do papel e o esforço de partida, do custo do erro.
 - **Checagem obrigatória no GitHub (recomendada):** um workflow do GitHub Actions marcado como obrigatório no PR, que rode `node --test ".claude/hooks/*.test.mjs"` e o `confere-lgpd` sobre cada commit do PR. É a única trava que o agente não desliga da máquina dele. Custa minutos do Actions: grátis em repositório público, e da cota do plano em privado. Decida antes de ligar.

@@ -1,7 +1,7 @@
 # .claude/hooks
 
 Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/settings.json` (que também abre toda sessão como o
-              agente `orquestrador`, com `model: opus` e `effortLevel: xhigh`, D3), e os do git, em `git/`.
+              agente `orquestrador`, com `model: opus` e `effortLevel: xhigh`, D3, e leva o `env` gerado, D11), e os do git, em `git/`.
               A configuração do projeto mora num lugar só, `.claude/pipeline.json`, lido por `config.mjs` e, nas chaves de par
               (`familias`, `escada`, `comum`, `agentes`, `niveis`), só pelo `papeis.mjs` (D11).
               - `.claude/pipeline.json` (contrato):
@@ -127,7 +127,9 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   em outro ponto do comando (`cd .claude`, `git -C .claude`), o `agents/` solto também conta; `apps/agents/` não. É a mesma máquina do segmento que só lê (`analisar`, `avaliarEntrada` e `decisao`
                   levam `agente` como último parâmetro), então `cat`, `grep`, `head`, `git show main:.claude/agents/x.md` passam, e `ls`, `cp`, `sed -i`, `git add` e `git checkout -- .claude/agents` negam. Sem `agent_id`
                   (o orquestrador), nada muda. Testes em `guarda-git.agentes.test.mjs`. Também contam como menção a `.claude/agents` as três opções do `ajusta-pipeline.mjs` que gravam o agente sem citar a pasta
-                  (`--sincronizar-desenvolvedor`, `--aplicar-menos` e `--aplicar-mais`): com `agent_id`, `node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos` nega. **A negação vale em qualquer modo:** o
+                  (`--sincronizar-desenvolvedor`, `--aplicar-menos` e `--aplicar-mais`): com `agent_id`, `node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos` nega. O mesmo vale para o gerador
+                  `sincroniza-pares` (D11), com ou sem `.mjs` e com qualquer argumento, **menos o `--conferir`** no mesmo segmento do comando, que só lê (`node .claude/hooks/sincroniza-pares.mjs --conferir` passa;
+                  `... --conferir; node .claude/hooks/sincroniza-pares.mjs` e `--conferir=0` negam). **A negação vale em qualquer modo:** o
                   `PIPELINE_GUARDA_GIT=desligado` não a some e o `perguntar` não a vira em `ask` (o `principal` lê a entrada antes do `desligado`; `negaAgentes` é a conta só da pasta de agentes); o resto continua
                   com o modo. A `guarda-pasta-agentes` é importada dentro de um `try`, como a `guarda-agentes` faz com o `config.mjs`: se não carrega (arquivo quebrado), a `guarda-git` nega tudo, em qualquer modo e com ou sem
                   `agent_id` ("guarda-pasta-agentes.mjs ilegível"), em vez de cair num erro que não nega nada. Com o `desligado` a entrada ilegível também nega (sem ler a entrada não se sabe se é subagente).
@@ -341,9 +343,22 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 `PISO_GATILHOS` ou a regra `grande` (branch que saiu antes da regra), a mensagem acrescenta "branch anterior à regra: traga a
                 main (git merge main)".
               - `coleta-agentes.mjs <pasta> [--desde <ISO>] [--json]`: não é hook; só lê, sem rede (D6). A autoanálise tira daqui os números dos subagentes (`agentId`, `modelo`, `tokens`, `minutos`, `inicio`, `fim`, `pedidos` e `primeiroPedido`; o pedido é a mensagem `user` que não é resultado de ferramenta **nem a que o Claude Code injeta, a de texto que começa por `<system-reminder>`**, então o agente comum sai com `pedidos: 1`, não "retomado") das transcrições `tasks/*.output` da sessão e, em campos separados no JSON e no texto (D8.9), o `contexto1` (medido: `input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens` do 1º `usage`, sem o `output_tokens`; `null` sem `usage`) e o `pacote1` (estimado: os tokens, tamanho ÷ `CARACTERES_POR_TOKEN`, dos arquivos de fora do repositório que o 1º pedido cita por caminho absoluto, com o `caminhosCitados` e o `tamanhoDoArquivo` da `guarda-agentes.mjs`, que o `lerAgente` e o `coletar` recebem como medidor injetável; 0 sem citação, `null` sem pedido); testes em `coleta-agentes.test.mjs`.
-              - `ajusta-pipeline.mjs [--relatorio] [--aplicar-menos] [--aplicar-mais <alvo>] [--sincronizar-tabela] [--sincronizar-desenvolvedor] [--data
-                AAAA-MM-DD] [--json] [--raiz <pasta>]`: não é hook; é a conta da skill `adjust-pipeline` (D2). O `--sincronizar-desenvolvedor` (D8), no molde do
-                `--sincronizar-tabela`, roda o `sincronizar` do `desenvolvedor.mjs` sobre `.claude/agents/desenvolvedor.md` com o `CLAUDE.md` da raiz, grava só
+              - `sincroniza-pares.mjs [--conferir] [--raiz <pasta>]` (D11): o gerador dos pares; não é hook. Regrava, a partir do `pipeline.json` (lido só pelo `papeis.mjs`), o que antes se copiava à mão:
+                (1) os cabeçalhos de `.claude/agents/<nome>.md` de cada entrada de `agentes` que tem arquivo (as linhas `model:`, `effort:` e `tools:`, com o modelo como apelido; o do `desenvolvedor` inteiro,
+                pelo `cabecalho(entrada)` do `desenvolvedor.mjs`) e o `.claude/agents/orquestrador.md` (`model:` e `effort:` de `orquestrador(p)`), sem mudar mais nada do arquivo nem o `name:`; (2) o `.claude/settings.json`: `model` e
+                `effortLevel` de `orquestrador(p)` e o `env`, que fica **exatamente** com `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (de `versoes(p)`) e
+                `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` (`"1"` enquanto o `pipeline.json` não tem `neto`, `"2"` com ele), todos texto; qualquer outra chave do `env` some, e o resto do arquivo (`hooks` profundamente igual,
+                recuo de 2, fim de linha e `\n` final) fica como está; (3) a tabela da seção 7 de `.claude/skills/pipeline/SKILL.md` (`tabela`, `tabelaDe`), no fim de linha que a skill já usa. O `.claude/settings.local.json`
+                (fora do git), se existir com `env` de chave fora das 4, com `disableAllHooks`, ilegível ou de forma estranha, é **recusado** (sai 1 dizendo a chave, não grava nada, e o gerador nunca o regrava).
+                Funções puras `cabecalhoDe(p, nome, texto)`, `settingsDe(p, texto)`, `tabelaDe(p, texto)` e `conferirLocal(texto)`, e um adaptador fino de disco (`montar(raiz, p)` monta tudo em memória e valida; `gravar` escreve cada
+                arquivo que mudou por um temporário na mesma pasta + `rename`, então a 2ª execução não grava nada). **Falha fechado:** o `pipeline.json` inválido, um cabeçalho sem a linha a trocar, o `.claude/settings.json` ou a skill
+                ausentes ou uma saída que não passa na conferência (JSON, `hooks` iguais, `env` só nas 4 chaves em texto, `name:` igual) saem com 1 sem gravar nada. Com `--conferir` não grava: sai 0 se tudo está em dia e 1 listando os
+                arquivos que divergem e "rode node .claude/hooks/sincroniza-pares.mjs"; a recusa do `.claude/settings.local.json` vale também nele. Só ele e o `ajusta-pipeline.mjs --aplicar-*` (que usa o `montar` e o `gravar`) mudam esses
+                arquivos; o subagente não o roda pelo shell (a `guarda-git`; o `--conferir` passa). Testes em `sincroniza-pares.test.mjs` (o repositório de verdade em dia, as funções puras, a idempotência pelo inode, a recusa sem
+                gravar, o `--conferir`) e no `settings.test.mjs` (o `env`).
+              - `ajusta-pipeline.mjs [--relatorio] [--aplicar-menos] [--aplicar-mais <alvo>] [--sincronizar-desenvolvedor] [--data
+                AAAA-MM-DD] [--json] [--raiz <pasta>]`: não é hook; é a conta da skill `adjust-pipeline` (D2). O `--sincronizar-desenvolvedor` (D8)
+                roda o `sincronizar` do `desenvolvedor.mjs` sobre `.claude/agents/desenvolvedor.md` com o `CLAUDE.md` da raiz, grava só
                 se mudou, imprime o que mudou (`bloco regras`, `bloco dominio`) e, se a extração falha (título de regra ausente ou repetido, marcador quebrado),
                 sai com 2 e a frase do erro. O `--repetidas <pasta> [--json]` (D8.3) é do fechamento: lê os `desenvolvedor-*.md` do 1º nível da pasta (os outros `.md`, como os pacotes de planejamento, e as subpastas ficam fora) e o `.claude/agents/desenvolvedor.md` da raiz, e imprime os pacotes contados, as **candidatas** (linha em 2 pacotes distintos ou mais que não é igual a uma linha do corpo do agente, com a contagem e os arquivos) e a **economia perdida** (linha de pacote igual a uma do corpo, com ≈ tokens = tamanho ÷ 3 × pacotes). A linha é normalizada (pula cerca de código e as linhas que começam por `#`, `|` ou `<!--`; tira `>`, o marcador de lista e `**`; junta espaços, tira `.;:,` do fim, minúsculas; menos de 40 caracteres é descartada). Só lê, nunca grava, e sai antes do `lerConfig` (funções `repetidas` e `linhasNormalizadas`). O lote que entra e sai do agente fica em `docs/pipeline/ajustes/<data>-desenvolvedor.md` (`tipo: parte-do-projeto`) e o `--relatorio` o aceita sem contá-lo em nenhum alvo. A sessão aceita em `agentes[]` os campos opcionais `agente` (texto), `contexto1` e `pacote1` (número ≥ 0 ou `null`). Lê as
                 sessões de `docs/pipeline/sessoes/` (o bloco json de cada `AAAA-MM-DD-*.md`, validado: nomes que existem
@@ -362,8 +377,8 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 mais caro primeiro, respeitando o `adiar` da sessão. Para mais (escape de nível médio ou mais, na hora; rodadas
                 altas do nível de código, com a janela completa) e gatilho que falta ou dispara à toa ele só propõe; o `--aplicar-mais` aplica
                 a proposta existente. O nível de código nunca passa do `teto` dele (`sonnet:high`) e o agente nunca passa do `teto` da entrada; entrada fixa (sem `piso` e `teto`) e o `desenvolvedor` não são alvo. Aplicar edita
-                só a linha do alvo no `pipeline.json`, o cabeçalho do agente e a tabela da seção 7 da skill `pipeline`, e
-                grava `docs/pipeline/ajustes/<data>-<alvo>.md` (com as `vistas`); só grava se o `pipeline.json` novo passa na leitura do `papeis.mjs` (piso, teto, escada) e o alvo não é fixo. A janela completa vale só para descer e para a subida do código por rodadas; escape e gatilho que falta viram proposta na hora. A tabela da skill mantém o fim de linha que o `SKILL.md` já usa (CRLF ou LF). O nome do arquivo de sessão, depois da data, é kebab de até 60 caracteres, e nem o nome nem o texto do bloco levam id de pessoa (`cliente 12345`, `lead #987`, `contato123`, `titular 0042`).
+                só a linha do alvo no `pipeline.json` e, com o `montar` e o `gravar` do `sincroniza-pares.mjs` sobre o `pipeline.json` novo, regrava os cabeçalhos dos agentes, o `.claude/settings.json` e a tabela da seção 7 da skill `pipeline` (a tabela e o `--sincronizar-tabela` saíram daqui para o gerador), e
+                grava `docs/pipeline/ajustes/<data>-<alvo>.md` (com as `vistas`); só grava se o `pipeline.json` novo passa na leitura do `papeis.mjs` (piso, teto, escada) e o alvo não é fixo. A janela completa vale só para descer e para a subida do código por rodadas; escape e gatilho que falta viram proposta na hora. A tabela da skill mantém o fim de linha que o `SKILL.md` já usa (CRLF ou LF), e o `aplicar` falha, sem gravar nada, se o `.claude/settings.local.json` for recusado pelo gerador. O nome do arquivo de sessão, depois da data, é kebab de até 60 caracteres, e nem o nome nem o texto do bloco levam id de pessoa (`cliente 12345`, `lead #987`, `contato123`, `titular 0042`).
               - `marca-alterado.mjs`: PostToolUse em Edit, Write, MultiEdit e NotebookEdit; anota código alterado (a lista única de extensões do `config.mjs`, `.css` e `.py` inclusive) em
                 `.claude/estado/alterados.txt`. Nunca bloqueia.
               - `portao.mjs`: Stop; com código alterado e o script do `portaoRapido` no package.json, roda o portão
@@ -375,13 +390,13 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 copiados e um `.claude/pipeline.json` à escolha, e guarda o `EXEMPLO` dos pares (e `fixarExemplo`, que põe
                 a cópia de um projeto nesse estado; `papeisDeExemplo`, os papéis do arquivo com os pares do `EXEMPLO`, para os testes da guarda; `pisosDoProjeto`, o `piso` de cada entrada, para o
                 `ciclo-completo`): os testes da conta e da guarda não leem os pares do `pipeline.json` de
-                verdade, que o ajuste automático muda.
+                verdade, que o ajuste automático muda. O `fixarPares` regrava a tabela da skill com o `tabelaDe` do `sincroniza-pares.mjs`.
 Não faz:      a regra do pipeline (está na skill `.claude/skills/pipeline`); a decisão de subir um revisor ou criar um
               gatilho (o `ajusta-pipeline.mjs` propõe, o usuário diz "sim"); a mudança de regra do `CLAUDE.md`; a conferência do que o AGENTS.md diz em
               prosa (é do revisor-arquitetura); o julgamento de risco e dado pessoal (é do revisor-seguranca; o revisor-lgpd saiu na D34); os hooks globais do usuário não são daqui.
 Depende de:   Node 24 e git, sem pacote nenhum; o `.claude/pipeline.json`; os cabeçalhos de `.claude/agents/` e o fim
-              do registro da sessão que o hook aponta em `transcript_path`, só para ler (`guarda-agentes.mjs`); `docs/pipeline/` e a tabela da seção 7 de `.claude/skills/pipeline/SKILL.md`
-              (`ajusta-pipeline.mjs`); o `CLAUDE.md`, o `docs/arquitetura.md` e `.claude/agents/desenvolvedor.md` (`guarda-agentes.mjs`, que os lê a cada chamada do
+              do registro da sessão que o hook aponta em `transcript_path`, só para ler (`guarda-agentes.mjs`); `docs/pipeline/` (`ajusta-pipeline.mjs`); a tabela da seção 7 de `.claude/skills/pipeline/SKILL.md`, os cabeçalhos de `.claude/agents/` e o `.claude/settings.json`
+              (`sincroniza-pares.mjs`, que os regrava, e o `ajusta-pipeline.mjs` por ele); o `CLAUDE.md`, o `docs/arquitetura.md` e `.claude/agents/desenvolvedor.md` (`guarda-agentes.mjs`, que os lê a cada chamada do
               `desenvolvedor`, e `ajusta-pipeline.mjs --sincronizar-desenvolvedor`, que regrava o agente a partir do `CLAUDE.md`).
               Claude Code 2.1.292 ou mais novo (o `effort` na chamada de `Agent`, que a guarda exige do `desenvolvedor`) e 2.1.271 ou mais novo (o `omitClaudeMd` do cabeçalho dele, D8).
 Regras daqui: hook de guarda erra para o lado de bloquear; hook de anotação nunca bloqueia; nada de rede.
@@ -435,12 +450,12 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
               - O `ajusta-pipeline.test.mjs` usa sessões de exemplo (desce um alvo por vez, piso, teto, janela
                 incompleta, linha de base, histerese, sessão vazia, escape logo depois da descida, mesmo dia, `visto_por`, gatilho falso, `adiar`, código sem `opus`), aplica o
                 ajuste num projeto temporário (e confere que nenhum par antigo sobra nos documentos) e confere em
-                sincronia com os arquivos de verdade: a tabela da seção 7 da skill, os cabeçalhos de `.claude/agents/`,
+                sincronia com os arquivos de verdade: a tabela da seção 7 da skill (pelo `tabelaDe`), os cabeçalhos de `.claude/agents/`,
                 `docs/pipeline/sessoes/MODELO.md` e as sessões gravadas; cobre também o `orquestrador` obrigatório, o `consulta`
                 e a sessão fora da conta; os campos opcionais `agente`, `contexto1` e `pacote1` (tipo errado recusado, sessão antiga válida); o `--repetidas` (limite de 1 contra 2 pacotes, de 39 contra 40 caracteres, cerca de código, nome do arquivo, economia perdida, linha de comando sem gravar nem ler o `pipeline.json`); o ajuste `desenvolvedor` que o `--relatorio` aceita; o `--sincronizar-desenvolvedor` (em dia, bloco `regras` regravado, adoção que cria o bloco `dominio` e erro de extração com saída 2); o `desenvolvedor` fora da conta e do `aplicar`, e o `aplicar` que recusa alvo fixo; o par antigo que sobra nos documentos não conta o `piso` e o `teto` do `pipeline.json`.
               - O `ciclo-completo.test.mjs` copia só o que os testes que leem o `pipeline.json` de verdade usam
-                (`config`, `papeis`, `guarda-agentes`, `ajusta-pipeline` e `settings`), baixa todos os alvos ao piso (cabeçalhos e
-                tabela sincronizados) e roda esses cinco lá (~9 s): um teste que crava um par quebraria no 1º ajuste
+                (`config`, `papeis`, `guarda-agentes`, `ajusta-pipeline`, `settings` e `sincroniza-pares`), baixa todos os alvos ao piso (cabeçalhos e
+                tabela sincronizados) e roda esses seis lá (~9 s): um teste que crava um par quebraria no 1º ajuste
                 automático e o pre-commit recusaria o commit.
               - O `pre-commit.test.mjs` usa um git de verdade com os hooks copiados e **sem `package.json`**: o commit que toca `.claude/` roda o
                 `node --test` (vermelho recusa, verde passa, sem teste nenhum recusa, e o script `test:pipeline` de um `package.json` não
@@ -455,7 +470,7 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
               - O `settings.test.mjs` confere que o `.claude/settings.json` liga a `guarda-agentes` (matcher `Agent`) e
                 a `guarda-git` (Bash e PowerShell), a `guarda-git-arquivos` e a `guarda-pasta-agentes` (Edit, Write, MultiEdit e NotebookEdit), as quatro com `onFailure: "block"`, que todo hook ligado existe e que
                 a sessão abre como o agente `orquestrador` (`agent`), no modelo e no esforço do
-                `niveis.orquestracao` do `pipeline.json` (`orquestrador(p)`; `model` e `effortLevel`, D3).
+                `niveis.orquestracao` do `pipeline.json` (`orquestrador(p)`; `model` e `effortLevel`, D3), e que o `env` é o de `versoes(p)` mais a profundidade do `neto` (`envDe`, D11), só essas 4 chaves e em texto.
               - Teste que commita num git temporário não pode usar a `main` com os hooks ligados: use outro branch ou
                 `-c core.hooksPath=`. O `guarda-git.test.mjs` copia os hooks e o `pipeline.json` para um projeto numa
                 pasta temporária (com `.git`) e testa a cópia, então roda igual na pasta principal e dentro de um

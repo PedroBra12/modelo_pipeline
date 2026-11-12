@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lerPapeis, orquestrador } from './papeis.mjs';
+import { lerPapeis, orquestrador, versoes } from './papeis.mjs';
+import { envDe } from './sincroniza-pares.mjs';
 
 const ORQUESTRADOR = orquestrador(lerPapeis().valor);
 const SETTINGS = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'settings.json'), 'utf8'));
@@ -68,4 +69,19 @@ test('toda sessão abre como o agente orquestrador, em xhigh (D3), e o esforço 
   assert.equal(SETTINGS.model, ORQUESTRADOR.model, 'o model do projeto vence o do usuário (que pode ser haiku)');
   assert.equal(SETTINGS.model, 'opus');
   assert.ok(existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'agents', `${SETTINGS.agent}.md`)), 'o agente existe em .claude/agents');
+});
+
+test('o env do settings.json é o do pipeline.json (D11): as 3 versões de modelo e a profundidade, só essas 4 chaves, em texto', () => {
+  const p = lerPapeis().valor;
+  const v = versoes(p);
+  assert.deepEqual(Object.keys(SETTINGS.env ?? {}).sort(), [
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH',
+  ]);
+  assert.equal(SETTINGS.env.ANTHROPIC_DEFAULT_OPUS_MODEL, v.opus);
+  assert.equal(SETTINGS.env.ANTHROPIC_DEFAULT_SONNET_MODEL, v.sonnet);
+  assert.equal(SETTINGS.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, v.haiku);
+  // "1" enquanto o pipeline.json não tem o `neto`, "2" quando tiver (a rodada que liga o neto)
+  assert.equal(SETTINGS.env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, p.neto === undefined ? '1' : '2');
+  for (const valor of Object.values(SETTINGS.env)) assert.equal(typeof valor, 'string');
+  assert.deepEqual(SETTINGS.env, envDe(p), 'rode: node .claude/hooks/sincroniza-pares.mjs');
 });

@@ -3,8 +3,8 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sincronizarTabela } from './ajusta-pipeline.mjs';
 import { agentesFixos, lerPapeis } from './papeis.mjs';
+import { tabelaDe } from './sincroniza-pares.mjs';
 
 export const HOOKS = dirname(fileURLToPath(import.meta.url));
 export const CONFIG_PADRAO = {
@@ -59,7 +59,8 @@ export function fixarPares(raiz, pares) {
     }
   }
   writeFileSync(arquivo, json);
-  sincronizarTabela(raiz);
+  const skill = join(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md');
+  writeFileSync(skill, tabelaDe(lerPapeis(arquivo).valor, readFileSync(skill, 'utf8')));
 }
 
 /** Põe a cópia de um projeto no estado de `EXEMPLO`. */

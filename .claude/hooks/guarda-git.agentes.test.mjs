@@ -57,7 +57,20 @@ const NEGA = [
   'node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos',
   'node .claude/hooks/ajusta-pipeline.mjs --aplicar-mais docs/pipeline/ajustes/x.md',
   'node .claude/hooks/ajusta-pipeline.mjs --raiz /tmp/principal --aplicar-mais=x',
-  'node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela && node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos',
+  'node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor && node .claude/hooks/ajusta-pipeline.mjs --aplicar-menos',
+  // o gerador dos pares (D11) grava o cabeçalho dos agentes sem citar a pasta: com ou sem .mjs, com qualquer argumento, menos o --conferir
+  'node .claude/hooks/sincroniza-pares.mjs',
+  'node .claude/hooks/sincroniza-pares',
+  'node .claude/hooks/sincroniza-pares.mjs --raiz /tmp/principal',
+  'node ./.claude/hooks/SINCRONIZA-PARES.MJS',
+  'node "$CLAUDE_PROJECT_DIR/.claude/hooks/sincroniza-pares.mjs"',
+  'cd .claude/hooks && node sincroniza-pares.mjs',
+  'node .claude/hooks/sincroniza-pares.mjs --conferir; node .claude/hooks/sincroniza-pares.mjs',
+  'node .claude/hooks/sincroniza-pares.mjs --conferir && node .claude/hooks/sincroniza-pares.mjs --raiz x',
+  'node .claude/hooks/sincroniza-pares.mjs --raiz x --conferir=0',
+  "bash -c 'node .claude/hooks/sincroniza-pares.mjs'",
+  "cat <<'EOF' | sh\nnode .claude/hooks/sincroniza-pares.mjs\nEOF",
+  'cat > x.sh <<EOF\nnode .claude/hooks/sincroniza-pares.mjs\nEOF',
 ];
 const LIBERA = [
   'cat .claude/agents/qa.md',
@@ -91,7 +104,13 @@ const LIBERA = [
   'git status',
   // o ajusta-pipeline que não grava agente, e a opção só citada (lida ou em mensagem)
   'node .claude/hooks/ajusta-pipeline.mjs --relatorio',
-  'node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela',
+  // o gerador só conferindo (--conferir não grava) e o nome só citado
+  'node .claude/hooks/sincroniza-pares.mjs --conferir',
+  'node .claude/hooks/sincroniza-pares --conferir --raiz /tmp/principal',
+  'node .claude/hooks/sincroniza-pares.mjs --conferir && echo ok',
+  'git commit -m "docs: o sincroniza-pares.mjs regrava os cabeçalhos"',
+  'grep -n x .claude/hooks/sincroniza-pares.mjs',
+  'cat .claude/hooks/sincroniza-pares.mjs',
   'node .claude/hooks/ajusta-pipeline.mjs --repetidas docs/pipeline --json',
   'git commit -m "docs: explica o --aplicar-menos e o --sincronizar-desenvolvedor"',
   'grep -n aplicar-mais .claude/hooks/ajusta-pipeline.mjs',

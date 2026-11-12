@@ -9,7 +9,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARQUIVO } from './config.mjs';
 import { lerAgentes, lerNiveis, lerPapeis, orquestrador, papel, par } from './papeis.mjs';
-import { analisar, aplicar, comTabela, formatar, lerAjustes, lerConfig, lerSessao, lerSessoes, linhasNormalizadas, repetidas, tabela, validarSessao } from './ajusta-pipeline.mjs';
+import { analisar, aplicar, formatar, lerAjustes, lerConfig, lerSessao, lerSessoes, linhasNormalizadas, repetidas, validarSessao } from './ajusta-pipeline.mjs';
+import { tabela, tabelaDe } from './sincroniza-pares.mjs';
 import { lerCabecalhoDoArquivo } from './guarda-agentes.mjs';
 import { EXEMPLO, fixarExemplo } from './teste-apoio.mjs';
 
@@ -17,6 +18,7 @@ const AQUI = dirname(fileURLToPath(import.meta.url));
 const CLAUDE = join(AQUI, '..');
 const RAIZ = join(CLAUDE, '..');
 const SCRIPT = join(AQUI, 'ajusta-pipeline.mjs');
+const GERADOR = join(AQUI, 'sincroniza-pares.mjs');
 
 /** O estado de exemplo (`EXEMPLO`), não os pares do pipeline.json de verdade: o ajuste automático muda esses, e um teste que os crava quebraria o pre-commit. */
 const config = () => {
@@ -365,12 +367,12 @@ test('lerAjustes lê os arquivos de ajuste em ordem e recusa o que não tem os c
 
 // ---------- a tabela da skill e os cabeçalhos ----------
 
-test('a tabela da seção 7 da skill pipeline é a gerada do pipeline.json', () => {
+test('a tabela da seção 7 da skill pipeline é a gerada do pipeline.json (o gerador é o sincroniza-pares.mjs)', () => {
   const skill = readFileSync(join(CLAUDE, 'skills', 'pipeline', 'SKILL.md'), 'utf8');
   const cfg = lerConfig(ARQUIVO);
-  assert.equal(comTabela(skill, cfg), skill, 'rode: node .claude/hooks/ajusta-pipeline.mjs --sincronizar-tabela');
-  for (const [nome, e] of Object.entries(cfg.agentes)) assert.ok(tabela(cfg).includes(`| agente \`${nome}\` (\`.claude/agents/\`) | ${e.tarefa} | \`${e.model}\` | \`${e.effort}\` |`));
-  assert.throws(() => comTabela('sem marcas', cfg), /sem as marcas/);
+  assert.equal(tabelaDe(cfg.papeis, skill), skill, 'rode: node .claude/hooks/sincroniza-pares.mjs');
+  for (const [nome, e] of Object.entries(cfg.agentes)) assert.ok(tabela(cfg.papeis).includes(`| agente \`${nome}\` (\`.claude/agents/\`) | ${e.tarefa} | \`${e.model}\` | \`${e.effort}\` |`));
+  assert.throws(() => tabelaDe(cfg.papeis, 'sem marcas'), /sem as marcas/);
 });
 
 test('os cabeçalhos de .claude/agents/ repetem o modelo e o esforço do pipeline.json', () => {
@@ -397,6 +399,7 @@ function projeto(sessoes, mexer = () => {}) {
   mkdirSync(join(raiz, 'docs', 'pipeline', 'sessoes'), { recursive: true });
   cpSync(join(CLAUDE, 'agents'), join(raiz, '.claude', 'agents'), { recursive: true });
   cpSync(ARQUIVO, join(raiz, '.claude', 'pipeline.json'));
+  cpSync(join(CLAUDE, 'settings.json'), join(raiz, '.claude', 'settings.json'));
   for (const rel of DOCS) {
     if (!existsSync(join(RAIZ, rel))) continue;
     mkdirSync(dirname(join(raiz, rel)), { recursive: true });
@@ -446,7 +449,7 @@ test('--aplicar-menos desce um alvo, edita só a linha dele, o cabeçalho e a ta
     const cab = lerCabecalhoDoArquivo('revisor-arquitetura', join(raiz, '.claude', 'agents'));
     assert.deepEqual([cab.model, cab.effort], ['opus', 'medium']);
     const skill = lerArquivo(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md');
-    assert.equal(comTabela(skill, cfg), skill, 'a tabela da skill ficou em sincronia');
+    assert.equal(tabelaDe(cfg.papeis, skill), skill, 'a tabela da skill ficou em sincronia');
     const registro = lerAjustes(join(raiz, 'docs', 'pipeline', 'ajustes'));
     assert.deepEqual(registro.map((a) => [a.alvo, a.tipo, a.de, a.para, a.data, a.vistas]), [['revisor-arquitetura', 'menos', 'opus:high', 'opus:medium', '2026-11-04', ['2026-11-01-s1.md', '2026-11-02-s2.md', '2026-11-03-s3.md']]]);
     assert.deepEqual(paresAntigos(raiz, 'revisor-arquitetura', ['high']), [], 'nenhuma cópia do par antigo sobra');
@@ -538,7 +541,7 @@ test('aplicar recusa e não grava se o cabeçalho do agente não tem model: e ef
     const antes = lerArquivo(raiz, '.claude', 'pipeline.json');
     const r = cli(raiz, '--aplicar-menos');
     assert.equal(r.status, 2);
-    assert.match(r.stderr, /não tem model: e effort:/);
+    assert.match(r.stderr, /revisor-arquitetura\.md: o cabeçalho não tem a linha effort:/);
     assert.equal(lerArquivo(raiz, '.claude', 'pipeline.json'), antes);
   });
 });
@@ -703,30 +706,30 @@ test('nenhum ajuste troca o modelo de ninguém: toda descida e toda subida propo
 const emCRLF = (texto) => texto.replace(/\r?\n/g, '\r\n');
 const temLFsolto = (texto) => /(^|[^\r])\n/.test(texto);
 
-test('a tabela mantém o fim de linha que o SKILL.md já usa: comTabela, --sincronizar-tabela e --aplicar-menos, em CRLF e em LF', () => {
-  const cfg = lerConfig(ARQUIVO);
+test('a tabela mantém o fim de linha que o SKILL.md já usa: tabelaDe, o sincroniza-pares.mjs e --aplicar-menos, em CRLF e em LF', () => {
+  const cfg = lerConfig(ARQUIVO).papeis;
   const skill = readFileSync(join(CLAUDE, 'skills', 'pipeline', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
-  const lf = comTabela(skill, cfg);
-  const crlf = comTabela(emCRLF(skill), cfg);
+  const lf = tabelaDe(cfg, skill);
+  const crlf = tabelaDe(cfg, emCRLF(skill));
   assert.equal(temLFsolto(crlf), false, 'a tabela gerada em um SKILL.md CRLF não deixa LF solto');
   assert.equal(crlf, emCRLF(lf), 'o mesmo texto, só com outro fim de linha');
   assert.equal(/\r/.test(lf), false, 'em LF continua LF');
-  assert.equal(comTabela(crlf, cfg), crlf, 'idempotente');
+  assert.equal(tabelaDe(cfg, crlf), crlf, 'idempotente');
   for (const converter of [emCRLF, (t) => t.replace(/\r\n/g, '\n')]) {
     comProjeto(quietas(), (raiz) => {
       const arquivoSkill = join(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md');
       const eol = (t) => (/\r\n/.test(t) ? 'crlf' : 'lf');
       const esperado = eol(converter('a\nb'));
       assert.equal(eol(lerArquivo(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md')), esperado, 'prepara');
-      assert.equal(cli(raiz, '--sincronizar-tabela').status, 0);
+      assert.equal(spawnSync(process.execPath, [GERADOR, '--raiz', raiz], { encoding: 'utf8' }).status, 0);
       const depoisSync = lerArquivo(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md');
       assert.equal(eol(depoisSync), esperado);
-      assert.equal(esperado === 'crlf' ? temLFsolto(depoisSync) : /\r/.test(depoisSync), false, '--sincronizar-tabela: um fim de linha só');
+      assert.equal(esperado === 'crlf' ? temLFsolto(depoisSync) : /\r/.test(depoisSync), false, 'sincroniza-pares: um fim de linha só');
       const r = cli(raiz, '--aplicar-menos', '--data', '2026-11-04');
       assert.equal(r.status, 0, r.stderr);
       const depoisAplicar = readFileSync(arquivoSkill, 'utf8');
       assert.equal(esperado === 'crlf' ? temLFsolto(depoisAplicar) : /\r/.test(depoisAplicar), false, '--aplicar-menos: um fim de linha só');
-      assert.equal(comTabela(depoisAplicar, lerConfig(join(raiz, '.claude', 'pipeline.json'))), depoisAplicar, 'a tabela ficou em sincronia');
+      assert.equal(tabelaDe(lerConfig(join(raiz, '.claude', 'pipeline.json')).papeis, depoisAplicar), depoisAplicar, 'a tabela ficou em sincronia');
     }, (raiz) => {
       const arquivoSkill = join(raiz, '.claude', 'skills', 'pipeline', 'SKILL.md');
       writeFileSync(arquivoSkill, converter(readFileSync(arquivoSkill, 'utf8')));
