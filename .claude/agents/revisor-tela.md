@@ -1,7 +1,7 @@
 ---
 name: revisor-tela
 description: Revisor de tela deste projeto. Use depois de toda mudança de layout de tela (o gatilho `tela` do escolhe-revisores: arquivo de tela criado ou apagado, declaração de layout no CSS, ou elemento, `className` ou `style` no JSX/TSX). Sobe o app no ambiente local com dado inventado, vê cada tela tocada rodando a 320 px e a 1280 px e confere com o PRODUCT.md, com o DESIGN.md (se existir) e com o detector da skill impeccable. Não corrige código nem commita.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Agent(leitor)
 model: sonnet
 effort: high
 ---

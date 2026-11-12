@@ -37,7 +37,9 @@ O modelo separa quem **planeja e julga** (`opus`) de quem **localiza documentaç
   - a terceira, para o resto do código;
   - a mais baixa, para o trivial.
 - **Depois, só a conta do autoajuste mexe no esforço**, um degrau por vez e sem trocar o modelo (seção 4).
-- **O orquestrador é `opus xhigh`, sempre.** O `settings.json` abre toda sessão assim e vence o `settings.json` do usuário. A `guarda-agentes` nega delegar se o chat for trocado para outro par.
+- **O orquestrador roda no par do nível `orquestracao` do `pipeline.json` (D11).** O `settings.json`, gerado dali, abre toda sessão assim e vence o `settings.json` do usuário. A `guarda-agentes` nega delegar se o chat for trocado para outro par.
+- **Tudo num arquivo só (D11).** Os pares, os pisos, os tetos, a escada e a versão de cada família (`familias`, que vai para o `env` do `settings.json` como `ANTHROPIC_DEFAULT_*_MODEL`) moram no `.claude/pipeline.json`. Mudou o arquivo, rode `node .claude/hooks/sincroniza-pares.mjs`: ele regera os cabeçalhos dos agentes, o `settings.json` e a tabela da skill. Enquanto o arquivo difere do da `main`, a `guarda-agentes` pede a sua confirmação a cada delegação.
+- **O neto (D11).** Um subagente pode abrir só o `leitor` (o neto do `pipeline.json`, que só lê), um nível, para achar onde um fato está.
 
 | Agente | Modelo | Papel |
 |---|---|---|
@@ -63,11 +65,12 @@ As regras inegociáveis não dependem só da memória do LLM; elas são fiscaliz
     - nega desligar os hooks do Git pelo ambiente (`GIT_CONFIG_*`, `NODE_OPTIONS`, `-c include.path`);
     - pede confirmação explícita do usuário em todo `git push` e escrita em PR.
   - [`guarda-agentes.mjs`](.claude/hooks/guarda-agentes.mjs) (`PreToolUse` em `Agent`):
-    - nega delegar quando o chat principal não está em `opus xhigh`;
-    - nega subagente que abre subagente e o `fork`, que herdaria o modelo do chat;
+    - nega delegar quando o chat principal não está no par do nível `orquestracao`;
+    - deixa o subagente abrir só o neto `leitor` (D11) e nega o `fork`, que herdaria o modelo do chat;
+    - pede confirmação a cada delegação enquanto o `pipeline.json` difere do da `main` (D11);
     - exige `model` e `effort` explícitos nos subagentes comuns;
     - garante que os agentes fixos rodem no par do `pipeline.json` com o cabeçalho íntegro;
-    - pede confirmação acima do teto do código ou quando um subagente comum pede `opus`.
+    - pede confirmação quando um subagente comum pede `opus` (o piso e o teto de cada agente estão no `pipeline.json`, e o arquivo fora deles é recusado).
   - [`confere-lgpd.mjs`](.claude/hooks/confere-lgpd.mjs) (`PreToolUse` em edições de arquivo e `pre-commit` no Git):
     - barra dado pessoal literal (CPF válido, cartão com Luhn, telefone com DDD real, e-mail fora de domínios de teste), chaves e segredos, `select *` em tabela pessoal, SQL concatenado e PII em logs e URLs (regras em [`lgpd-regras.mjs`](.claude/hooks/lgpd-regras.mjs));
     - o "legado" é opcional, para o projeto que adota o modelo com dívida antiga: com `"lgpd": { "legadoAte": "<sha>" }` no `pipeline.json`, o achado que já estava igual naquele commit não bloqueia, só é contado (`--todos` o lista). O trecho achado que muda tem de sair limpo, e CPF, cartão e chave nunca viram legado. Sem a chave, não há legado.
@@ -221,13 +224,11 @@ Para abrir direto com um alias (`nome_alias`), adicione ao seu terminal:
   2. Tire o `revisor-tela` dos `PISOS`, do `TETO` e de `agentes`, e apague `.claude/agents/revisor-tela.md`.
   3. Desligue o plugin `frontend-design` no `settings.json`.
   4. Faça a mesma limpeza nos testes e nos documentos: o portão 5 e a seção 4 da skill `pipeline`, o `feature.md` e o `orquestrador.md`.
-- **Criar ou alterar um agente fixo:** um agente fixo precisa de seis coisas, ou a guarda bloqueia a execução e os testes falham:
-  - o arquivo `.claude/agents/<nome>.md`, com `name`, `model`, `effort` e `tools` no cabeçalho;
-  - a entrada em `agentes` no `pipeline.json`, com o mesmo par e as mesmas ferramentas;
-  - o teto em `TETO`, na `guarda-agentes.mjs`;
-  - o piso em `PISOS`, ou o par exato em `FIXOS`, no `config.mjs`;
-  - quem o chama: o nome em `revisao.sempre` ou num gatilho (e no `PISO_GATILHOS`, para travar);
-  - a tabela da skill `pipeline` regerada com `node .claude/hooks/sincroniza-pares.mjs`.
+- **Criar ou alterar um agente fixo:** um agente fixo precisa de quatro coisas, ou a guarda bloqueia a execução e os testes falham:
+  - a entrada em `agentes` no `pipeline.json`, com `model`, `effort`, `tools` e, se o par pode andar, `piso` e `teto` (sem eles, o par é fixo; D11);
+  - o arquivo `.claude/agents/<nome>.md`, com `name` e `description` no cabeçalho (só as chaves `name`, `description`, `model`, `effort`, `tools`);
+  - `node .claude/hooks/sincroniza-pares.mjs`, que escreve `model`, `effort` e `tools` no cabeçalho e regera a tabela da skill `pipeline`;
+  - quem o chama: o nome em `revisao.sempre` ou num gatilho (e no `PISO_GATILHOS`, para travar).
 
   Pela D3, o modelo vem do papel e o esforço de partida, do custo do erro.
 - **Checagem obrigatória no GitHub (recomendada):** um workflow do GitHub Actions marcado como obrigatório no PR, que rode `node --test ".claude/hooks/*.test.mjs"` e o `confere-lgpd` sobre cada commit do PR. É a única trava que o agente não desliga da máquina dele. Custa minutos do Actions: grátis em repositório público, e da cota do plano em privado. Decida antes de ligar.

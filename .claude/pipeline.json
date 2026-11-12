@@ -5,14 +5,16 @@
   "familias": { "opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5" },
   "escada": ["haiku:low", "sonnet:low", "sonnet:medium", "sonnet:high", "opus:medium", "opus:high", "opus:xhigh"],
   "comum": { "esforcos": ["low", "medium", "high"], "passa": ["sonnet"], "confirma": ["opus", "fable"] },
+  "neto": "leitor",
   "agentes": {
-    "revisor-seguranca": { "model": "opus", "effort": "xhigh", "tools": "Read, Grep, Glob", "tarefa": "revisão de risco: banco, permissão, dado pessoal, rede, segredo, isolamento entre donos de dado" },
-    "revisor-arquitetura": { "model": "opus", "effort": "high", "tools": "Read, Grep, Glob", "piso": "opus:medium", "teto": "opus:high", "tarefa": "revisão de arquitetura: fronteiras entre pastas, contrato, AGENTS.md, decisão registrada" },
-    "qa": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "piso": "sonnet:medium", "teto": "sonnet:high", "tarefa": "rodar a coisa de verdade e tentar quebrar" },
-    "revisor-tela": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "piso": "sonnet:medium", "teto": "sonnet:high", "tarefa": "ver a tela tocada rodando a 320 px e a 1280 px no ambiente local, com o detector da `impeccable` (pelo lançador preso) e o `DESIGN.md`, contra o PRODUCT.md (portão 5)" },
-    "designer-ui": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash, Edit, Write", "tarefa": "escrever a tela de `apps/web` (o `.tsx` de `app/` e de `componentes/` e o `estilos.css`): vê a tela rodando no ambiente local, critica com a skill `impeccable` dentro do PRODUCT.md e do DESIGN.md e se confere a 320 px e a 1280 px (D35)" },
+    "revisor-seguranca": { "model": "opus", "effort": "xhigh", "tools": "Read, Grep, Glob, Agent(leitor)", "tarefa": "revisão de risco: banco, permissão, dado pessoal, rede, segredo, isolamento entre donos de dado" },
+    "revisor-arquitetura": { "model": "opus", "effort": "high", "tools": "Read, Grep, Glob, Agent(leitor)", "piso": "opus:medium", "teto": "opus:high", "tarefa": "revisão de arquitetura: fronteiras entre pastas, contrato, AGENTS.md, decisão registrada" },
+    "qa": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash, Agent(leitor)", "piso": "sonnet:medium", "teto": "sonnet:high", "tarefa": "rodar a coisa de verdade e tentar quebrar" },
+    "revisor-tela": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash, Agent(leitor)", "piso": "sonnet:medium", "teto": "sonnet:high", "tarefa": "ver a tela tocada rodando a 320 px e a 1280 px no ambiente local, com o detector da `impeccable` (pelo lançador preso) e o `DESIGN.md`, contra o PRODUCT.md (portão 5)" },
+    "designer-ui": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash, Edit, Write, Agent(leitor)", "tarefa": "escrever a tela de `apps/web` (o `.tsx` de `app/` e de `componentes/` e o `estilos.css`): vê a tela rodando no ambiente local, critica com a skill `impeccable` dentro do PRODUCT.md e do DESIGN.md e se confere a 320 px e a 1280 px (D35)" },
     "leitor-docs": { "model": "haiku", "effort": "low", "tools": "Read, Grep, Glob", "tarefa": "ler `docs/` e os `AGENTS.md` e apontar os arquivos e linhas onde focar" },
-    "desenvolvedor": { "model": "sonnet", "effort": "medium", "tools": "Read, Edit, Write, Bash, Grep, Glob", "piso": "sonnet:low", "teto": "sonnet:high" }
+    "leitor": { "model": "haiku", "effort": "low", "tools": "Read, Grep, Glob", "tarefa": "neto (D11): só um subagente o chama; acha no repositório onde um fato está e aponta arquivo e linha" },
+    "desenvolvedor": { "model": "sonnet", "effort": "medium", "tools": "Read, Edit, Write, Bash, Grep, Glob, Agent(leitor)", "piso": "sonnet:low", "teto": "sonnet:high" }
   },
   "niveis": {
     "leve": { "model": "sonnet", "effort": "low", "tarefa": "renomear, buscar (`Explore`), conferir um fato ou um arquivo, mudança trivial (no `desenvolvedor`), `ponytail-debt`" },

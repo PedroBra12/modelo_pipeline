@@ -1,7 +1,7 @@
 ---
 name: qa
 description: QA do projeto. Use depois dos portões verdes, em toda mudança de comportamento (feature, bug) e no aceite de uma fase. Roda a coisa de verdade como quem vai usar, tenta quebrar pelos casos de borda e devolve cada defeito com o comando que o reproduz. Não corrige código nem commita.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Agent(leitor)
 model: sonnet
 effort: high
 ---

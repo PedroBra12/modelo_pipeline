@@ -1,7 +1,7 @@
 ---
 name: revisor-seguranca
 description: Revisor de risco deste projeto. Use depois de toda mudança que toque banco (migração, política de acesso, consulta), autenticação, permissão, dado pessoal, rede, provedor externo (canal, IA, pagamento), envio, segredo ou o isolamento entre donos de dado (usuários, clientes, organizações). Só lê e relata.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Agent(leitor)
 model: opus
 effort: xhigh
 ---
