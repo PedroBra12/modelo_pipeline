@@ -10,7 +10,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ARQUIVO, lerAgentes, lerNiveis, lerPastas, lerRevisao, par, revisaoDeObjeto } from './config.mjs';
+import { ARQUIVO, lerPastas, lerRevisao, revisaoDeObjeto } from './config.mjs';
+import { lerAgentes, lerNiveis, par } from './papeis.mjs';
 import { GATILHOS_BLOQUEADOS_NO_RAPIDO, escolher, formatar, interpretarDiff, juntarRenomes, rotaDe, unirRevisao } from './escolhe-revisores.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));

@@ -1,7 +1,7 @@
 // Guarda dos subagentes (hook PreToolUse da ferramenta Agent): nenhum subagente herda o modelo do chat principal e o
 // padrão é o sonnet. Os agentes fixos rodam no modelo, no esforço e nas ferramentas de `agentes` no .claude/pipeline.json,
-// que o cabeçalho de .claude/agents/<nome>.md repete; acima do TETO (aqui no código) a chamada pede a confirmação do
-// usuário. Só passam com o `subagent_type` igual ao `name:` do cabeçalho e sem outro arquivo em .claude/agents que possa
+// que o cabeçalho de .claude/agents/<nome>.md repete; acima do teto da entrada (o `teto` no pipeline.json, lido só pelo
+// papeis.mjs, D11) a chamada pede a confirmação do usuário. Só passam com o `subagent_type` igual ao `name:` do cabeçalho e sem outro arquivo em .claude/agents que possa
 // responder pelo mesmo nome. O orquestrador só roda como agente do chat principal, então como subagente se nega, e o
 // chat principal só delega em opus xhigh (D45): outro esforço ou modelo nega, par ilegível pede confirmação, e o subagente
 // que chama a ferramenta Agent (a entrada traz agent_id) se nega. Fora
@@ -20,13 +20,13 @@ import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rea
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// dentro do try: um config.mjs quebrado (conflito de merge) não pode deixar o hook sair sem negar
-let config = null;
-let falhaDoConfig = null;
+// dentro do try: um papeis.mjs ou config.mjs quebrado (conflito de merge) não pode deixar o hook sair sem negar
+let papeis = null;
+let falhaDoPapeis = null;
 try {
-  config = await import('./config.mjs');
+  papeis = await import('./papeis.mjs');
 } catch (erro) {
-  falhaDoConfig = erro;
+  falhaDoPapeis = erro;
 }
 // idem para o desenvolvedor.mjs: sem ele a guarda não confere o agente de código, então tudo nega
 let desenvolvedor = null;
@@ -41,18 +41,6 @@ const AGENTES = join(resolve(dirname(fileURLToPath(import.meta.url)), '..'), 'ag
 const RAIZ_DO_PROJETO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CAMPOS = ['name', 'model', 'effort', 'tools'];
 
-/**
- * O teto dos agentes fixos: o modelo (trecho do nome), o esforço máximo e as ferramentas exatas. O `pipeline.json` pode
- * descer abaixo do teto (o ajuste automático); acima dele a chamada pede a confirmação do usuário (D44).
- */
-export const TETO = {
-  'revisor-seguranca': { model: 'opus', effort: 'xhigh', tools: 'Read, Grep, Glob' },
-  'revisor-arquitetura': { model: 'opus', effort: 'high', tools: 'Read, Grep, Glob' },
-  'leitor-docs': { model: 'haiku', effort: 'low', tools: 'Read, Grep, Glob' },
-  qa: { model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash' },
-  'revisor-tela': { model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash' },
-  'designer-ui': { model: 'sonnet', effort: 'high', tools: 'Read, Grep, Glob, Bash, Edit, Write' },
-};
 /** Roda só como agente do chat principal (`claude --agent orquestrador`), nunca como subagente. */
 export const SO_NO_CHAT = 'orquestrador';
 /** O agente de código (D8): o único que roda com isolation worktree, e o único com o esforço na chamada. */
@@ -65,8 +53,8 @@ const valor = (cabecalho, nome) => new RegExp(`^${nome}:[ \\t]*${nome === 'tools
 const conjunto = (tools) => (tools === undefined ? undefined : tools.split(',').map((t) => t.trim()).sort().join(','));
 
 /** O que há de errado na pasta de agentes para liberar o fixo `tipo`: arquivo `.md` fora da lista (em qualquer subpasta) ou 2º arquivo com o mesmo `name:`. */
-function problemaDaPasta(tipo, pasta) {
-  const permitidos = new Set([...Object.keys(TETO), SO_NO_CHAT, CODIGO].map((k) => `${k}.md`));
+function problemaDaPasta(tipo, pasta, p) {
+  const permitidos = new Set([...papeis.nomesDeAgentes(p), SO_NO_CHAT, CODIGO].map((k) => `${k}.md`));
   for (const rel of readdirSync(pasta, { recursive: true })) {
     const nome = String(rel);
     if (!nome.toLowerCase().endsWith('.md') || statSync(join(pasta, nome)).isDirectory()) continue;
@@ -81,25 +69,30 @@ function problemaDaPasta(tipo, pasta) {
 /**
  * name, model, effort e tools do frontmatter de .claude/agents/<tipo>.md (campo ausente = undefined), mais `problema`
  * quando o cabeçalho tem campo repetido ou a pasta tem arquivo que pode responder pelo mesmo nome. Nada se o arquivo
- * não existe. Erro de leitura sobe (quem chama nega).
+ * não existe. Erro de leitura sobe (quem chama nega). `p` são os papéis do pipeline.json (padrão: os do arquivo do projeto).
  */
-export function lerCabecalhoDoArquivo(tipo, pasta = AGENTES) {
+export function lerCabecalhoDoArquivo(tipo, pasta = AGENTES, p = papeisDoProjeto()) {
   if (!/^[\w-]+$/.test(tipo)) return undefined;
   const arquivo = join(pasta, `${tipo}.md`);
   if (!existsSync(arquivo)) return undefined;
   const cabecalho = cabecalhoDe(arquivo);
   const repetido = CAMPOS.find((nome) => (cabecalho.match(new RegExp(`^${nome}:`, 'gm')) ?? []).length > 1);
-  const problema = repetido === undefined ? problemaDaPasta(tipo, pasta) : `o campo ${repetido}: aparece mais de uma vez no cabeçalho`;
+  const problema = repetido === undefined ? problemaDaPasta(tipo, pasta, p) : `o campo ${repetido}: aparece mais de uma vez no cabeçalho`;
   return { name: valor(cabecalho, 'name'), model: valor(cabecalho, 'model'), effort: valor(cabecalho, 'effort'), tools: valor(cabecalho, 'tools'), problema };
 }
 
-const ESFORCOS = new Set(['low', 'medium', 'high']);
+/** Os papéis do pipeline.json do projeto (`papeis.lerPapeis`); lança o erro de leitura (quem chama nega). Só os padrões e o hook usam. */
+function papeisDoProjeto() {
+  const { valor, erro } = papeis.lerPapeis();
+  if (erro !== null) throw new Error(`pipeline.json ilegível: ${erro}`);
+  return valor;
+}
+
+/** "low, medium ou high". */
+const enumera = (lista) => (lista.length < 2 ? lista.join('') : `${lista.slice(0, -1).join(', ')} ou ${lista.at(-1)}`);
 const texto = (v) => (typeof v === 'string' && v.trim() !== '' ? v.trim().toLowerCase() : undefined);
 const nega = (motivo) => ({ decisao: 'deny', motivo });
 const passa = { decisao: null, motivo: null };
-
-const posto = (e) => config.ESCADA.indexOf(`${e.model}:${e.effort}`);
-const acimaDoTeto = (vigente, teto) => (posto(teto) === -1 || posto(vigente) === -1 ? `${vigente.model}:${vigente.effort}` !== `${teto.model}:${teto.effort}` : posto(vigente) > posto(teto));
 
 /** A chamada de um agente fixo: o cabeçalho tem de ser o do pipeline.json (`vigente`) e a chamada não pode pedir outro modelo ou esforço. */
 function decidirFixo(tipo, bruto, entrada, cabecalho, vigente) {
@@ -114,9 +107,10 @@ function decidirFixo(tipo, bruto, entrada, cabecalho, vigente) {
   if (!doCabecalho || model === undefined || !model.includes(vigente.model) || effort !== vigente.effort) {
     return nega(`${tipo} roda em ${vigente.model} e ${vigente.effort}, com ${vigente.tools}, e o cabeçalho tem de dizer o mesmo: chame sem model/effort ou com model: "${vigente.model}", effort: "${vigente.effort}"`);
   }
-  const teto = TETO[tipo];
-  if (conjunto(vigente.tools) !== conjunto(teto.tools)) return nega(`${tipo}: as ferramentas do pipeline.json (${vigente.tools}) não são as do teto da guarda (${teto.tools})`);
-  if (acimaDoTeto(vigente, teto)) return { decisao: 'ask', motivo: `${tipo}: o pipeline.json pede ${vigente.model} ${vigente.effort}, acima do teto da guarda (${teto.model} ${teto.effort}); confirme` };
+  if (papeis.faixa(`${vigente.model}:${vigente.effort}`, vigente) !== 'dentro') {
+    const onde = { acima: `acima do teto da guarda (${vigente.teto})`, abaixo: `abaixo do piso (${vigente.piso})`, fora: `de outro modelo que o da faixa (${vigente.piso} a ${vigente.teto})` };
+    return { decisao: 'ask', motivo: `${tipo}: o pipeline.json pede ${vigente.model} ${vigente.effort}, ${onde[papeis.faixa(`${vigente.model}:${vigente.effort}`, vigente)]}; confirme` };
+  }
   return passa;
 }
 
@@ -141,24 +135,28 @@ export function lerFontesDoDesenvolvedor(raiz = RAIZ_DO_PROJETO) {
 }
 
 /** A chamada do `desenvolvedor`: tudo o que a D8 manda conferir, nesta ordem. `lerFontes` é o `lerFontesDoDesenvolvedor`. */
-function decidirDesenvolvedor(bruto, entrada, cabecalho, lerFontes) {
+function decidirDesenvolvedor(bruto, entrada, cabecalho, lerFontes, vigente) {
   if (desenvolvedor === null) return nega(`${CODIGO}: desenvolvedor.mjs ilegível: ${falhaDoDesenvolvedor instanceof Error ? falhaDoDesenvolvedor.message : falhaDoDesenvolvedor}`);
   if (bruto !== CODIGO || cabecalho?.name !== CODIGO) {
     return nega(`${CODIGO}: o subagent_type tem de ser igual ao name do cabeçalho de .claude/agents/${CODIGO}.md, sem mudar a caixa`);
   }
   if (cabecalho.problema !== undefined) return nega(`${CODIGO}: ${cabecalho.problema}`);
+  if (vigente === undefined) return nega(`${CODIGO}: falta em agentes no .claude/pipeline.json`);
   if (entrada?.isolation !== 'worktree') return nega(`${CODIGO} só roda com isolation: "worktree" (D8)`);
   const effort = texto(entrada?.effort);
-  if (effort === undefined || !ESFORCOS.has(effort)) return nega(`${CODIGO}: passe effort low, medium ou high na chamada (o do cabeçalho não vale; xhigh e max não, D8)`);
+  if (effort === undefined || papeis.faixa(`${vigente.model}:${effort}`, vigente) !== 'dentro') {
+    const aceitos = papeis.esforcosDe(vigente);
+    return nega(`${CODIGO}: passe effort ${enumera(aceitos)} na chamada (o do cabeçalho não vale; ${papeis.esforcosNegados(aceitos)} não, D8)`);
+  }
   const model = texto(entrada?.model);
-  if (model !== undefined && model !== 'sonnet') return nega(`${CODIGO} roda só em sonnet: tire o model "${model}" da chamada (D8)`);
+  if (model !== undefined && model !== vigente.model) return nega(`${CODIGO} roda só em ${vigente.model}: tire o model "${model}" da chamada (D8)`);
   let lidos;
   try {
     lidos = lerFontes();
   } catch (e) {
     return nega(`${CODIGO}: não deu para ler o agente, o CLAUDE.md ou o docs/arquitetura.md (${e instanceof Error ? e.message : e})`);
   }
-  const achados = desenvolvedor.problemas(lidos.agente, lidos.fontes);
+  const achados = desenvolvedor.problemas(lidos.agente, lidos.fontes, vigente);
   if (achados.length > 0) return nega(`${CODIGO}: ${achados.join('; ')}`);
   if (desenvolvedor.adotado(lidos.fontes['CLAUDE.md']) && desenvolvedor.vazia(lidos.agente)) {
     return nega(`${CODIGO}: preencha a parte do projeto (skill \`pipeline\`, seção 2; \`node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor\`)`);
@@ -308,17 +306,17 @@ export function decidirEsforcoPipeline(entrada, esforco) {
 
 /**
  * O que fazer com a chamada de subagente. `lerCabecalho(tipo)` devolve o cabeçalho do agente fixo (ver lerCabecalhoDoArquivo),
- * ou nada. `lerTamanho` mede um arquivo citado no pedido (ver `tamanhoDoArquivo`) e `lerTexto` o lê (a regra do worktree).
+ * ou nada. `p` são os papéis do pipeline.json (`papeis.lerPapeis`; padrão: os do arquivo do projeto). `lerTamanho` mede um arquivo citado no pedido (ver `tamanhoDoArquivo`) e `lerTexto` o lê (a regra do worktree).
  * O esforço do pipeline (D64), o teto de tokens e a regra do worktree valem para todo subagente que passou nas outras regras, e o deny deles vence o ask.
  */
-export function decidirAgente(entrada, lerCabecalho, agentes = TETO, lerTamanho = tamanhoDoArquivo, lerTexto = textoDoArquivo, esforco = undefined, lerFontes = lerFontesDoDesenvolvedor) {
-  const doTipo = decidirTipo(entrada, lerCabecalho, agentes, lerFontes);
+export function decidirAgente(entrada, lerCabecalho, p = papeisDoProjeto(), lerTamanho = tamanhoDoArquivo, lerTexto = textoDoArquivo, esforco = undefined, lerFontes = lerFontesDoDesenvolvedor) {
+  const doTipo = decidirTipo(entrada, lerCabecalho, p, lerFontes);
   return doTipo.decisao === 'deny'
     ? doTipo
     : juntarDecisoes(doTipo, decidirEsforcoPipeline(entrada, esforco), decidirTeto(entrada, lerTamanho), decidirWorktree(entrada, lerTamanho, lerTexto));
 }
 
-function decidirTipo(entrada, lerCabecalho, agentes, lerFontes) {
+function decidirTipo(entrada, lerCabecalho, p, lerFontes) {
   const bruto = entrada?.subagent_type;
   const tipo = texto(bruto);
   if (tipo === 'fork') return nega('fork herda o modelo do chat principal; use um subagente com model');
@@ -326,19 +324,26 @@ function decidirTipo(entrada, lerCabecalho, agentes, lerFontes) {
     return nega(`${SO_NO_CHAT} roda só como agente do chat principal (claude --agent ${SO_NO_CHAT}), nunca como subagente: um subagente não abre outro e este seria um opus xhigh com todas as ferramentas, sem confirmação`);
   }
   if (entrada?.isolation === 'worktree' && tipo !== CODIGO) return nega('com isolation: "worktree" só passa o `desenvolvedor` (D8); chame-o, com effort, e não o general-purpose, o tipo ausente nem outro');
-  if (tipo === CODIGO) return decidirDesenvolvedor(bruto, entrada, lerCabecalho(CODIGO), lerFontes);
-  if (tipo !== undefined && Object.hasOwn(TETO, tipo)) return decidirFixo(tipo, bruto, entrada, lerCabecalho(tipo), agentes[tipo]);
+  if (tipo === CODIGO) return decidirDesenvolvedor(bruto, entrada, lerCabecalho(CODIGO), lerFontes, papeis.papel(p, 'agentes', CODIGO));
+  if (tipo !== undefined && papeis.papel(p, 'agentes', tipo) !== undefined) return decidirFixo(tipo, bruto, entrada, lerCabecalho(tipo), papeis.papel(p, 'agentes', tipo));
+  // o arquivo de um agente que o pipeline.json não tem (tirado do JSON, o arquivo ficou) não passa por comum
+  if (tipo !== undefined && lerCabecalho(tipo) !== undefined) return nega(`${tipo}: falta em agentes no .claude/pipeline.json`);
+  return decidirComum(entrada, papeis.comum(p));
+}
+
+/** A chamada comum (general-purpose, Explore, Plan, tipo ausente): model e effort na chamada, o que `comum` do pipeline.json aceita. */
+function decidirComum(entrada, c) {
   const model = texto(entrada?.model);
   const effort = texto(entrada?.effort);
-  if (effort !== undefined && !ESFORCOS.has(effort)) return nega(`effort "${effort}" não vale: use low, medium ou high (xhigh e max não)`);
-  if (model === undefined || effort === undefined) return nega('passe model e effort; o padrão é sonnet');
-  if (model.includes('opus') || model.includes('fable')) {
+  if (effort !== undefined && !c.esforcos.includes(effort)) return nega(`effort "${effort}" não vale: use ${enumera(c.esforcos)} (${papeis.esforcosNegados(c.esforcos)} não)`);
+  if (model === undefined || effort === undefined) return nega(`passe model e effort; o padrão é ${c.passa[0]}`);
+  if (c.confirma.some((m) => model.includes(m))) {
     const motivo = typeof entrada?.description === 'string' ? entrada.description : '(sem description)';
-    return { decisao: 'ask', motivo: `subagente em ${model}: um sonnet não resolveria? Motivo dado: ${motivo}` };
+    return { decisao: 'ask', motivo: `subagente em ${model}: um ${c.passa[0]} não resolveria? Motivo dado: ${motivo}` };
   }
-  if (model.includes('haiku')) return nega('haiku só vale no leitor-docs');
-  if (model.includes('sonnet')) return passa;
-  return nega(`model "${model}" desconhecido: passe sonnet`);
+  if (model.includes('haiku') && !c.passa.includes('haiku')) return nega('haiku só vale no leitor-docs');
+  if (c.passa.some((m) => model.includes(m))) return passa;
+  return nega(`model "${model}" desconhecido: passe ${c.passa.join(' ou ')}`);
 }
 
 // ---------- o chat principal em opus xhigh (D45) ----------
@@ -348,12 +353,12 @@ const SEM_PAR = { model: undefined, effort: undefined };
 const JANELA_DO_REGISTRO = 4 * 1024 * 1024;
 
 /**
- * O chat principal tem de estar no par do nível `orquestracao` (`FIXOS` do config.mjs, opus xhigh). `par` é `{ model,
+ * O chat principal tem de estar no par do nível `orquestracao` do pipeline.json (opus xhigh, D11). `par` é `{ model,
  * efforts }` (`parDoChat`): esforço ou modelo conhecido e errado nega, com o comando que corrige; o que não deu para
  * ler pede a confirmação do usuário.
  */
-export function decidirOrquestrador(par) {
-  const [modeloEsperado, esforcoEsperado] = config.FIXOS.niveis.orquestracao.split(':');
+export function decidirOrquestrador(par, p = papeisDoProjeto()) {
+  const { model: modeloEsperado, effort: esforcoEsperado } = papeis.orquestrador(p);
   const model = texto(par?.model);
   const efforts = (Array.isArray(par?.efforts) ? par.efforts : []).map(texto).filter((e) => e !== undefined);
   const effort = efforts.find((e) => e !== esforcoEsperado) ?? efforts[0];
@@ -468,15 +473,15 @@ async function principal() {
   }
   if (typeof dados !== 'object' || dados === null) return saida('deny', 'entrada ilegível');
   if (falhaDoDesenvolvedor !== null) return saida('deny', `desenvolvedor.mjs ilegível: ${falhaDoDesenvolvedor instanceof Error ? falhaDoDesenvolvedor.message : falhaDoDesenvolvedor}`);
-  if (falhaDoConfig !== null) return saida('deny', `config.mjs ilegível: ${falhaDoConfig instanceof Error ? falhaDoConfig.message : falhaDoConfig}`);
+  if (falhaDoPapeis !== null) return saida('deny', `papeis.mjs ou config.mjs ilegível: ${falhaDoPapeis instanceof Error ? falhaDoPapeis.message : falhaDoPapeis}`);
   const doChamador = decidirChamador(completo);
   if (doChamador !== null) return saida(doChamador.decisao, doChamador.motivo);
   let resultado;
   try {
-    const { valor, erro } = config.lerAgentes();
+    const { valor: p, erro } = papeis.lerPapeis();
     if (erro !== null) return saida('deny', `pipeline.json ilegível: ${erro}`);
     const esforco = lerEsforcoDoEstado();
-    resultado = juntarDecisoes(decidirOrquestrador(parDoChat(completo, process.env)), decidirAgente(dados, lerCabecalhoDoArquivo, valor, tamanhoDoArquivo, textoDoArquivo, esforco));
+    resultado = juntarDecisoes(decidirOrquestrador(parDoChat(completo, process.env), p), decidirAgente(dados, (tipo) => lerCabecalhoDoArquivo(tipo, AGENTES, p), p, tamanhoDoArquivo, textoDoArquivo, esforco));
   } catch (e) {
     return saida('deny', `cabeçalho ilegível: não foi possível ler .claude/agents (${e instanceof Error ? e.message : e})`);
   }

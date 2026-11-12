@@ -5,7 +5,8 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ARQUIVO, CONFIGURE, MARCADOR, ESCADA, PISOS, PISO_GATILHOS, PISO_GRANDE, conferirPisos, lerAgentes, lerAjuste, lerLegadoAte, lerNiveis, lerPastas, lerPortao, lerRepositorio, lerRevisao, localizar, revisaoDeObjeto, urlDoRepositorio } from './config.mjs';
+import { ARQUIVO, CONFIGURE, MARCADOR, PISO_GATILHOS, PISO_GRANDE, lerAjuste, lerLegadoAte, lerPastas, lerPortao, lerRepositorio, lerRevisao, localizar, revisaoDeObjeto, urlDoRepositorio } from './config.mjs';
+import { lerAgentes, lerNiveis } from './papeis.mjs';
 
 /** Roda `fn(caminho)` com um pipeline.json temporário (objeto vira JSON; texto vai como está; undefined = sem arquivo). */
 function comArquivo(conteudo, fn) {
@@ -19,12 +20,12 @@ function comArquivo(conteudo, fn) {
   }
 }
 
-test('o pipeline.json do projeto é JSON válido e tem os sete campos, e só o lgpd é opcional; o repositorio é o marcador ou um dono/repo', () => {
+test('o pipeline.json do projeto é JSON válido e tem os dez campos, e só o lgpd é opcional; o repositorio é o marcador ou um dono/repo', () => {
   const dados = JSON.parse(readFileSync(ARQUIVO, 'utf8'));
-  const obrigatorios = ['agentes', 'ajuste', 'niveis', 'pastasDeTrabalho', 'portaoRapido', 'repositorio', 'revisao'];
+  const obrigatorios = ['agentes', 'ajuste', 'comum', 'escada', 'familias', 'niveis', 'pastasDeTrabalho', 'portaoRapido', 'repositorio', 'revisao'];
   const chaves = Object.keys(dados).sort();
   for (const c of obrigatorios) assert.ok(chaves.includes(c), `falta ${c}`);
-  assert.deepEqual(chaves.filter((c) => !obrigatorios.includes(c)).filter((c) => c !== 'lgpd'), [], 'além dos sete, só o lgpd (opcional)');
+  assert.deepEqual(chaves.filter((c) => !obrigatorios.includes(c)).filter((c) => c !== 'lgpd'), [], 'além dos dez, só o lgpd (opcional)');
   const repo = lerRepositorio();
   if (dados.repositorio === MARCADOR) assert.ok(repo.erro?.startsWith(CONFIGURE), 'o marcador falha fechado');
   else assert.deepEqual(repo, { valor: dados.repositorio, erro: null });
@@ -101,39 +102,6 @@ test('urlDoRepositorio: https e ssh do GitHub, com ou sem .git, sem caixa, e esc
 
 const dadosReais = () => JSON.parse(readFileSync(ARQUIVO, 'utf8'));
 
-test('agentes e niveis: o do projeto carrega; nome, model, effort e tools inválidos, abaixo do piso ou fixo mudado falham', () => {
-  const agentes = lerAgentes();
-  assert.equal(agentes.erro, null);
-  assert.deepEqual(Object.keys(agentes.valor).sort(), ['designer-ui', 'leitor-docs', 'qa', 'revisor-arquitetura', 'revisor-seguranca', 'revisor-tela']);
-  assert.equal(lerNiveis().erro, null);
-  const com = (secao, nome, valor) => { const d = dadosReais(); d[secao][nome] = valor; return d; };
-  const q = dadosReais().agentes.qa;
-  for (const [rotulo, d, esperado] of [
-    ['model inválido', com('agentes', 'qa', { ...q, model: 'gpt' }), /agentes\.qa/],
-    ['effort inválido', com('agentes', 'qa', { ...q, effort: 'max' }), /agentes\.qa/],
-    ['sem tools', com('agentes', 'qa', { model: 'sonnet', effort: 'high' }), /agentes\.qa/],
-    ['tarefa não texto', com('agentes', 'qa', { ...q, tarefa: 3 }), /agentes\.qa/],
-    ['segurança é fixa, para baixo', com('agentes', 'revisor-seguranca', { ...dadosReais().agentes['revisor-seguranca'], effort: 'high' }), /revisor-seguranca é fixo em opus:xhigh/],
-    ['segurança é fixa, para outro modelo', com('agentes', 'revisor-seguranca', { ...dadosReais().agentes['revisor-seguranca'], model: 'sonnet' }), /revisor-seguranca é fixo em opus:xhigh/],
-    ['designer-ui é fixo (D35), para baixo', com('agentes', 'designer-ui', { ...dadosReais().agentes['designer-ui'], effort: 'medium' }), /designer-ui é fixo em sonnet:high/],
-    ['designer-ui é fixo (D35), para cima', com('agentes', 'designer-ui', { ...dadosReais().agentes['designer-ui'], model: 'opus' }), /designer-ui é fixo em sonnet:high/],
-    ['o revisor aposentado (D34) volta como nome desconhecido', com('agentes', 'revisor-lgpd', { ...dadosReais().agentes['revisor-seguranca'] }), /nome desconhecido/],
-    ['nível autoanalise é fixo', com('niveis', 'autoanalise', { model: 'sonnet', effort: 'low' }), /niveis\.autoanalise é fixo em sonnet:medium/],
-    ['fixo mudado', com('agentes', 'leitor-docs', { ...dadosReais().agentes['leitor-docs'], model: 'sonnet' }), /fixo em haiku:low/],
-    ['revisor-tela abaixo do piso', com('agentes', 'revisor-tela', { ...dadosReais().agentes['revisor-tela'], model: 'sonnet', effort: 'low' }), /agentes\.revisor-tela está em sonnet:low, abaixo do piso sonnet:medium/],
-    ['arquitetura em sonnet (o modelo vem do papel)', com('agentes', 'revisor-arquitetura', { ...dadosReais().agentes['revisor-arquitetura'], model: 'sonnet', effort: 'high' }), /sonnet:high, abaixo do piso opus:medium/],
-    ['nome desconhecido', com('agentes', 'intruso', q), /nome desconhecido/],
-    ['nível de código em opus', com('niveis', 'medio', { model: 'opus', effort: 'high' }), /niveis\.medio: nível de código não usa opus/],
-    ['nível codigo-seguranca em opus', com('niveis', 'codigo-seguranca', { model: 'opus', effort: 'high' }), /niveis\.codigo-seguranca: nível de código não usa opus/],
-    ['nível abaixo do piso', com('niveis', 'medio', { model: 'sonnet', effort: 'low' }), /abaixo do piso sonnet:medium/],
-  ]) comArquivo(d, (c) => assert.match((rotulo.startsWith('nível') ? lerNiveis(c) : lerAgentes(c)).erro, esperado, rotulo));
-  const sem = dadosReais();
-  delete sem.agentes.qa;
-  comArquivo(sem, (c) => assert.match(lerAgentes(c).erro, /agentes\.qa falta/));
-  for (const agentes of [undefined, {}, [], 'x']) comArquivo({ agentes }, (c) => assert.match(lerAgentes(c).erro, /agentes em/));
-  comArquivo({ niveis: { 'nome ruim': { model: 'sonnet', effort: 'low' } } }, (c) => assert.match(lerNiveis(c).erro, /nome inválido/));
-});
-
 test('o BOM no começo do pipeline.json é aceito', () => {
   comArquivo(`﻿${JSON.stringify(dadosReais())}`, (c) => assert.equal(lerAgentes(c).erro, null));
 });
@@ -199,15 +167,11 @@ test('revisao: a do projeto compila e cumpre os pisos; gatilho repetido, regex i
   comArquivo(com((d) => { delete d.comportamento_ignorar; }), (c) => assert.deepEqual(lerRevisao(c).valor.comportamento_ignorar, []), 'a chave é opcional');
 });
 
-test('ajuste: janela e rodadas_altas do projeto; a escada vem do código e o piso fora dela é erro', () => {
+test('ajuste: janela e rodadas_altas do projeto (a escada é do papeis.mjs, D11)', () => {
   const a = lerAjuste();
   assert.equal(a.erro, null);
-  assert.deepEqual(a.valor.escada, ESCADA);
+  assert.deepEqual(Object.keys(a.valor).sort(), ['janela', 'rodadas_altas']);
   assert.equal(a.valor.janela, 3);
-  assert.equal(conferirPisos(), null);
-  assert.match(conferirPisos({ agentes: { qa: 'haiku:low' } }), /haiku:low de agentes\.qa está fora da escada/);
-  assert.match(conferirPisos(PISOS, ['sonnet:low']), /fora da escada/);
-  for (const [niveis, pisos] of Object.entries(PISOS)) for (const p of Object.values(pisos)) assert.ok(ESCADA.includes(p), `${niveis}: ${p}`);
   const certo = dadosReais().ajuste;
   for (const ruim of [{ ...certo, janela: 0 }, { ...certo, rodadas_altas: 1.5 }, undefined]) {
     comArquivo({ ajuste: ruim }, (c) => assert.match(lerAjuste(c).erro, /ajuste/, JSON.stringify(ruim)));

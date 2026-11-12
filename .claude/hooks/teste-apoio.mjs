@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sincronizarTabela } from './ajusta-pipeline.mjs';
+import { agentesFixos, lerPapeis } from './papeis.mjs';
 
 export const HOOKS = dirname(fileURLToPath(import.meta.url));
 export const CONFIG_PADRAO = {
@@ -63,3 +64,28 @@ export function fixarPares(raiz, pares) {
 
 /** Põe a cópia de um projeto no estado de `EXEMPLO`. */
 export const fixarExemplo = (raiz) => fixarPares(raiz, EXEMPLO);
+
+/**
+ * Os pisos do projeto, como `fixarPares` os recebe: o `piso` de cada entrada que tem (o `desenvolvedor` fica de fora: o cabeçalho
+ * dele é gerado e a chamada traz o esforço). É o fim da descida do ajuste automático, de onde um teste que crava um par quebra.
+ */
+export function pisosDoProjeto() {
+  const { valor: p, erro } = lerPapeis();
+  if (erro !== null) throw new Error(erro);
+  const pisos = (entradas) => Object.fromEntries(Object.entries(entradas).filter(([, e]) => e.piso !== undefined).map(([nome, e]) => [nome, e.piso]));
+  return { agentes: pisos(agentesFixos(p)), niveis: pisos(p.niveis) };
+}
+
+/**
+ * Os papéis do pipeline.json de verdade (`lerPapeis`) com os pares do `EXEMPLO`: o estado de partida do D2. Os testes da guarda,
+ * que montam o cabeçalho na mão, partem dele, não dos pares do arquivo (o ajuste automático os desce até o piso).
+ */
+export function papeisDeExemplo() {
+  const { valor, erro } = lerPapeis();
+  if (erro !== null) throw new Error(erro);
+  const p = structuredClone(valor);
+  for (const secao of Object.keys(EXEMPLO)) {
+    for (const [nome, texto] of Object.entries(EXEMPLO[secao])) [p[secao][nome].model, p[secao][nome].effort] = texto.split(':');
+  }
+  return p;
+}

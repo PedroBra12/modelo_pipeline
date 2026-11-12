@@ -7,7 +7,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ARQUIVO, FIXOS, PISOS, lerAgentes, lerNiveis, par } from './config.mjs';
+import { ARQUIVO } from './config.mjs';
+import { lerAgentes, lerNiveis, lerPapeis, orquestrador, papel, par } from './papeis.mjs';
 import { analisar, aplicar, comTabela, formatar, lerAjustes, lerConfig, lerSessao, lerSessoes, linhasNormalizadas, repetidas, tabela, validarSessao } from './ajusta-pipeline.mjs';
 import { lerCabecalhoDoArquivo } from './guarda-agentes.mjs';
 import { EXEMPLO, fixarExemplo } from './teste-apoio.mjs';
@@ -421,7 +422,9 @@ function paresAntigos(raiz, alvo, antigo) {
   const achadas = [];
   const olhar = (rel) => {
     if (!existsSync(join(raiz, rel))) return;
-    lerArquivo(raiz, rel).split('\n').forEach((linha, i) => {
+    lerArquivo(raiz, rel).split('\n').forEach((bruta, i) => {
+      // o piso e o teto da entrada (D11) são pares de propósito: não contam como cópia do par antigo
+      const linha = bruta.replace(/"(piso|teto)": "[^"]*",? ?/g, '');
       if (linha.includes(alvo) && antigo.some((p) => new RegExp(`\\b${p}\\b`).test(linha))) achadas.push(`${rel}:${i + 1}`);
     });
   };
@@ -550,6 +553,19 @@ test('aplicar valida o pipeline.json novo contra os pisos antes de gravar', () =
   });
 });
 
+test('o desenvolvedor não é alvo do ajuste (D11): fora da conta, e o aplicar recusa o alvo e grava nada', () => {
+  const cfg = config();
+  assert.equal(Object.hasOwn(cfg.agentes, 'desenvolvedor'), false);
+  assert.equal(analisar(quietas(cfg), [], cfg).alvos.some((a) => a.id === 'agentes.desenvolvedor'), false);
+  assert.ok(cfg.papeis.agentes.desenvolvedor, 'o papeis.mjs o tem');
+  comProjeto(quietas(), (raiz) => {
+    const item = { id: 'agentes.desenvolvedor', secao: 'agentes', chave: 'desenvolvedor', de: 'sonnet:medium', para: 'sonnet:low', tipo: 'menos', motivo: 'teste' };
+    const antes = lerArquivo(raiz, '.claude', 'pipeline.json');
+    assert.throws(() => aplicar(raiz, [item], '2026-11-04', []), /não é alvo do ajuste/);
+    assert.equal(lerArquivo(raiz, '.claude', 'pipeline.json'), antes);
+  });
+});
+
 test('os documentos de verdade não citam modelo e esforço de um agente: só o pipeline.json, os cabeçalhos e a tabela gerada', () => {
   const cfg = lerConfig(ARQUIVO);
   const par_ = /\b(opus|sonnet|haiku)\b[`" ]*,?[`" ]*(e |em )?[`" ]*\b(xhigh|high|medium|low)\b/;
@@ -606,8 +622,8 @@ test('o orquestrador conta pelo par: o modelo "contém" opus e o esforço é igu
   const outroPar = structuredClone(cfg);
   outroPar.niveis.orquestracao = { ...outroPar.niveis.orquestracao, model: 'haiku', effort: 'low' };
   const noOutro = analisar([comOrquestrador(quietas(cfg, 1)[0], { model: 'opus', effort: 'xhigh' })], [], outroPar);
-  assert.deepEqual(noOutro.foraDaConta, [], 'o par esperado é o FIXOS do config.mjs, não o cfg.niveis do pipeline.json');
-  assert.equal(FIXOS.niveis.orquestracao, 'opus:xhigh');
+  assert.deepEqual(noOutro.foraDaConta, [], 'o par esperado é o do papeis.mjs (cfg.papeis, lido do arquivo), não o cfg.niveis mexido na mão');
+  assert.deepEqual(orquestrador(lerPapeis().valor), { model: 'opus', effort: 'xhigh' });
 });
 
 test('a sessão de linha de base com o orquestrador fora do par continua listada só como linha de base', () => {
@@ -645,7 +661,7 @@ const modeloDe = (p) => p.split(':')[0];
 
 test('a descida do revisor-arquitetura vai de opus:high para opus:medium e para aí: o piso é opus:medium, não um sonnet', () => {
   const cfg = config();
-  assert.equal(PISOS.agentes['revisor-arquitetura'], 'opus:medium');
+  assert.equal(papel(lerPapeis().valor, 'agentes', 'revisor-arquitetura').piso, 'opus:medium');
   cfg.agentes['revisor-seguranca'] = { ...cfg.agentes['revisor-seguranca'], effort: 'high' }; // no piso dela: o arquitetura é o mais caro que ainda desce
   const sessoes = quietas(cfg, 3);
   const [d] = analisar(sessoes, [], cfg).descer;

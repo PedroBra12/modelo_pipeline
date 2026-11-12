@@ -11,7 +11,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { APOSENTADOS, PISO_GATILHOS, ehArquivoDeCodigo, lerAgentes, lerNiveis, lerPastas, localizar, par, revisaoDeObjeto } from './config.mjs';
+import { APOSENTADOS, PISO_GATILHOS, ehArquivoDeCodigo, lerPastas, localizar, revisaoDeObjeto } from './config.mjs';
+import { lerAgentes, lerNiveis, par } from './papeis.mjs';
 import { regrasCarregaram, varrer } from './confere-lgpd.mjs';
 import { mesmaParteFixa } from './desenvolvedor.mjs';
 

@@ -6,12 +6,18 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CABECALHO, CARACTERES_POR_TOKEN, TITULOS_DO_MODELO, TITULOS_FIXOS, adotado, extrairRegras, mesmaParteFixa, partes, problemas, sincronizar, vazia } from './desenvolvedor.mjs';
+import { CARACTERES_POR_TOKEN, TITULOS_DO_MODELO, TITULOS_FIXOS, adotado, cabecalho, extrairRegras, mesmaParteFixa, partes, problemas as problemasDe, sincronizar, vazia } from './desenvolvedor.mjs';
+import { DESENVOLVEDOR, lerPapeis, papel } from './papeis.mjs';
 import { CARACTERES_POR_TOKEN as DA_GUARDA, lerFontesDoDesenvolvedor } from './guarda-agentes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const RAIZ = join(AQUI, '..', '..');
 const lerReal = (...rel) => readFileSync(join(RAIZ, ...rel), 'utf8');
+
+// O cabeçalho sai da entrada `desenvolvedor` do pipeline.json (D11); `problemas` recebe a entrada.
+const ENTRADA = papel(lerPapeis().valor, 'agentes', DESENVOLVEDOR);
+const CABECALHO = cabecalho(ENTRADA);
+const problemas = (texto, fontes) => problemasDe(texto, fontes, ENTRADA);
 
 // Um CLAUDE.md inventado, no molde do modelo, e a fonte de arquitetura.
 const regra = (n, titulo, resto, sub = '') => `${n}. **${titulo}** ${resto}${sub}\n`;
@@ -359,7 +365,7 @@ test('o .claude/agents/desenvolvedor.md de verdade: sem problema, com os blocos 
   const fontes = lerFontesDoDesenvolvedor(RAIZ).fontes;
   assert.deepEqual(problemas(texto, fontes), []);
   assert.equal(sincronizar(texto, fontes['CLAUDE.md']), texto, 'rode: node .claude/hooks/ajusta-pipeline.mjs --sincronizar-desenvolvedor');
-  assert.equal(texto.startsWith(CABECALHO), true);
+  assert.equal(texto.startsWith(CABECALHO), true, 'o cabeçalho gerado da entrada do pipeline.json é o do arquivo, byte a byte');
   const p = partes(texto);
   assert.ok(Buffer.byteLength(p.fixa) <= 2450, `o corpo fixo tem ${Buffer.byteLength(p.fixa)} bytes`);
   if (!adotado(fontes['CLAUDE.md'])) {
@@ -396,4 +402,22 @@ test('um projeto que já adotou o CLAUDE.md tem o bloco do domínio igual à ext
   const bloco = /<!-- dominio:inicio -->\r?\n([\s\S]*?)\r?\n<!-- dominio:fim -->/.exec(p.projeto)?.[1];
   assert.equal(bloco, dominio.join('\n'));
   assert.equal(p.regras.trim(), extrairRegras(adot).fixas.join('\n'));
+});
+
+test('cabecalho: sai da entrada desenvolvedor (model, effort, tools), com o resto fixo e o fim de linha LF; sem a entrada, problemas recusa', () => {
+  assert.equal(cabecalho({ model: 'sonnet', effort: 'medium', tools: 'Read, Edit, Write, Bash, Grep, Glob' }), `---
+name: desenvolvedor
+description: Agente de código deste projeto. Escreve código, teste ou migração numa pasta, num worktree, com o pacote de contexto do orquestrador; roda os portões e só commita no branch dele.
+model: sonnet
+effort: medium
+tools: Read, Edit, Write, Bash, Grep, Glob
+omitClaudeMd: true
+---
+`);
+  assert.notEqual(cabecalho({ ...ENTRADA, effort: 'low' }), CABECALHO, 'outro esforço na entrada, outro cabeçalho');
+  assert.notEqual(cabecalho({ ...ENTRADA, tools: 'Read' }), CABECALHO);
+  const texto = agente(`\n${item('a')}\n`);
+  assert.deepEqual(problemasDe(texto, FONTES, ENTRADA), []);
+  assert.ok(problemasDe(texto, FONTES, { ...ENTRADA, effort: 'high' }).some((x) => /cabeçalho/.test(x)), 'o arquivo diz medium e a entrada, high');
+  assert.match(problemasDe(texto, FONTES, undefined)[0], /falta agentes\.desenvolvedor/);
 });

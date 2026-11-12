@@ -2,7 +2,8 @@
 // do confere-lgpd e a mídia binária. Tudo dentro do processo: escolher() com um diff montado à mão, sem git (a linha de comando tem os testes dela).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lerAgentes, lerNiveis, lerPastas, lerRevisao } from './config.mjs';
+import { lerPastas, lerRevisao } from './config.mjs';
+import { lerAgentes, lerNiveis } from './papeis.mjs';
 import { escolher } from './escolhe-revisores.mjs';
 
 const cfg = { agentes: lerAgentes().valor, niveis: lerNiveis().valor, revisao: lerRevisao().valor, pastas: lerPastas().valor };

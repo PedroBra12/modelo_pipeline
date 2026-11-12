@@ -2,19 +2,23 @@
   "repositorio": "PedroBra12/modelo_pipeline",
   "portaoRapido": "checar:rapido",
   "pastasDeTrabalho": ["^(apps|packages|src)/[^/]+(?=/)", "^\\.claude/hooks(?=/)"],
+  "familias": { "opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5" },
+  "escada": ["haiku:low", "sonnet:low", "sonnet:medium", "sonnet:high", "opus:medium", "opus:high", "opus:xhigh"],
+  "comum": { "esforcos": ["low", "medium", "high"], "passa": ["sonnet"], "confirma": ["opus", "fable"] },
   "agentes": {
     "revisor-seguranca": { "model": "opus", "effort": "xhigh", "tools": "Read, Grep, Glob", "tarefa": "revisão de risco: banco, permissão, dado pessoal, rede, segredo, isolamento entre donos de dado" },
-    "revisor-arquitetura": { "model": "opus", "effort": "high", "tools": "Read, Grep, Glob", "tarefa": "revisão de arquitetura: fronteiras entre pastas, contrato, AGENTS.md, decisão registrada" },
-    "qa": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "tarefa": "rodar a coisa de verdade e tentar quebrar" },
-    "revisor-tela": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "tarefa": "ver a tela tocada rodando a 320 px e a 1280 px no ambiente local, com o detector da `impeccable` (pelo lançador preso) e o `DESIGN.md`, contra o PRODUCT.md (portão 5)" },
+    "revisor-arquitetura": { "model": "opus", "effort": "high", "tools": "Read, Grep, Glob", "piso": "opus:medium", "teto": "opus:high", "tarefa": "revisão de arquitetura: fronteiras entre pastas, contrato, AGENTS.md, decisão registrada" },
+    "qa": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "piso": "sonnet:medium", "teto": "sonnet:high", "tarefa": "rodar a coisa de verdade e tentar quebrar" },
+    "revisor-tela": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash", "piso": "sonnet:medium", "teto": "sonnet:high", "tarefa": "ver a tela tocada rodando a 320 px e a 1280 px no ambiente local, com o detector da `impeccable` (pelo lançador preso) e o `DESIGN.md`, contra o PRODUCT.md (portão 5)" },
     "designer-ui": { "model": "sonnet", "effort": "high", "tools": "Read, Grep, Glob, Bash, Edit, Write", "tarefa": "escrever a tela de `apps/web` (o `.tsx` de `app/` e de `componentes/` e o `estilos.css`): vê a tela rodando no ambiente local, critica com a skill `impeccable` dentro do PRODUCT.md e do DESIGN.md e se confere a 320 px e a 1280 px (D35)" },
-    "leitor-docs": { "model": "haiku", "effort": "low", "tools": "Read, Grep, Glob", "tarefa": "ler `docs/` e os `AGENTS.md` e apontar os arquivos e linhas onde focar" }
+    "leitor-docs": { "model": "haiku", "effort": "low", "tools": "Read, Grep, Glob", "tarefa": "ler `docs/` e os `AGENTS.md` e apontar os arquivos e linhas onde focar" },
+    "desenvolvedor": { "model": "sonnet", "effort": "medium", "tools": "Read, Edit, Write, Bash, Grep, Glob", "piso": "sonnet:low", "teto": "sonnet:high" }
   },
   "niveis": {
     "leve": { "model": "sonnet", "effort": "low", "tarefa": "renomear, buscar (`Explore`), conferir um fato ou um arquivo, mudança trivial (no `desenvolvedor`), `ponytail-debt`" },
-    "medio": { "model": "sonnet", "effort": "medium", "tarefa": "código no `desenvolvedor`: feature, bug ou refactor dentro de uma pasta" },
-    "codigo-seguranca": { "model": "sonnet", "effort": "high", "tarefa": "código no `desenvolvedor` que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`) e a integração de fase" },
-    "revisao-ponytail": { "model": "sonnet", "effort": "high", "revisor": "ponytail-review", "tarefa": "`ponytail-review` e `ponytail-audit` (em `general-purpose`)" },
+    "medio": { "model": "sonnet", "effort": "medium", "piso": "sonnet:medium", "teto": "sonnet:high", "tarefa": "código no `desenvolvedor`: feature, bug ou refactor dentro de uma pasta" },
+    "codigo-seguranca": { "model": "sonnet", "effort": "high", "piso": "sonnet:high", "teto": "sonnet:high", "tarefa": "código no `desenvolvedor` que toca um gatilho de risco (`permissao`, `dado_pessoal`, `banco`, `config_pipeline`, `rede_rota`) e a integração de fase" },
+    "revisao-ponytail": { "model": "sonnet", "effort": "high", "piso": "sonnet:medium", "teto": "sonnet:high", "revisor": "ponytail-review", "tarefa": "`ponytail-review` e `ponytail-audit` (em `general-purpose`)" },
     "autoanalise": { "model": "sonnet", "effort": "medium", "tarefa": "juntar o livro da sessão (`livro-sessao.jsonl`, no scratchpad) com os números do `coleta-agentes.mjs` e gravar o arquivo da sessão" },
     "orquestracao": { "model": "opus", "effort": "xhigh", "tarefa": "`orquestrador` (`.claude/agents/orquestrador.md`), só como agente do chat principal" },
     "forte": { "model": "opus", "effort": "high", "tarefa": "as propostas `Plan` de uma decisão de arquitetura (`decisao.md`)" }
