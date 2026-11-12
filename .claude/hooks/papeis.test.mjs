@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARQUIVO } from './config.mjs';
-import { agentesFixos, comum, degrau, ehFixo, esforcosDe, esforcosNegados, faixa, lerAgentes, lerNiveis, lerPapeis, nomesDeAgentes, orquestrador, papel, papeisDeObjeto, par, versoes } from './papeis.mjs';
+import { agentesFixos, comum, degrau, ehFixo, esforcosDe, esforcosNegados, faixa, lerAgentes, lerNiveis, lerPapeis, mudancas, neto, nomesDeAgentes, orquestrador, papel, papeisDeObjeto, par, TOOLS_DO_NETO, versoes } from './papeis.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const dados = () => JSON.parse(readFileSync(ARQUIVO, 'utf8'));
@@ -227,10 +227,74 @@ test('versoes, comum e orquestrador: cópias do que está no arquivo', () => {
   assert.equal(papel(P, 'secao-que-nao-existe', 'qa'), undefined);
 });
 
+// ---------- o neto (D11): a chave opcional `neto` ----------
+
+/** O pipeline.json de verdade com o agente `leitor` (haiku low, só leitura) e a chave `neto`; `muda` mexe depois. */
+const comNeto = (muda = () => {}) => com((d) => { d.agentes.leitor = { model: 'haiku', effort: 'low', tools: 'Read, Grep, Glob', tarefa: 'ler' }; d.neto = 'leitor'; muda(d); });
+
+test('neto: sem a chave não há neto; com ela, `neto(p)` devolve o nome e o valor leva a chave', () => {
+  assert.equal(neto(P), undefined);
+  assert.equal(Object.hasOwn(P, 'neto'), false);
+  const r = papeisDeObjeto(comNeto());
+  assert.equal(r.erro, null);
+  assert.equal(neto(r.valor), 'leitor');
+  assert.deepEqual(TOOLS_DO_NETO, ['Read', 'Grep', 'Glob']);
+  assert.equal(erro(comNeto((d) => { d.neto = 'leitor-docs'; })), null, 'qualquer fixo só de leitura serve');
+});
+
+test('neto: falha fechado se não existe em agentes, não é fixo, não é só Read/Grep/Glob, é o desenvolvedor ou não é texto', () => {
+  const casos = [
+    ['nome que não existe', comNeto((d) => { d.neto = 'fantasma'; }), /neto em .* tem de ser o nome de um agente/],
+    ['não é texto', comNeto((d) => { d.neto = 5; }), /neto em/],
+    ['é null', comNeto((d) => { d.neto = null; }), /neto em/],
+    ['é vazio', comNeto((d) => { d.neto = ''; }), /neto em/],
+    ['é o desenvolvedor', comNeto((d) => { d.neto = 'desenvolvedor'; }), /desenvolvedor não pode ser o neto/],
+    ['com piso e teto (não é fixo)', comNeto((d) => { Object.assign(d.agentes.leitor, { piso: 'haiku:low', teto: 'haiku:low' }); }), /neto: agentes\.leitor tem de ser fixo/],
+    ['com Bash', comNeto((d) => { d.agentes.leitor.tools = 'Read, Grep, Glob, Bash'; }), /neto: agentes\.leitor só pode ter Read, Grep, Glob em tools \(tem Bash\)/],
+    ['com Edit', comNeto((d) => { d.agentes.leitor.tools = 'Read, Edit'; }), /tem Edit/],
+    ['com Agent', comNeto((d) => { d.agentes.leitor.tools = 'Read, Agent'; }), /tem Agent/],
+    ['com Agent(<nome>)', comNeto((d) => { d.agentes.leitor.tools = 'Read, Agent(leitor)'; }), /tem Agent\(leitor\)/],
+    ['neto que é o designer-ui (Bash, Edit, Write)', comNeto((d) => { d.neto = 'designer-ui'; }), /tem Bash, Edit, Write/],
+    ['neto que é o qa (não é fixo)', comNeto((d) => { d.neto = 'qa'; }), /tem de ser fixo/],
+  ];
+  for (const [rotulo, d, esperado] of casos) assert.match(erro(d), esperado, rotulo);
+});
+
+test('tools dos outros agentes: Agent e Agent(<nome>) valem; a regra de uma linha só continua', () => {
+  for (const tools of ['Read, Grep, Glob, Agent', 'Read, Grep, Glob, Agent(leitor)', 'Agent(leitor), Read']) {
+    assert.equal(erro(comNeto((d) => { d.agentes.qa.tools = tools; })), null, tools);
+  }
+  assert.match(erro(comNeto((d) => { d.agentes.qa.tools = 'Read,\nAgent(leitor)'; })), /agentes\.qa: tools é obrigatório, texto de uma linha só/);
+});
+
+test('mudancas: par, piso, teto, ferramentas, neto, famílias, escada e comum entram no resumo; a tarefa e a ordem das ferramentas não', () => {
+  const antes = P;
+  assert.deepEqual(mudancas(antes, antes), []);
+  assert.deepEqual(mudancas(antes, papeisDeObjeto(com((d) => { d.agentes.qa.tarefa = 'x'; d.agentes.qa.tools = 'Bash, Glob, Grep, Read'; d.niveis.leve.tarefa = 'y'; })).valor), []);
+  const depois = papeisDeObjeto(comNeto((d) => {
+    Object.assign(d.agentes.qa, { model: 'opus', effort: 'high', piso: 'opus:medium', teto: 'opus:high' });
+    d.niveis.leve.effort = 'medium';
+    d.escada = [...d.escada, 'opus:max'];
+    d.familias.haiku = 'claude-haiku-5-6';
+    d.comum.esforcos = ['low'];
+  })).valor;
+  const achados = mudancas(antes, depois);
+  assert.ok(achados.includes('qa: model sonnet → opus'), achados.join('\n'));
+  assert.ok(achados.includes('qa: piso sonnet:medium → opus:medium'));
+  assert.ok(achados.includes('qa: teto sonnet:high → opus:high'));
+  assert.ok(achados.includes('nível leve: effort low → medium'));
+  assert.ok(achados.includes('neto: (nenhum) → leitor'));
+  assert.ok(achados.includes('leitor: (nenhuma) → entra'));
+  assert.ok(achados.includes('familias.haiku: claude-haiku-5-5 → claude-haiku-5-6'));
+  assert.ok(achados.includes('comum.esforcos: low, medium, high → low'));
+  assert.ok(achados.some((a) => a.startsWith('escada: ') && a.endsWith('> opus:max')));
+  assert.deepEqual(mudancas(depois, antes).filter((a) => a.includes('leitor')), ['neto: leitor → (nenhum)', 'leitor: sai → (nenhuma)']);
+});
+
 // ---------- a fronteira: só o papeis.mjs lê as chaves de par ----------
 
 const CONSTANTES = ['FIXOS', 'PISOS', 'TETO', 'ESCADA', 'MODELOS', 'NIVEIS_DE_CODIGO'];
-const CHAVES = ['agentes', 'niveis', 'escada', 'familias', 'comum'];
+const CHAVES = ['agentes', 'niveis', 'escada', 'familias', 'comum', 'neto'];
 const SEM_COMENTARIO = (texto) => texto.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1');
 
 /**

@@ -3,8 +3,13 @@
 // que o cabeçalho de .claude/agents/<nome>.md repete; acima do teto da entrada (o `teto` no pipeline.json, lido só pelo
 // papeis.mjs, D11) a chamada pede a confirmação do usuário. Só passam com o `subagent_type` igual ao `name:` do cabeçalho e sem outro arquivo em .claude/agents que possa
 // responder pelo mesmo nome. O orquestrador só roda como agente do chat principal, então como subagente se nega, e o
-// chat principal só delega em opus xhigh (D45): outro esforço ou modelo nega, par ilegível pede confirmação, e o subagente
-// que chama a ferramenta Agent (a entrada traz agent_id) se nega. Fora
+// chat principal só delega em opus xhigh (D45): outro esforço ou modelo nega e par ilegível pede confirmação. Chat principal
+// é só a chamada sem agent_id e com agent_type ausente ou orquestrador (D11); toda outra chamada de Agent é de subagente e só
+// passa se o pipeline.json tem a chave `neto` e a chamada abre esse agente (sem isolation, no par dele), uma vez só: o neto
+// não abre outro. Os papéis se leem antes de qualquer decisão: arquivo inválido nega todos. Quando o pipeline.json da árvore
+// difere do da main (git show main:, senão origin/main) em par, piso, teto, ferramentas ou neto, ou o git não deixa comparar,
+// a chamada pede a confirmação do usuário (D11); o deny vence. O cabeçalho de .claude/agents/*.md só tem as chaves da lista
+// fechada (name, description, model, effort, tools e, no desenvolvedor, omitClaudeMd): chave a mais nega os agentes. Fora
 // dos agentes fixos, a chamada traz model e effort (o cabeçalho não preenche), outro opus pede a confirmação do usuário,
 // o esforço só vai de low a high e o haiku se nega. Pipeline.json ausente ou ilegível nega, em JSON. Para todo subagente,
 // o que vai a ele (o pedido mais os arquivos fora do repositório que o pedido cita por caminho) tem teto de 50 mil
@@ -17,6 +22,7 @@
 // chamada de low a high, model ausente ou sonnet, o agente sem problema no desenvolvedor.mjs (cabeçalho exato,
 // marcadores, tetos, lint) e, no projeto já adotado, com a parte do projeto preenchida; arquivo que não lê nega.
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,7 +45,9 @@ try {
 
 const AGENTES = join(resolve(dirname(fileURLToPath(import.meta.url)), '..'), 'agents');
 const RAIZ_DO_PROJETO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const CAMPOS = ['name', 'model', 'effort', 'tools'];
+/** As chaves que o cabeçalho de `.claude/agents/*.md` pode ter (D11, lista fechada); `omitClaudeMd` só no `desenvolvedor.md`. */
+export const CHAVES_DO_CABECALHO = ['name', 'description', 'model', 'effort', 'tools'];
+const CHAVE_SO_DO_DESENVOLVEDOR = 'omitClaudeMd';
 
 /** Roda só como agente do chat principal (`claude --agent orquestrador`), nunca como subagente. */
 export const SO_NO_CHAT = 'orquestrador';
@@ -52,13 +60,34 @@ const cabecalhoDe = (arquivo) => /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync
 const valor = (cabecalho, nome) => new RegExp(`^${nome}:[ \\t]*${nome === 'tools' ? '(\\S.*?)' : '(\\S+)'}[ \\t\\r]*$`, 'm').exec(cabecalho)?.[1];
 const conjunto = (tools) => (tools === undefined ? undefined : tools.split(',').map((t) => t.trim()).sort().join(','));
 
-/** O que há de errado na pasta de agentes para liberar o fixo `tipo`: arquivo `.md` fora da lista (em qualquer subpasta) ou 2º arquivo com o mesmo `name:`. */
+/**
+ * O que há de errado no cabeçalho de `.claude/agents/<arquivo>`: linha que não é `chave: valor` (um YAML aninhado ou com chave entre
+ * aspas esconderia a chave), chave fora da lista fechada (D11: `mcpServers`, `hooks`, `permissionMode`, `memory`, `skills`…) ou chave
+ * repetida. Texto, ou undefined.
+ */
+function problemaDasChaves(arquivo, cabecalho) {
+  const permitidas = [...CHAVES_DO_CABECALHO, ...(arquivo === `${CODIGO}.md` ? [CHAVE_SO_DO_DESENVOLVEDOR] : [])];
+  const vistas = new Set();
+  for (const linha of cabecalho.split(/\r?\n/)) {
+    if (linha.trim() === '') continue;
+    const chave = /^([A-Za-z][\w-]*):(?:\s|$)/.exec(linha)?.[1];
+    if (chave === undefined) return `${arquivo}: linha do cabeçalho fora do formato "chave: valor" (${linha.trim().slice(0, 40)}); o cabeçalho só aceita ${permitidas.join(', ')}`;
+    if (!permitidas.includes(chave)) return `${arquivo}: o cabeçalho tem a chave ${chave}, fora da lista fechada (${permitidas.join(', ')}; D11)`;
+    if (vistas.has(chave)) return `${arquivo}: o campo ${chave}: aparece mais de uma vez no cabeçalho`;
+    vistas.add(chave);
+  }
+  return undefined;
+}
+
+/** O que há de errado na pasta de agentes para liberar o fixo `tipo`: arquivo `.md` fora da lista (em qualquer subpasta), cabeçalho com chave a mais (de qualquer agente) ou 2º arquivo com o mesmo `name:`. */
 function problemaDaPasta(tipo, pasta, p) {
   const permitidos = new Set([...papeis.nomesDeAgentes(p), SO_NO_CHAT, CODIGO].map((k) => `${k}.md`));
   for (const rel of readdirSync(pasta, { recursive: true })) {
     const nome = String(rel);
     if (!nome.toLowerCase().endsWith('.md') || statSync(join(pasta, nome)).isDirectory()) continue;
     if (!permitidos.has(nome)) return `${nome} está em .claude/agents e não é um agente conhecido da guarda`;
+    const dasChaves = problemaDasChaves(nome, cabecalhoDe(join(pasta, nome)));
+    if (dasChaves !== undefined) return dasChaves;
     if (nome !== `${tipo}.md` && tiraAspas(valor(cabecalhoDe(join(pasta, nome)), 'name')) === tipo) {
       return `${nome} também tem name: ${tipo}`;
     }
@@ -76,7 +105,7 @@ export function lerCabecalhoDoArquivo(tipo, pasta = AGENTES, p = papeisDoProjeto
   const arquivo = join(pasta, `${tipo}.md`);
   if (!existsSync(arquivo)) return undefined;
   const cabecalho = cabecalhoDe(arquivo);
-  const repetido = CAMPOS.find((nome) => (cabecalho.match(new RegExp(`^${nome}:`, 'gm')) ?? []).length > 1);
+  const repetido = [...CHAVES_DO_CABECALHO, CHAVE_SO_DO_DESENVOLVEDOR].find((nome) => (cabecalho.match(new RegExp(`^${nome}:`, 'gm')) ?? []).length > 1);
   const problema = repetido === undefined ? problemaDaPasta(tipo, pasta, p) : `o campo ${repetido}: aparece mais de uma vez no cabeçalho`;
   return { name: valor(cabecalho, 'name'), model: valor(cabecalho, 'model'), effort: valor(cabecalho, 'effort'), tools: valor(cabecalho, 'tools'), problema };
 }
@@ -371,14 +400,83 @@ export function decidirOrquestrador(par, p = papeisDoProjeto()) {
 }
 
 const PESO = { deny: 2, ask: 1 };
+const dado = (v) => v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '');
 /**
- * A ferramenta `Agent` só vale para o chat principal: a entrada do hook de um subagente traz `agent_id` (o `agent_type` vem
- * também no chat aberto por `--agent`, então não separa). Sem `agent_id`, segue para a checagem do par.
+ * Chat principal (D11) é só a chamada SEM `agent_id` e com `agent_type` ausente ou igual a `orquestrador`: o `agent_type` vem
+ * também no chat aberto por `--agent`, e o `agent_id` só na entrada de um subagente. Todo o resto é chamada de subagente. Valor
+ * que não é texto (`agent_id: 7`) conta como dado: na dúvida é subagente.
  */
-export function decidirChamador(entrada) {
-  const id = entrada?.agent_id;
-  if (typeof id !== 'string' || id.trim() === '') return null;
-  return nega('subagente não abre subagente: só o chat principal, o orquestrador, delega (D45)');
+export const ehChatPrincipal = (entrada) => !dado(entrada?.agent_id) && (!dado(entrada?.agent_type) || entrada.agent_type === SO_NO_CHAT);
+
+/**
+ * A chamada de Agent feita por um subagente (D11): só passa o neto, o agente que `neto` do pipeline.json nomeia, uma vez só.
+ * Sem `neto` nega; quem chama já ser o neto nega; só `subagent_type` igual ao neto, sem `isolation`, `model` (se vier) da família da
+ * entrada e `effort` (se vier) igual ao dela. Depois vale o que vale para o fixo (cabeçalho contra o JSON), o teto de tokens e o esforço do
+ * pipeline; o par do chat principal (`decidirOrquestrador`) não é de quem chama e não roda aqui.
+ */
+function decidirDoNeto(entrada, dados, p, lerCabecalho, lerTamanho, esforco) {
+  const nome = papeis.neto(p);
+  if (nome === undefined) return nega('subagente não abre subagente: só o chat principal, o orquestrador, delega (D11)');
+  if (entrada?.agent_type === nome) return nega(`o neto (${nome}) não abre outro agente: um nível só (D11)`);
+  if (dados?.subagent_type !== nome) return nega(`o subagente só abre o neto "${nome}" (D11): subagent_type tem de ser ${nome}, sem mudar a caixa`);
+  const vigente = papeis.papel(p, 'agentes', nome);
+  if (dados.isolation !== undefined) return nega(`o neto ${nome} não roda com isolation (D11)`);
+  if (dados.model !== undefined && texto(dados.model)?.includes(vigente.model) !== true) return nega(`o neto ${nome} roda em ${vigente.model}: tire o model da chamada ou passe "${vigente.model}" (D11)`);
+  if (dados.effort !== undefined && texto(dados.effort) !== vigente.effort) return nega(`o neto ${nome} roda em ${vigente.effort}: tire o effort da chamada ou passe "${vigente.effort}" (D11)`);
+  return juntarDecisoes(decidirFixo(nome, dados.subagent_type, dados, lerCabecalho(nome), vigente), decidirEsforcoPipeline(dados, esforco), decidirTeto(dados, lerTamanho));
+}
+
+/**
+ * A decisão da chamada de subagente (ver `decidirDoNeto`), ou `null` se quem chama é o chat principal (D11, `ehChatPrincipal`):
+ * aí segue para o `decidirOrquestrador` e o `decidirAgente`. `entrada` é a entrada inteira do hook e `dados` o `tool_input`.
+ */
+export function decidirChamador(entrada, dados, p, lerCabecalho = () => undefined, lerTamanho = tamanhoDoArquivo, esforco = undefined) {
+  return ehChatPrincipal(entrada) ? null : decidirDoNeto(entrada, dados, p, lerCabecalho, lerTamanho, esforco);
+}
+
+// ---------- o pipeline.json contra a main (D11) ----------
+
+const ARQUIVO_NA_MAIN = '.claude/pipeline.json';
+const REFS_DA_MAIN = ['main', 'origin/main'];
+const MAXIMO_DE_MUDANCAS = 12;
+
+/**
+ * O texto do pipeline.json da `main` (`git show main:.claude/pipeline.json`; se a ref não existir, a `origin/main`), com o git rodando
+ * na raiz do projeto, sem shell e com timeout curto: `{ texto }` ou `{ erro }`. O git que não roda (ou estoura o tempo) não tenta a
+ * 2ª ref. `rodar` é o `spawnSync`.
+ */
+export function lerPipelineDaMain(raiz = RAIZ_DO_PROJETO, rodar = spawnSync) {
+  const falhas = [];
+  for (const ref of REFS_DA_MAIN) {
+    const r = rodar('git', ['show', `${ref}:${ARQUIVO_NA_MAIN}`], { cwd: raiz, encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024, shell: false, windowsHide: true });
+    if (r.error) return { erro: `o git não rodou (${r.error.code ?? r.error.message})` };
+    if (r.status === 0 && typeof r.stdout === 'string') return { texto: r.stdout };
+    falhas.push(`${ref}: ${String(r.stderr ?? '').trim().split('\n')[0] || `git saiu com ${r.status}`}`);
+  }
+  return { erro: `${REFS_DA_MAIN.join(' e ')} não têm o ${ARQUIVO_NA_MAIN} (${falhas.join('; ')})` };
+}
+
+/**
+ * O pipeline.json da árvore (`p`, já lido pelo `papeis`) contra o da main: igual passa; diferente em par, piso, teto, ferramentas, neto,
+ * famílias, escada ou comum pede a confirmação do usuário, com o resumo do que mudou; o git que falha, a ref ausente nas duas ou o da main
+ * inválido também pedem (nunca passa calado). `lerDaMain` devolve `{ texto }` ou `{ erro }` (padrão: `lerPipelineDaMain`).
+ */
+export function decidirContraAMain(p, lerDaMain = lerPipelineDaMain) {
+  const pede = (motivo) => ({ decisao: 'ask', motivo });
+  const { texto: json, erro } = lerDaMain();
+  if (erro !== undefined) return pede(`não deu para comparar o pipeline.json com o da main (${erro}); confirme o pipeline.json desta árvore`);
+  let dados;
+  try {
+    dados = JSON.parse(json);
+  } catch {
+    return pede('o pipeline.json da main não é JSON válido: não deu para compará-lo com o desta árvore; confirme');
+  }
+  const { valor: daMain, erro: invalido } = papeis.papeisDeObjeto(dados);
+  if (invalido !== null) return pede(`o pipeline.json da main é inválido (${invalido}): não deu para compará-lo com o desta árvore; confirme`);
+  const achados = papeis.mudancas(daMain, p);
+  if (achados.length === 0) return passa;
+  const resumo = achados.length > MAXIMO_DE_MUDANCAS ? [...achados.slice(0, MAXIMO_DE_MUDANCAS), `e mais ${achados.length - MAXIMO_DE_MUDANCAS}`] : achados;
+  return pede(`o pipeline.json desta árvore difere do da main (${resumo.join('; ')}); confirme`);
 }
 
 /** Junta decisões: deny vence ask, que vence passar; as de mesmo peso somam os motivos. */
@@ -474,14 +572,17 @@ async function principal() {
   if (typeof dados !== 'object' || dados === null) return saida('deny', 'entrada ilegível');
   if (falhaDoDesenvolvedor !== null) return saida('deny', `desenvolvedor.mjs ilegível: ${falhaDoDesenvolvedor instanceof Error ? falhaDoDesenvolvedor.message : falhaDoDesenvolvedor}`);
   if (falhaDoPapeis !== null) return saida('deny', `papeis.mjs ou config.mjs ilegível: ${falhaDoPapeis instanceof Error ? falhaDoPapeis.message : falhaDoPapeis}`);
-  const doChamador = decidirChamador(completo);
-  if (doChamador !== null) return saida(doChamador.decisao, doChamador.motivo);
   let resultado;
   try {
+    // os papéis primeiro: com o arquivo inválido nega todo mundo, o neto inclusive
     const { valor: p, erro } = papeis.lerPapeis();
     if (erro !== null) return saida('deny', `pipeline.json ilegível: ${erro}`);
     const esforco = lerEsforcoDoEstado();
-    resultado = juntarDecisoes(decidirOrquestrador(parDoChat(completo, process.env), p), decidirAgente(dados, (tipo) => lerCabecalhoDoArquivo(tipo, AGENTES, p), p, tamanhoDoArquivo, textoDoArquivo, esforco));
+    const lerCabecalho = (tipo) => lerCabecalhoDoArquivo(tipo, AGENTES, p);
+    resultado = decidirChamador(completo, dados, p, lerCabecalho, tamanhoDoArquivo, esforco)
+      ?? juntarDecisoes(decidirOrquestrador(parDoChat(completo, process.env), p), decidirAgente(dados, lerCabecalho, p, tamanhoDoArquivo, textoDoArquivo, esforco));
+    // o git só roda quando ainda cabe um ask: o deny já vence
+    if (resultado.decisao !== 'deny') resultado = juntarDecisoes(resultado, decidirContraAMain(p));
   } catch (e) {
     return saida('deny', `cabeçalho ilegível: não foi possível ler .claude/agents (${e instanceof Error ? e.message : e})`);
   }

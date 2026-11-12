@@ -1,6 +1,8 @@
 // Apoio dos testes (não é teste): monta um projeto numa pasta temporária com os hooks copiados e um pipeline.json
 // que o teste escolhe, para o teste não depender do .claude/pipeline.json de verdade.
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { agentesFixos, lerPapeis } from './papeis.mjs';
@@ -89,4 +91,31 @@ export function papeisDeExemplo() {
     for (const [nome, texto] of Object.entries(EXEMPLO[secao])) [p[secao][nome].model, p[secao][nome].effort] = texto.split(':');
   }
   return p;
+}
+
+const REPOSITORIOS_DA_MAIN = [];
+process.on('exit', () => {
+  for (const pasta of REPOSITORIOS_DA_MAIN) rmSync(pasta, { recursive: true, force: true });
+});
+
+/**
+ * O ambiente (`{ GIT_DIR }`) que faz o `git show main:.claude/pipeline.json` da guarda-agentes (D11) ler `conteudo`: um repositório
+ * temporário cujo branch `main` tem só esse `.claude/pipeline.json`. O teste de ponta a ponta da guarda passa o texto do arquivo de
+ * verdade (ou da cópia que roda) para a árvore e a main serem iguais; para provar a confirmação, passa outro. Apagado ao fim do processo.
+ */
+export function ambienteDaMain(conteudo) {
+  const pasta = mkdtempSync(join(tmpdir(), 'main-'));
+  REPOSITORIOS_DA_MAIN.push(pasta);
+  const env = { ...process.env };
+  for (const nome of Object.keys(env)) if (/^GIT_/.test(nome)) delete env[nome];
+  const git = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd: pasta, encoding: 'utf8', env });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+  };
+  git('init', '-q', '-b', 'main');
+  mkdirSync(join(pasta, '.claude'));
+  writeFileSync(join(pasta, '.claude', 'pipeline.json'), conteudo);
+  git('add', '.claude/pipeline.json');
+  git('commit', '-q', '-m', 'main');
+  return { GIT_DIR: join(pasta, '.git') };
 }

@@ -8,6 +8,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { copiarHooks, HOOKS } from './teste-apoio.mjs';
 
+// o esforço do pipeline que o ambiente de quem roda os testes trouxe não entra nos commits do teste (o confere-esforco o lê, D11)
+delete process.env.PIPELINE_ESFORCO;
+delete process.env.CLAUDE_PROJECT_DIR;
+
 /** O ambiente do git do teste: sem o contexto do runner que roda este arquivo (o node --test do hook se acharia recursivo e sairia verde). */
 const ambiente = (extra = {}) => {
   const e = { ...process.env, ...extra };
@@ -303,4 +307,79 @@ test('o merge no worktree de fora de .claude/worktrees/ (o do orquestrador) traz
     const r = juntar(p, 'pr/dev');
     assert.equal(r.ok, true, r.saida);
   });
+});
+
+// ---------- o esforço rapido não muda o pipeline (D11) ----------
+
+const RECUSA_RAPIDO = /confere-esforco: o esforço rapido não muda o pipeline: grave medio ou alto/;
+const DO_GATILHO = ['.claude/pipeline.json', '.claude/hooks/y.mjs', '.claude/agents/qa.md', '.claude/settings.local.json', '.claude/commands/a.md', '.claude/skills/pipeline/SKILL.md', 'CLAUDE.md'];
+
+test('com o esforço rapido o commit que toca o gatilho config_pipeline é recusado, com a mensagem, antes dos testes e sem commitar', () => {
+  com(projeto(), ({ commit, git }) => {
+    assert.equal(commit('.claude/hooks/x.test.mjs', TESTE_VERDE, { semHooks: true }).ok, true, 'prepara: um teste verde já está no repositório');
+    for (const rel of DO_GATILHO) {
+      const r = commit(rel, rel.endsWith('.json') ? '{}\n' : 'a\n', { env: { PIPELINE_ESFORCO: 'rapido' } });
+      assert.equal(r.ok, false, rel);
+      assert.match(r.saida, RECUSA_RAPIDO, rel);
+      assert.ok(r.saida.includes(rel), `a mensagem cita ${rel}: ${r.saida}`);
+      git(['reset', '-q']);
+    }
+    assert.equal(git(['rev-list', '--count', 'HEAD']).saida.trim(), '1', 'nada foi commitado');
+  });
+});
+
+test('com o esforço rapido o que não é do gatilho passa: código, docs e outro arquivo de .claude/', () => {
+  com(projeto(), ({ commit }) => {
+    assert.equal(commit('.claude/hooks/x.test.mjs', TESTE_VERDE, { semHooks: true }).ok, true);
+    for (const rel of ['src/y.txt', 'docs/a.md', '.claude/outra.json', '.claude/estado/nota.txt']) {
+      const r = commit(rel, 'a\n', { env: { PIPELINE_ESFORCO: 'rapido' } });
+      assert.equal(r.ok, true, `${rel}: ${r.saida}`);
+    }
+  });
+});
+
+const PIPELINE_JSON = (n) => `${JSON.stringify({ repositorio: 'acme/app', pastasDeTrabalho: ['^(apps|packages|src)/[^/]+(?=/)'], n })}\n`;
+
+test('sem esforço gravado, em medio ou em alto o commit do gatilho passa; a variável vence o arquivo, nos dois sentidos', () => {
+  com(projeto(), ({ commit, raiz }) => {
+    assert.equal(commit('.claude/hooks/x.test.mjs', TESTE_VERDE, { semHooks: true }).ok, true);
+    const semArquivo = commit('.claude/pipeline.json', PIPELINE_JSON(1));
+    assert.equal(semArquivo.ok, true, `sem .claude/estado/esforco: ${semArquivo.saida}`);
+    for (const [esforco, n] of [['medio', 2], ['alto', 3], ['MEDIO ', 4]]) {
+      mkdirSync(join(raiz, '.claude', 'estado'), { recursive: true });
+      writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), `${esforco}\n`);
+      const r = commit('.claude/pipeline.json', PIPELINE_JSON(n));
+      assert.equal(r.ok, true, `${esforco}: ${r.saida}`);
+    }
+    writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), 'rapido\n');
+    const recusado = commit('.claude/pipeline.json', PIPELINE_JSON(9));
+    assert.equal(recusado.ok, false);
+    assert.match(recusado.saida, RECUSA_RAPIDO);
+    const comVariavel = commit('.claude/pipeline.json', PIPELINE_JSON(9), { env: { PIPELINE_ESFORCO: 'medio' } });
+    assert.equal(comVariavel.ok, true, `a variável medio vence o arquivo rapido: ${comVariavel.saida}`);
+    writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), 'alto\n');
+    const contraria = commit('.claude/pipeline.json', PIPELINE_JSON(10), { env: { PIPELINE_ESFORCO: 'rapido' } });
+    assert.equal(contraria.ok, false, 'a variável rapido vence o arquivo alto');
+  });
+});
+
+test('o worktree do agente: o esforço rapido gravado no checkout principal recusa o commit do gatilho no worktree', () => {
+  comWorktree(projetoComWorktree(), ({ commitaNoWt, noWt, raiz }) => {
+    mkdirSync(join(raiz, '.claude', 'estado'), { recursive: true });
+    writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), 'rapido\n');
+    const r = commitaNoWt('.claude/commands/y.md', 'a\n');
+    assert.equal(r.ok, false);
+    assert.match(r.saida, RECUSA_RAPIDO);
+    noWt('reset', '-q', '--hard');
+    assert.equal(commitaNoWt('src/z.txt', 'a\n').ok, true, 'o código passa');
+    writeFileSync(join(raiz, '.claude', 'estado', 'esforco'), 'medio\n');
+    const medio = commitaNoWt('.claude/commands/y.md', 'a\n');
+    assert.equal(medio.ok, true, medio.saida);
+  });
+});
+
+test('o pre-commit chama o confere-esforco entre o confere-ramo e o confere-lgpd', () => {
+  const texto = readFileSync(join(HOOKS, 'git', 'pre-commit'), 'utf8');
+  const posicao = (nome) => texto.indexOf(`/../${nome}.mjs`);
+  assert.ok(posicao('confere-ramo') !== -1 && posicao('confere-esforco') > posicao('confere-ramo') && posicao('confere-lgpd') > posicao('confere-esforco'));
 });

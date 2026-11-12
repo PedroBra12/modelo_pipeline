@@ -1,5 +1,5 @@
 // Os pares modelo/esforço (D11): o ÚNICO módulo que lê do .claude/pipeline.json as chaves `familias`, `escada`, `comum`,
-// `agentes` e `niveis`, e o único que ordena, compara, sobe ou desce um par. O resto dos hooks recebe o resultado daqui
+// `agentes` e `niveis` (e a chave opcional `neto`), e o único que ordena, compara, sobe ou desce um par. O resto dos hooks recebe o resultado daqui
 // (`lerPapeis`) e pergunta (`papel`, `faixa`, `degrau`...). Um teste de fronteira nega outro leitor dessas chaves.
 // A entrada sem `piso` e `teto` é fixa; com os dois, o par anda só entre eles, no mesmo modelo (D3: o modelo vem do papel).
 // No código fica só a estrutura (família, esforço, `piso ≤ par ≤ teto`, o que não pode faltar); os valores são dado.
@@ -13,6 +13,8 @@ export const ESFORCOS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const DESENVOLVEDOR = 'desenvolvedor';
 /** O nível do chat principal: tem de estar em `niveis`. */
 export const ORQUESTRACAO = 'orquestracao';
+/** As únicas ferramentas do neto (D11): só leitura. */
+export const TOOLS_DO_NETO = ['Read', 'Grep', 'Glob'];
 
 const ehObjeto = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
 const listaDe = (v, valido) => Array.isArray(v) && v.every((t) => typeof t === 'string' && valido(t));
@@ -88,8 +90,21 @@ function problemaDaEntrada(secao, nome, e, escada) {
   return null;
 }
 
+/** Os itens de `tools` (texto de uma linha só, separado por vírgula): `Read`, `Agent`, `Agent(leitor)`… */
+const itensDeTools = (tools) => tools.split(',').map((t) => t.trim()).filter((t) => t !== '');
+
+/** O erro (texto) da chave opcional `neto`, ou null: um agente de `agentes`, fixo, só com Read, Grep e Glob. */
+function problemaDoNeto(neto, agentes) {
+  if (typeof neto !== 'string' || !NOME.test(neto) || !Object.hasOwn(agentes, neto)) return `neto em ${ONDE} tem de ser o nome de um agente de agentes`;
+  if (neto === DESENVOLVEDOR) return `neto: o ${DESENVOLVEDOR} não pode ser o neto`;
+  const e = agentes[neto];
+  if (!ehFixo(e)) return `neto: agentes.${neto} tem de ser fixo (sem piso nem teto)`;
+  const fora = itensDeTools(e.tools).filter((t) => !TOOLS_DO_NETO.includes(t));
+  return fora.length > 0 ? `neto: agentes.${neto} só pode ter ${TOOLS_DO_NETO.join(', ')} em tools (tem ${fora.join(', ')}): o neto não abre outro agente nem roda comando` : null;
+}
+
 /**
- * Valida o objeto do pipeline.json e devolve `{ valor, erro }`. O valor é `{ familias, escada, comum, agentes, niveis }`,
+ * Valida o objeto do pipeline.json e devolve `{ valor, erro }`. O valor é `{ familias, escada, comum, agentes, niveis, neto? }`,
  * cada entrada de `agentes` e `niveis` como está no arquivo (`model`, `effort`, `tools`?, `piso`?, `teto`?, `tarefa`?).
  * Pura. Falha fechado: qualquer regra de estrutura quebrada é erro, e quem chama nega.
  */
@@ -107,6 +122,11 @@ export function papeisDeObjeto(dados) {
   }
   if (!Object.hasOwn(agentes, DESENVOLVEDOR)) return falha(`agentes.${DESENVOLVEDOR} falta no pipeline.json`);
   if (!Object.hasOwn(niveis, ORQUESTRACAO)) return falha(`niveis.${ORQUESTRACAO} falta no pipeline.json`);
+  if (Object.hasOwn(dados, 'neto')) {
+    const erroDoNeto = problemaDoNeto(dados.neto, agentes);
+    if (erroDoNeto !== null) return falha(erroDoNeto);
+    return ok({ familias, escada, comum, agentes, niveis, neto: dados.neto });
+  }
   return ok({ familias, escada, comum, agentes, niveis });
 }
 
@@ -128,6 +148,8 @@ export const agentesFixos = (p) => Object.fromEntries(Object.entries(p.agentes).
 export const nomesDeAgentes = (p) => Object.keys(p.agentes);
 /** O par do chat principal (`niveis.orquestracao`): `{ model, effort }`. */
 export const orquestrador = (p) => ({ model: p.niveis[ORQUESTRACAO].model, effort: p.niveis[ORQUESTRACAO].effort });
+/** O nome do agente que o subagente pode abrir (D11, a chave `neto`), ou undefined se o arquivo não tem a chave. */
+export const neto = (p) => p.neto;
 /** A versão de cada família: `{ opus: 'claude-opus-…', sonnet, haiku }`. */
 export const versoes = (p) => ({ ...p.familias });
 /** O que a chamada comum (general-purpose, Explore, Plan) aceita: `{ esforcos, passa, confirma }`. */
@@ -173,6 +195,43 @@ export function degrau(p, { secao, chave, entrada }, delta) {
   const modelo = separa(atual)[0];
   if (separa(proximo)[0] !== modelo) return { erro: `${atual} já é o ${delta > 0 ? 'topo' : 'começo'} do ${modelo}: o ajuste só mexe no esforço, o modelo vem do papel` };
   return { de: atual, para: proximo };
+}
+
+// ---------- o que mudou entre dois pipeline.json (a confirmação contra a main, D11) ----------
+
+const CAMPOS_DA_ENTRADA = ['model', 'effort', 'piso', 'teto', 'tools'];
+const semOrdem = (lista) => [...lista].sort().join(', ');
+/** O valor de um campo para comparar e mostrar: `tools` sem ordem, lista em texto, ausente como "(nenhum)". */
+const mostra = (v) => (v === undefined ? '(nenhum)' : Array.isArray(v) ? v.join(', ') : String(v));
+const comparavel = (campo, v) => (campo === 'tools' && typeof v === 'string' ? semOrdem(itensDeTools(v)) : mostra(v));
+
+/**
+ * O que mudou do papel `antes` para o `depois` (os dois vêm de `papeisDeObjeto`), em frases curtas
+ * ("qa: teto sonnet:high → opus:high"), ou [] se nada que importa mudou. Compara `familias`, `escada`, `comum`, `neto` e, em cada
+ * entrada de `agentes` e `niveis`, `model`, `effort`, `piso`, `teto` e `tools` (a `tarefa` não conta). Entrada que entra ou sai também.
+ */
+export function mudancas(antes, depois) {
+  const achados = [];
+  const muda = (onde, a, b, ca = mostra(a), cb = mostra(b)) => {
+    if (ca !== cb) achados.push(`${onde} ${mostra(a)} → ${mostra(b)}`);
+  };
+  for (const f of FAMILIAS) muda(`familias.${f}:`, antes.familias[f], depois.familias[f]);
+  muda('escada:', antes.escada.join(' > '), depois.escada.join(' > '));
+  for (const campo of ['esforcos', 'passa', 'confirma']) muda(`comum.${campo}:`, antes.comum[campo], depois.comum[campo]);
+  muda('neto:', antes.neto, depois.neto);
+  for (const [secao, rotulo] of [['agentes', ''], ['niveis', 'nível ']]) {
+    const nomes = [...new Set([...Object.keys(antes[secao]), ...Object.keys(depois[secao])])];
+    for (const nome of nomes) {
+      const a = Object.hasOwn(antes[secao], nome) ? antes[secao][nome] : undefined;
+      const b = Object.hasOwn(depois[secao], nome) ? depois[secao][nome] : undefined;
+      if (a === undefined || b === undefined) {
+        achados.push(`${rotulo}${nome}: ${a === undefined ? '(nenhuma) → entra' : 'sai → (nenhuma)'}`);
+        continue;
+      }
+      for (const campo of CAMPOS_DA_ENTRADA) muda(`${rotulo}${nome}: ${campo}`, a[campo], b[campo], comparavel(campo, a[campo]), comparavel(campo, b[campo]));
+    }
+  }
+  return achados;
 }
 
 // ---------- as seções, para quem só precisa de uma ----------

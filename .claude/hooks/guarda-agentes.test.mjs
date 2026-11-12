@@ -1,18 +1,22 @@
 // A guarda dos subagentes: decidirAgente como função pura, o hook de ponta a ponta e os cabeçalhos de verdade.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync as spawnSyncDoNode } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARQUIVO } from './config.mjs';
 import { cabecalho, sincronizar } from './desenvolvedor.mjs';
-import { lerAgentes, lerNiveis, lerPapeis, orquestrador } from './papeis.mjs';
-import { papeisDeExemplo } from './teste-apoio.mjs';
-import { TETO_TOKENS, SO_NO_CHAT, CODIGO, caminhosCitados, decidirAgente as decidirAgenteCom, lerFontesDoDesenvolvedor, decidirEsforcoPipeline, decidirTeto, tamanhoDoArquivo, decidirChamador, decidirOrquestrador as decidirOrquestradorCom, juntarDecisoes, lerCabecalhoDoArquivo, lerEsforcoDoEstado, lerParDoRegistro, lerRegistroDoArquivo, parDoChat } from './guarda-agentes.mjs';
+import { lerAgentes, lerNiveis, lerPapeis, orquestrador, papeisDeObjeto } from './papeis.mjs';
+import { ambienteDaMain, copiarHooks, papeisDeExemplo } from './teste-apoio.mjs';
+import { TETO_TOKENS, SO_NO_CHAT, CODIGO, caminhosCitados, decidirAgente as decidirAgenteCom, lerFontesDoDesenvolvedor, decidirEsforcoPipeline, decidirTeto, tamanhoDoArquivo, decidirChamador, decidirContraAMain, ehChatPrincipal, lerPipelineDaMain, CHAVES_DO_CABECALHO, decidirOrquestrador as decidirOrquestradorCom, juntarDecisoes, lerCabecalhoDoArquivo, lerEsforcoDoEstado, lerParDoRegistro, lerRegistroDoArquivo, parDoChat } from './guarda-agentes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
+// A guarda compara o pipeline.json com o da main pelo git (D11): o hook de ponta a ponta roda com um GIT_DIR cuja main tem o arquivo de verdade,
+// para a comparação dar "igual" (o git do repositório de quem roda os testes não entra). Os testes da confirmação usam o `spawnSyncDoNode`.
+const DA_MAIN = ambienteDaMain(readFileSync(join(AQUI, '..', 'pipeline.json'), 'utf8'));
+const spawnSync = (comando, args, opcoes = {}) => spawnSyncDoNode(comando, args, { ...opcoes, env: { ...(opcoes.env ?? process.env), ...DA_MAIN } });
 // Os papéis que a guarda recebe de `lerPapeis` (D11), nos pares do EXEMPLO (os cabeçalhos dos testes são montados na mão; o ajuste
 // automático desce os do arquivo até o piso), e os nomes dos agentes fixos (sem o desenvolvedor).
 const P = papeisDeExemplo();
@@ -582,7 +586,7 @@ test('a janela do registro: a única linha do chat no começo de um arquivo de m
   assert.deepEqual(lerRegistroDoArquivo(arquivo, Number.POSITIVE_INFINITY), { model: 'claude-opus-5-5', effort: 'xhigh' }, 'sem janela o mesmo arquivo dá o par: é a janela que corta');
 });
 
-test('o hook de ponta a ponta nega a chamada de Agent feita por um subagente, sem rodar a checagem do par; o chat principal aberto como orquestrador segue (D45)', () => {
+test('o hook de ponta a ponta, sem neto no pipeline.json: o subagente não abre subagente e só o chat principal (sem agent_id, agent_type ausente ou orquestrador) segue (D11)', () => {
   const hook = (entrada) => {
     const r = spawnSync(process.execPath, [join(AQUI, 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8' });
     return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
@@ -592,7 +596,7 @@ test('o hook de ponta a ponta nega a chamada de Agent feita por um subagente, se
   const dentro = hook(com({ agent_id: 'abc', agent_type: 'general-purpose' }));
   assert.equal(dentro.status, 0);
   assert.equal(dentro.saida?.permissionDecision, 'deny');
-  assert.match(dentro.saida.permissionDecisionReason, /subagente não abre subagente: só o chat principal, o orquestrador, delega \(D45\)/);
+  assert.match(dentro.saida.permissionDecisionReason, /subagente não abre subagente: só o chat principal, o orquestrador, delega \(D11\)/);
   assert.equal(hook(com({ agent_id: 'abc', agent_type: 'orquestrador' })).saida?.permissionDecision, 'deny', 'agent_id vale mesmo com agent_type orquestrador');
   assert.equal(hook(com({ agent_id: 'abc' })).saida?.permissionDecision, 'deny', 'só o agent_id');
   const foraDoPar = hook(com({ agent_id: 'abc', agent_type: 'qa' }, { effort: 'low' }));
@@ -601,9 +605,13 @@ test('o hook de ponta a ponta nega a chamada de Agent feita por um subagente, se
   assert.deepEqual(hook(com({ agent_type: 'orquestrador' })), { status: 0, saida: null }, 'orquestrador no par certo passa');
   assert.equal(hook(com({ agent_type: 'orquestrador' }, { effort: 'low' })).saida?.permissionDecision, 'deny', 'e no par errado nega pelo par');
   assert.deepEqual(hook(com({})), { status: 0, saida: null }, 'sem agent_type (o chat principal sem --agent) segue');
-  assert.deepEqual(hook(com({ agent_type: 'outro' })), { status: 0, saida: null }, 'o chat principal aberto com --agent outro: sem agent_id não nega aqui');
-  assert.equal(hook(com({ agent_type: 'outro' }, { effort: 'low' })).saida?.permissionDecision, 'deny', 'e segue para a checagem do par');
-  for (const agent_id of ['', null, 7]) assert.deepEqual(hook(com({ agent_id })), { status: 0, saida: null }, `agent_id ${JSON.stringify(agent_id)} não é subagente`);
+  for (const extra of [{ agent_type: 'outro' }, { agent_type: 'Orquestrador' }, { agent_type: 'general-purpose' }]) {
+    const r = hook(com(extra));
+    assert.equal(r.saida?.permissionDecision, 'deny', `agent_type ${extra.agent_type} sem agent_id não é o chat principal`);
+    assert.match(r.saida.permissionDecisionReason, /subagente não abre subagente/);
+  }
+  for (const agent_id of ['', '  ', null]) assert.deepEqual(hook(com({ agent_id })), { status: 0, saida: null }, `agent_id ${JSON.stringify(agent_id)} é sem agent_id`);
+  assert.equal(hook(com({ agent_id: 7 })).saida?.permissionDecision, 'deny', 'agent_id que não é texto conta como subagente');
 });
 
 test('parDoChat: com effort.level na entrada só ele vale; sem ele valem CLAUDE_EFFORT e o registro, todos os que existem; o modelo vem do registro', () => {
@@ -624,14 +632,22 @@ test('parDoChat: com effort.level na entrada só ele vale; sem ele valem CLAUDE_
   assert.deepEqual(decidirOrquestrador(parDoChat({ effort: { level: 'xhigh' } }, { CLAUDE_EFFORT: 'low' }, () => ({ model: 'claude-opus-5-5', effort: 'low' }))), passa, 'com effort.level só ele vale');
 });
 
-test('decidirChamador: quem separa o subagente do chat principal é o agent_id; sem ele, qualquer agent_type segue para a checagem do par (D45)', () => {
-  const motivo = 'subagente não abre subagente: só o chat principal, o orquestrador, delega (D45)';
-  for (const entrada of [{ agent_id: 'a1' }, { agent_id: 'a1', agent_type: 'orquestrador' }, { agent_id: 'a1', agent_type: 'general-purpose' }, { agent_id: ' a1 ', agent_type: 'Explore' }]) {
-    assert.deepEqual(decidirChamador(entrada), { decisao: 'deny', motivo }, JSON.stringify(entrada));
+test('ehChatPrincipal: só a chamada sem agent_id e com agent_type ausente ou orquestrador (D11)', () => {
+  for (const entrada of [{}, undefined, null, { agent_type: 'orquestrador' }, { agent_id: '' }, { agent_id: '  ', agent_type: 'orquestrador' }, { agent_id: null }, { agent_type: '' }, { agent_type: null }]) {
+    assert.equal(ehChatPrincipal(entrada), true, JSON.stringify(entrada));
   }
-  for (const entrada of [{}, undefined, null, { agent_type: 'orquestrador' }, { agent_type: 'outro' }, { agent_type: 'general-purpose' }, { agent_id: '' }, { agent_id: '  ' }, { agent_id: null }, { agent_id: 7 }, { agent_id: {}, agent_type: 'outro' }]) {
-    assert.equal(decidirChamador(entrada), null, JSON.stringify(entrada));
+  for (const entrada of [{ agent_id: 'a1' }, { agent_id: 'a1', agent_type: 'orquestrador' }, { agent_id: ' a1 ', agent_type: 'Explore' }, { agent_type: 'outro' }, { agent_type: 'Orquestrador' }, { agent_type: ' orquestrador' }, { agent_type: 'general-purpose' }, { agent_id: 7 }, { agent_id: {}, agent_type: 'outro' }, { agent_type: 7 }]) {
+    assert.equal(ehChatPrincipal(entrada), false, JSON.stringify(entrada));
   }
+});
+
+test('decidirChamador sem neto: o chat principal segue (null) e a chamada de subagente nega com a mensagem da D11', () => {
+  const motivo = 'subagente não abre subagente: só o chat principal, o orquestrador, delega (D11)';
+  const chamada = { subagent_type: 'leitor-docs', description: 'x' };
+  for (const entrada of [{ agent_id: 'a1' }, { agent_id: 'a1', agent_type: 'orquestrador' }, { agent_id: 'a1', agent_type: 'general-purpose' }, { agent_type: 'outro' }]) {
+    assert.deepEqual(decidirChamador(entrada, chamada, P, ler), { decisao: 'deny', motivo }, JSON.stringify(entrada));
+  }
+  for (const entrada of [{}, undefined, { agent_type: 'orquestrador' }, { agent_id: '' }]) assert.equal(decidirChamador(entrada, chamada, P, ler), null, JSON.stringify(entrada));
 });
 
 test('o hook de ponta a ponta confere o chat principal: opus xhigh passa; outro esforço ou modelo nega; o que não deu para ler pede confirmação; vale para toda chamada de Agent', () => {
@@ -1078,5 +1094,303 @@ test('desenvolvedor (D8): o hook de ponta a ponta passa com worktree e effort, n
     }
   } finally {
     rmSync(raiz, { recursive: true, force: true });
+  }
+});
+
+// ---------- a lista fechada de chaves do cabeçalho (D11) ----------
+
+test('o cabeçalho com chave fora da lista fechada nega o agente, dizendo a chave (mcpServers, hooks, permissionMode, memory, skills…)', () => {
+  assert.deepEqual(CHAVES_DO_CABECALHO, ['name', 'description', 'model', 'effort', 'tools']);
+  for (const chave of ['mcpServers', 'hooks', 'permissionMode', 'memory', 'skills', 'disallowedTools', 'maxTurns', 'color']) {
+    comPasta((pasta) => {
+      const arquivo = join(pasta, 'revisor-arquitetura.md');
+      writeFileSync(arquivo, readFileSync(arquivo, 'utf8').replace(/\r?\n---/, `\n${chave}: x\n---`));
+    }, (_, decide) => {
+      const r = decide('revisor-arquitetura');
+      assert.equal(r.decisao, 'deny', chave);
+      assert.match(r.motivo, new RegExp(`a chave ${chave}, fora da lista fechada`), chave);
+    });
+  }
+});
+
+test('a chave a mais em outro arquivo de .claude/agents (o orquestrador, que ninguém chama como subagente) também nega os agentes', () => {
+  comPasta((pasta) => {
+    const arquivo = join(pasta, 'orquestrador.md');
+    writeFileSync(arquivo, readFileSync(arquivo, 'utf8').replace(/\r?\n---/, '\nhooks: x\n---'));
+  }, (_, decide) => {
+    const r = decide('leitor-docs');
+    assert.equal(r.decisao, 'deny');
+    assert.match(r.motivo, /orquestrador\.md: o cabeçalho tem a chave hooks/);
+  });
+});
+
+test('o omitClaudeMd só vale no desenvolvedor.md; em outro agente é chave fora da lista', () => {
+  comPasta((pasta) => {
+    const arquivo = join(pasta, 'qa.md');
+    writeFileSync(arquivo, readFileSync(arquivo, 'utf8').replace(/\r?\n---/, '\nomitClaudeMd: true\n---'));
+  }, (_, decide) => assert.match(decide('qa').motivo, /qa\.md: o cabeçalho tem a chave omitClaudeMd/));
+  comPasta(() => {}, (pasta) => assert.equal(lerCabecalhoDoArquivo(CODIGO, pasta, REAL).problema, undefined, 'o do desenvolvedor, de verdade, tem o omitClaudeMd'));
+});
+
+test('o cabeçalho que não é "chave: valor" em toda linha (YAML aninhado, chave entre aspas, lista) nega: esconderia a chave', () => {
+  for (const linha of ['  hooks: x', '"mcpServers": x', '- skills', 'hooks :x', "'hooks': x"]) {
+    comPasta((pasta) => {
+      const arquivo = join(pasta, 'leitor-docs.md');
+      writeFileSync(arquivo, readFileSync(arquivo, 'utf8').replace(/\r?\n---/, `\n${linha}\n---`));
+    }, (_, decide) => {
+      const r = decide('leitor-docs');
+      assert.equal(r.decisao, 'deny', linha);
+      assert.match(r.motivo, /fora do formato "chave: valor"/, linha);
+    });
+  }
+});
+
+test('os arquivos de verdade em .claude/agents só têm as chaves da lista fechada (omitClaudeMd só no desenvolvedor)', () => {
+  const arquivos = readdirSync(AGENTES).filter((f) => f.endsWith('.md'));
+  assert.ok(arquivos.length >= 8);
+  for (const arquivo of arquivos) {
+    const cabecalho = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(join(AGENTES, arquivo), 'utf8'))?.[1];
+    assert.ok(cabecalho !== undefined, `${arquivo}: sem cabeçalho`);
+    const chaves = cabecalho.split(/\r?\n/).filter((l) => l.trim() !== '').map((l) => /^([A-Za-z][\w-]*):(\s|$)/.exec(l)?.[1]);
+    const permitidas = arquivo === 'desenvolvedor.md' ? [...CHAVES_DO_CABECALHO, 'omitClaudeMd'] : CHAVES_DO_CABECALHO;
+    for (const chave of chaves) assert.ok(chave !== undefined && permitidas.includes(chave), `${arquivo}: chave ${chave}`);
+    assert.equal(new Set(chaves).size, chaves.length, `${arquivo}: chave repetida`);
+  }
+  for (const tipo of [...FIXOS_DO_PROJETO, CODIGO]) assert.equal(lerCabecalhoDoArquivo(tipo, AGENTES, REAL)?.problema, undefined, tipo);
+});
+
+// ---------- o neto (D11) ----------
+
+/** Os papéis do exemplo com o agente `leitor` (haiku low, só leitura) e a chave `neto`. */
+const comNeto = (p) => {
+  const q = structuredClone(p);
+  q.agentes.leitor = { model: 'haiku', effort: 'low', tools: 'Read, Grep, Glob', tarefa: 'ler e apontar' };
+  q.neto = 'leitor';
+  return q;
+};
+const PN = comNeto(P);
+const lerComNeto = (tipo) => (tipo === 'leitor' ? { name: 'leitor', model: 'haiku', effort: 'low', tools } : cabecalhos[tipo]);
+const doNeto = { subagent_type: 'leitor', description: 'achar onde fica x', prompt: 'ache x' };
+const DE_SUBAGENTE = { agent_id: 'a1', agent_type: 'desenvolvedor' };
+const chamadaDe = (entrada, dados, esforco = 'alto') => decidirChamador(entrada, dados, PN, lerComNeto, tamanhoDoArquivo, esforco);
+
+test('o neto: o subagente passa só abrindo o agente de `neto`, sem isolation, no par dele, com o esforço do pipeline gravado', () => {
+  assert.deepEqual(chamadaDe(DE_SUBAGENTE, doNeto), passa);
+  assert.deepEqual(chamadaDe(DE_SUBAGENTE, { ...doNeto, model: 'haiku', effort: 'low' }), passa);
+  assert.deepEqual(chamadaDe(DE_SUBAGENTE, { ...doNeto, model: 'claude-haiku-5-5', effort: 'LOW' }), passa, 'a família dentro do modelo; caixa do effort');
+  assert.deepEqual(chamadaDe({ agent_id: 'a1' }, doNeto), passa, 'sem agent_type');
+  assert.deepEqual(chamadaDe(DE_SUBAGENTE, doNeto, 'rapido'), passa, 'o neto roda no rapido (só os revisores e o qa não)');
+  assert.deepEqual(chamadaDe(DE_SUBAGENTE, doNeto, 'medio'), passa);
+  assert.equal(chamadaDe(DE_SUBAGENTE, doNeto, '<ausente>').decisao, 'deny', 'sem .claude/estado/esforco só o leitor-docs passa, como hoje');
+  assert.match(chamadaDe(DE_SUBAGENTE, doNeto, '<ausente>').motivo, /defina primeiro o esforço do pipeline/);
+  assert.equal(chamadaDe(DE_SUBAGENTE, doNeto, 'xyz').decisao, 'deny', 'esforço inválido nega');
+});
+
+test('o neto: quem chama sendo o neto nega ("não abre outro"); outro subagent_type, isolation, model ou effort fora do par nega', () => {
+  const dele = chamadaDe({ agent_id: 'a2', agent_type: 'leitor' }, doNeto);
+  assert.equal(dele.decisao, 'deny');
+  assert.match(dele.motivo, /o neto \(leitor\) não abre outro agente/);
+  for (const subagent_type of ['qa', 'leitor-docs', 'general-purpose', 'desenvolvedor', 'orquestrador', 'Leitor', 'leitor ', undefined, 'fork']) {
+    const r = chamadaDe(DE_SUBAGENTE, { ...doNeto, subagent_type });
+    assert.equal(r.decisao, 'deny', String(subagent_type));
+    assert.match(r.motivo, /o subagente só abre o neto "leitor"/, String(subagent_type));
+  }
+  for (const [campo, valor] of [['isolation', 'worktree'], ['isolation', null], ['model', 'opus'], ['model', 'sonnet'], ['model', ''], ['model', 7], ['effort', 'high'], ['effort', 'medium'], ['effort', '']]) {
+    assert.equal(chamadaDe(DE_SUBAGENTE, { ...doNeto, [campo]: valor }).decisao, 'deny', `${campo} ${JSON.stringify(valor)}`);
+  }
+});
+
+test('o neto: o cabeçalho tem de ser o do pipeline.json e o pedido não passa do teto de 50 mil tokens; o deny vence', () => {
+  const comCabecalho = (c) => decidirChamador(DE_SUBAGENTE, doNeto, PN, () => c, tamanhoDoArquivo, 'alto');
+  assert.equal(comCabecalho({ name: 'leitor', model: 'haiku', effort: 'low', tools: 'Read, Grep, Glob, Bash' }).decisao, 'deny', 'o cabeçalho com Bash');
+  assert.equal(comCabecalho({ name: 'leitor', model: 'sonnet', effort: 'low', tools }).decisao, 'deny', 'o cabeçalho em outro modelo');
+  assert.equal(comCabecalho({ name: 'leitor', model: 'haiku', effort: 'low', tools, problema: 'x' }).decisao, 'deny', 'o cabeçalho com problema');
+  assert.equal(comCabecalho(undefined).decisao, 'deny', 'sem arquivo do agente');
+  const grande = chamadaDe(DE_SUBAGENTE, { ...doNeto, prompt: 'x'.repeat(TETO_TOKENS * 3 + 10) });
+  assert.equal(grande.decisao, 'deny');
+  assert.match(grande.motivo, /acima do teto/);
+});
+
+test('o neto: o que o pipeline.json diz de `neto` vale; outro agente fixo como neto, ou o neto trocado, muda quem passa', () => {
+  const comOutro = structuredClone(PN);
+  comOutro.neto = 'leitor-docs';
+  assert.deepEqual(decidirChamador(DE_SUBAGENTE, { ...doNeto, subagent_type: 'leitor-docs' }, comOutro, ler, tamanhoDoArquivo, 'alto'), passa);
+  assert.equal(decidirChamador(DE_SUBAGENTE, doNeto, comOutro, lerComNeto, tamanhoDoArquivo, 'alto').decisao, 'deny', 'o leitor deixou de ser o neto');
+});
+
+/** Roda o hook numa cópia em pasta temporária (`raiz/hooks`, `raiz/agents`, `raiz/pipeline.json`), com o pipeline.json e o `env` dados; com `leitor.md`. */
+function hookNeto({ pipeline = JSON.stringify(comNeto(JSON.parse(readFileSync(ARQUIVO, 'utf8'))), null, 2), entrada, env = {}, main = pipeline }) {
+  const raiz = mkdtempSync(join(tmpdir(), 'guarda-agentes-neto-'));
+  try {
+    mkdirSync(join(raiz, 'hooks'));
+    for (const f of ['guarda-agentes.mjs', 'desenvolvedor.mjs', 'config.mjs', 'papeis.mjs']) cpSync(join(AQUI, f), join(raiz, 'hooks', f));
+    cpSync(AGENTES, join(raiz, 'agents'), { recursive: true });
+    writeFileSync(join(raiz, 'agents', 'leitor.md'), '---\nname: leitor\ndescription: Leitor de apoio\nmodel: haiku\neffort: low\ntools: Read, Grep, Glob\n---\ncorpo\n');
+    writeFileSync(join(raiz, 'pipeline.json'), pipeline);
+    const limpo = { ...process.env, PIPELINE_ESFORCO: 'alto', ...ambienteDaMain(main), ...env };
+    for (const [k, v] of Object.entries(limpo)) if (v === undefined) delete limpo[k];
+    const r = spawnSyncDoNode(process.execPath, [join(raiz, 'hooks', 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8', env: limpo });
+    return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
+}
+const entradaNeto = (extra, tool_input = doNeto, par) => JSON.stringify({ ...JSON.parse(entradaDoHook(tool_input, par)), ...extra });
+
+test('o hook de ponta a ponta com neto: o subagente abre o leitor e nada mais; o chat principal segue pela checagem do par; o neto não abre outro', () => {
+  assert.deepEqual(hookNeto({ entrada: entradaNeto(DE_SUBAGENTE) }), { status: 0, saida: null }, 'o subagente abre o neto');
+  assert.deepEqual(hookNeto({ entrada: entradaNeto(DE_SUBAGENTE, doNeto, { effort: 'low' }) }), { status: 0, saida: null }, 'o par do chat não é de quem chama: não roda para o subagente');
+  assert.deepEqual(hookNeto({ entrada: entradaNeto({}) }), { status: 0, saida: null }, 'o chat principal abre o leitor como qualquer fixo');
+  assert.equal(hookNeto({ entrada: entradaNeto({}, doNeto, { effort: 'low' }) }).saida?.permissionDecision, 'deny', 'o chat principal em outro par nega');
+  const doNetoQueChama = hookNeto({ entrada: entradaNeto({ agent_id: 'a2', agent_type: 'leitor' }) });
+  assert.equal(doNetoQueChama.saida?.permissionDecision, 'deny');
+  assert.match(doNetoQueChama.saida.permissionDecisionReason, /o neto \(leitor\) não abre outro/);
+  for (const tool_input of [{ ...doNeto, subagent_type: 'qa' }, { ...doNeto, isolation: 'worktree' }, { ...doNeto, model: 'opus' }, { ...doNeto, subagent_type: 'general-purpose', model: 'sonnet', effort: 'low' }]) {
+    assert.equal(hookNeto({ entrada: entradaNeto(DE_SUBAGENTE, tool_input) }).saida?.permissionDecision, 'deny', JSON.stringify(tool_input));
+  }
+  assert.equal(hookNeto({ entrada: entradaNeto(DE_SUBAGENTE), env: { PIPELINE_ESFORCO: undefined, CLAUDE_PROJECT_DIR: tmpdir() } }).saida?.permissionDecision, 'deny', 'sem o esforço gravado o leitor não passa');
+});
+
+test('o hook de ponta a ponta: com o pipeline.json inválido a guarda nega todo mundo, o neto inclusive; sem a chave neto o subagente não abre nada', () => {
+  const real = JSON.parse(readFileSync(ARQUIVO, 'utf8'));
+  const invalidos = {
+    'neto que não existe': { ...comNeto(real), neto: 'fantasma' },
+    'neto com piso e teto': (() => { const j = comNeto(real); Object.assign(j.agentes.leitor, { piso: 'haiku:low', teto: 'haiku:low' }); return j; })(),
+    'neto com Bash': (() => { const j = comNeto(real); j.agentes.leitor.tools = 'Read, Grep, Glob, Bash'; return j; })(),
+    'neto com Agent': (() => { const j = comNeto(real); j.agentes.leitor.tools = 'Read, Agent'; return j; })(),
+  };
+  for (const [rotulo, json] of Object.entries(invalidos)) {
+    const subagente = hookNeto({ pipeline: JSON.stringify(json), main: JSON.stringify(json), entrada: entradaNeto(DE_SUBAGENTE) });
+    assert.equal(subagente.saida?.permissionDecision, 'deny', rotulo);
+    assert.match(subagente.saida.permissionDecisionReason, /pipeline\.json ilegível: neto/, rotulo);
+    assert.equal(hookNeto({ pipeline: JSON.stringify(json), main: JSON.stringify(json), entrada: entradaNeto({}) }).saida?.permissionDecision, 'deny', `${rotulo}: o chat principal também`);
+  }
+  const semNeto = hookNeto({ pipeline: JSON.stringify(real), entrada: entradaNeto(DE_SUBAGENTE, { subagent_type: 'leitor-docs', description: 'x' }) });
+  assert.equal(semNeto.saida?.permissionDecision, 'deny');
+  assert.match(semNeto.saida.permissionDecisionReason, /subagente não abre subagente.*\(D11\)/);
+});
+
+// ---------- o pipeline.json contra a main (D11) ----------
+
+const REAL_TEXTO = readFileSync(ARQUIVO, 'utf8');
+const doTexto = (texto) => papeisDeObjeto(JSON.parse(texto)).valor;
+const emTexto = (mexer) => { const j = JSON.parse(REAL_TEXTO); mexer(j); return JSON.stringify(j); };
+
+test('decidirContraAMain: igual passa; diferente em par, piso, teto, ferramentas ou neto pede a confirmação com o resumo; a tarefa não conta', () => {
+  const daMain = (texto) => () => ({ texto });
+  const p = doTexto(REAL_TEXTO);
+  assert.deepEqual(decidirContraAMain(p, daMain(REAL_TEXTO)), passa);
+  assert.deepEqual(decidirContraAMain(p, daMain(emTexto((j) => { j.agentes.qa.tarefa = 'outra coisa'; }))), passa, 'a tarefa é só texto');
+  assert.deepEqual(decidirContraAMain(p, daMain(emTexto((j) => { j.agentes.qa.tools = 'Glob, Bash, Grep, Read'; }))), passa, 'as ferramentas se comparam sem a ordem');
+  const dasFerramentas = decidirContraAMain(p, daMain(emTexto((j) => { j.agentes.qa.tools = 'Read, Grep, Glob'; })));
+  assert.equal(dasFerramentas.decisao, 'ask');
+  assert.match(dasFerramentas.motivo, /difere do da main \(qa: tools Read, Grep, Glob → Read, Grep, Glob, Bash\)/);
+  const varias = decidirContraAMain(comNeto(p), daMain(emTexto((j) => { j.agentes.qa.model = 'opus'; j.agentes.qa.effort = 'high'; j.agentes.qa.piso = 'opus:medium'; j.agentes.qa.teto = 'opus:high'; j.agentes.qa.tools = 'Read'; j.niveis.leve.effort = 'medium'; j.familias.opus = 'claude-opus-5-6'; j.comum.confirma = ['opus']; })));
+  assert.equal(varias.decisao, 'ask');
+  for (const trecho of ['qa: model opus → sonnet', 'qa: piso opus:medium → sonnet:medium', 'qa: teto opus:high → sonnet:high', 'qa: tools Read → Read, Grep, Glob, Bash', 'neto: (nenhum) → leitor', 'leitor: (nenhuma) → entra', 'nível leve: effort medium → low', 'familias.opus: claude-opus-5-6 → claude-opus-5-5', 'comum.confirma: opus → opus, fable']) {
+    assert.ok(varias.motivo.includes(trecho), `${trecho}\n${varias.motivo}`);
+  }
+  const daEscada = decidirContraAMain(p, daMain(emTexto((j) => { j.escada = ['haiku:low', 'sonnet:low', 'sonnet:medium', 'sonnet:high', 'opus:medium', 'opus:high', 'opus:xhigh', 'opus:max']; })));
+  assert.match(daEscada.motivo, /escada: haiku:low > .*opus:xhigh → haiku:low > .*opus:xhigh > opus:max|escada: .* → /);
+  const entradaSai = decidirContraAMain(p, daMain(emTexto((j) => { j.agentes['leitor-docs2'] = { ...j.agentes['leitor-docs'] }; })));
+  assert.match(entradaSai.motivo, /leitor-docs2: sai → \(nenhuma\)/);
+});
+
+test('decidirContraAMain: o git que falha, a ref ausente e o da main inválido pedem a confirmação, nunca passam calados', () => {
+  const p = doTexto(REAL_TEXTO);
+  const pede = (r, trecho) => { assert.equal(r.decisao, 'ask'); assert.match(r.motivo, trecho); };
+  pede(decidirContraAMain(p, () => ({ erro: 'o git não rodou (ENOENT)' })), /não deu para comparar o pipeline\.json com o da main \(o git não rodou \(ENOENT\)\)/);
+  pede(decidirContraAMain(p, () => ({ texto: '{ quebrado' })), /da main não é JSON válido/);
+  pede(decidirContraAMain(p, () => ({ texto: '[]' })), /da main é inválido/);
+  pede(decidirContraAMain(p, () => ({ texto: JSON.stringify({ agentes: {} }) })), /da main é inválido \(.*\)/);
+  const muitas = emTexto((j) => { for (const e of Object.values(j.agentes)) e.tools = `${e.tools}, WebFetch`; j.comum = { esforcos: ['low'], passa: ['sonnet', 'haiku'], confirma: ['opus'] }; j.familias.opus = 'claude-opus-5-6'; j.familias.haiku = 'claude-haiku-5-6'; j.familias.sonnet = 'claude-sonnet-5-6'; });
+  assert.match(decidirContraAMain(p, () => ({ texto: muitas })).motivo, /e mais \d+\)/, 'o resumo tem limite');
+});
+
+test('lerPipelineDaMain: roda o git sem shell, na raiz, com timeout; tenta a origin/main se a main não existe; o git que não roda não tenta de novo', () => {
+  const chamadas = [];
+  const rodar = (respostas) => (comando, args, opcoes) => { chamadas.push({ comando, args, opcoes }); return respostas.shift(); };
+  assert.deepEqual(lerPipelineDaMain('/raiz', rodar([{ status: 0, stdout: '{}' }])), { texto: '{}' });
+  assert.equal(chamadas[0].comando, 'git');
+  assert.deepEqual(chamadas[0].args, ['show', 'main:.claude/pipeline.json']);
+  assert.equal(chamadas[0].opcoes.cwd, '/raiz');
+  assert.equal(chamadas[0].opcoes.shell, false);
+  assert.ok(chamadas[0].opcoes.timeout > 0 && chamadas[0].opcoes.timeout <= 10000);
+  chamadas.length = 0;
+  assert.deepEqual(lerPipelineDaMain('/raiz', rodar([{ status: 128, stderr: 'fatal: invalid object name main\n', stdout: '' }, { status: 0, stdout: '{"a":1}' }])), { texto: '{"a":1}' });
+  assert.deepEqual(chamadas.map((c) => c.args[1]), ['main:.claude/pipeline.json', 'origin/main:.claude/pipeline.json']);
+  const duas = lerPipelineDaMain('/raiz', rodar([{ status: 128, stderr: 'fatal: a\n' }, { status: 128, stderr: 'fatal: b\n' }]));
+  assert.match(duas.erro, /main e origin\/main não têm o \.claude\/pipeline\.json \(main: fatal: a; origin\/main: fatal: b\)/);
+  chamadas.length = 0;
+  const semGit = lerPipelineDaMain('/raiz', rodar([{ error: Object.assign(new Error('x'), { code: 'ENOENT' }) }]));
+  assert.match(semGit.erro, /o git não rodou \(ENOENT\)/);
+  assert.equal(chamadas.length, 1);
+  assert.match(lerPipelineDaMain('/raiz', rodar([{ error: Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }) }])).erro, /ETIMEDOUT/);
+});
+
+/** Um projeto git temporário com o hook em `.claude/hooks`, os agentes e o pipeline.json da árvore; o branch `main` guarda `naMain`. Sem GIT_DIR: o git é o do projeto. */
+function projetoGit(naMain, naArvore = naMain) {
+  const raiz = mkdtempSync(join(tmpdir(), 'guarda-agentes-git-'));
+  const env = { ...process.env, PIPELINE_ESFORCO: 'alto' };
+  for (const nome of Object.keys(env)) if (/^GIT_/.test(nome)) delete env[nome];
+  const git = (...args) => {
+    const r = spawnSyncDoNode('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd: raiz, encoding: 'utf8', env });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  };
+  copiarHooks(raiz, naMain);
+  git('init', '-q', '-b', 'main');
+  git('add', '.claude/pipeline.json');
+  git('commit', '-q', '-m', 'main');
+  writeFileSync(join(raiz, '.claude', 'pipeline.json'), naArvore);
+  cpSync(AGENTES, join(raiz, '.claude', 'agents'), { recursive: true });
+  const rodar = (entrada = entradaDoHook({ subagent_type: 'leitor-docs', description: 'x' }), envExtra = {}) => {
+    const r = spawnSyncDoNode(process.execPath, [join(raiz, '.claude', 'hooks', 'guarda-agentes.mjs')], { input: entrada, encoding: 'utf8', env: { ...env, ...envExtra } });
+    return { status: r.status, saida: r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput };
+  };
+  return { raiz, git, rodar, limpar: () => rmSync(raiz, { recursive: true, force: true }) };
+}
+
+test('com um repositório git de verdade: main com um pipeline.json e árvore com outro pede a confirmação; igual passa; o deny vence', () => {
+  const projeto = projetoGit(REAL_TEXTO, emTexto((j) => { j.agentes.qa.tools = 'Read, Grep, Glob'; }));
+  try {
+    const r = projeto.rodar(entradaDoHook({ subagent_type: 'revisor-seguranca', description: 'x' }));
+    assert.equal(r.saida?.permissionDecision, 'ask');
+    assert.match(r.saida.permissionDecisionReason, /o pipeline\.json desta árvore difere do da main \(qa: tools Read, Grep, Glob, Bash → Read, Grep, Glob\)/);
+    assert.equal(projeto.rodar(entradaDoHook({ subagent_type: 'fork', prompt: 'x' })).saida?.permissionDecision, 'deny', 'o deny vence o ask');
+    assert.match(projeto.rodar(entradaDoHook({ subagent_type: 'fork', prompt: 'x' })).saida.permissionDecisionReason, /fork herda o modelo/);
+    assert.equal(projeto.rodar(entradaNeto(DE_SUBAGENTE)).saida?.permissionDecision, 'deny', 'o subagente sem neto nega, e o deny vence');
+    projeto.git('add', '.claude/pipeline.json');
+    projeto.git('commit', '-q', '-m', 'muda');
+    assert.deepEqual(projeto.rodar(), { status: 0, saida: null }, 'depois de a main ter o mesmo texto passa');
+    projeto.git('branch', '-m', 'main', 'trabalho');
+    const semRef = projeto.rodar();
+    assert.equal(semRef.saida?.permissionDecision, 'ask', 'sem a ref main e sem origin/main');
+    assert.match(semRef.saida.permissionDecisionReason, /não deu para comparar o pipeline\.json com o da main \(main e origin\/main não têm/);
+    projeto.git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    assert.deepEqual(projeto.rodar(), { status: 0, saida: null }, 'sem a main, a origin/main vale');
+  } finally {
+    projeto.limpar();
+  }
+});
+
+test('com um repositório git de verdade: o git que não roda, a main com arquivo inválido ou sem o arquivo pedem a confirmação', () => {
+  const projeto = projetoGit(REAL_TEXTO);
+  try {
+    assert.deepEqual(projeto.rodar(), { status: 0, saida: null });
+    const semGit = projeto.rodar(undefined, { PATH: join(projeto.raiz, 'sem-git') });
+    assert.equal(semGit.saida?.permissionDecision, 'ask');
+    assert.match(semGit.saida.permissionDecisionReason, /o git não rodou/);
+    projeto.git('rm', '-q', '--cached', '.claude/pipeline.json');
+    projeto.git('commit', '-q', '-m', 'sem');
+    assert.match(projeto.rodar().saida.permissionDecisionReason, /main e origin\/main não têm o \.claude\/pipeline\.json/);
+    writeFileSync(join(projeto.raiz, '.claude', 'pipeline.json'), '{ quebrado');
+    projeto.git('add', '-f', '.claude/pipeline.json');
+    projeto.git('commit', '-q', '-m', 'quebrado');
+    writeFileSync(join(projeto.raiz, '.claude', 'pipeline.json'), REAL_TEXTO);
+    const invalido = projeto.rodar();
+    assert.equal(invalido.saida?.permissionDecision, 'ask');
+    assert.match(invalido.saida.permissionDecisionReason, /da main não é JSON válido/);
+  } finally {
+    projeto.limpar();
   }
 });

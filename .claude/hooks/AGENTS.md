@@ -3,7 +3,7 @@
 Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/settings.json` (que também abre toda sessão como o
               agente `orquestrador`, com `model: opus` e `effortLevel: xhigh`, D3, e leva o `env` gerado, D11), e os do git, em `git/`.
               A configuração do projeto mora num lugar só, `.claude/pipeline.json`, lido por `config.mjs` e, nas chaves de par
-              (`familias`, `escada`, `comum`, `agentes`, `niveis`), só pelo `papeis.mjs` (D11).
+              (`familias`, `escada`, `comum`, `agentes`, `niveis`) e na chave opcional `neto`, só pelo `papeis.mjs` (D11).
               - `.claude/pipeline.json` (contrato):
                 - `repositorio`: o `dono/repo` do GitHub (sem URL). Enquanto for o marcador `<dono>/<repo>`, faltar ou
                   for inválido, ou com o arquivo ilegível, a `guarda-git` e o `confere-push` negam o push, o `remote
@@ -28,6 +28,9 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   com os dois, o par anda só entre eles, no mesmo modelo (hoje o `revisor-arquitetura`, o `qa` e o `revisor-tela`; os valores estão no arquivo, e este documento não os repete).
                   É a fonte do modelo e do esforço (D2): a `guarda-agentes.mjs` lê daqui e um teste confere que o cabeçalho de cada
                   `.claude/agents/<nome>.md` diz o mesmo.
+                - `neto` (D11, opcional): o nome de um agente de `agentes`, o único que um subagente pode abrir (ver `guarda-agentes.mjs`). O arquivo de hoje não tem a chave (o subagente segue sem abrir subagente); o orquestrador a
+                  liga depois, com o agente `leitor` (`haiku low`, `Read, Grep, Glob`). O `papeis.mjs` recusa (falha fechado) a chave cujo agente não existe em `agentes`, não é fixo (tem `piso` e `teto`), é o `desenvolvedor` ou tem em `tools`
+                  algo fora de `Read, Grep, Glob` (nem `Agent`, nem `Agent(<nome>)`, nem `Bash`). Nas `tools` dos outros agentes vale `Agent` e a forma `Agent(<nome>)` (ex.: `Agent(leitor)`); a regra da linha única continua.
                 - `niveis`: os níveis dos subagentes comuns (`leve`, `medio`, `codigo-seguranca`, `revisao-ponytail`,
                   `orquestracao` (obrigatório: é o par do chat principal), `forte`, `autoanalise`), com `model`, `effort`, `tarefa`, `piso` e `teto` opcionais como nos agentes
                   (fixos: `leve`, `autoanalise`, `orquestracao` e `forte`; com faixa: `medio`, `codigo-seguranca` e `revisao-ponytail`, e o `teto` dos de código é de `sonnet`: o código nunca passa de `sonnet`,
@@ -69,20 +72,22 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 revisores, caminhos e conteúdo mínimos de cada gatilho, `tela` inclusive, o `remocoes` e o `todo_arquivo` obrigatórios e os
                 `exemplos` de caminho contra os quais um `ignorar` é conferido), `PISO_REVISAO` (o mínimo de `sempre`, vazio desde a D5, `comportamento` e `comportamento_caminhos`) e `PISO_GRANDE` (D5: os revisores e o gatilho `banco` que a regra `grande` tem de manter); um valor
                 abaixo do piso, um gatilho a menos, o `grande` ausente ou um `layout` que não é booleano é erro de `lerRevisao`. Quem bloqueia trata o erro como recusa; o `portao.mjs` só avisa. Mora aqui também a **lista única do que é código** (`EXTENSOES_DE_CODIGO` e `ehArquivoDeCodigo`: `ts tsx mts cts js jsx mjs cjs sql json py go rs rb java kt cs php vue svelte css scss html sh yml yaml toml prisma`, menos o lockfile: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`), usada pelo `marca-alterado`, pelo `confere-docs`, pelo `confere-lgpd` (onde as regras de código valem) e pelo `escolhe-revisores`, e o `legadoAteDoTexto` / `lerLegadoAte` (o `lgpd.legadoAte` do `pipeline.json`: sha de 7 a 40 hexadecimais ou ausente).
-              - `papeis.mjs` (D11): não é hook; é o **único** módulo que lê do `pipeline.json` as chaves `familias`, `escada`, `comum`, `agentes` e `niveis`
-                (a `neto` fica para a rodada 3) e o único que ordena, compara, sobe ou desce um par. Importa `lerObjeto`, `ok` e `falha` do `config.mjs`
+              - `papeis.mjs` (D11): não é hook; é o **único** módulo que lê do `pipeline.json` as chaves `familias`, `escada`, `comum`, `agentes`, `niveis` e `neto`
+                e o único que ordena, compara, sobe ou desce um par. Importa `lerObjeto`, `ok` e `falha` do `config.mjs`
                 (o `config.mjs` não importa o `papeis.mjs`). `lerPapeis(arquivo)` devolve `{ valor, erro }` e `papeisDeObjeto(dados)`, pura, faz a validação, **falhando
                 fechado** (quem chama nega, como antes): família só `opus`, `sonnet` ou `haiku` e a versão em `familias` no formato `claude-<família>-…`; esforço de `low` a `max`;
                 a escada sem repetição, só com pares válidos, cada família contígua e o esforço subindo; todo par de entrada na escada; `piso` e `teto` juntos ou nenhum,
                 na escada, no **mesmo modelo** da entrada (D3) e com `piso ≤ par ≤ teto`; `tools` de uma linha só nos agentes; `comum` com os três campos; o nome aposentado
-                (`APOSENTADOS`) não volta a `agentes`; `agentes.desenvolvedor` e `niveis.orquestracao` presentes. O valor é `{ familias, escada, comum, agentes, niveis }`,
+                (`APOSENTADOS`) não volta a `agentes`; `agentes.desenvolvedor` e `niveis.orquestracao` presentes; o `neto`, se vier, é um agente fixo só com `Read`, `Grep` e `Glob` (`TOOLS_DO_NETO`), que não é o `desenvolvedor`. O valor é `{ familias, escada, comum, agentes, niveis }` mais `neto` quando a chave existe,
                 com as entradas como estão no arquivo. Consultas puras: `par(e)` (`"modelo:esforço"`), `papel(p, secao, nome)`, `ehFixo(e)` (sem `piso` e `teto`),
                 `faixa(parTexto, e)` (`abaixo`, `dentro`, `acima` do `piso` ao `teto`, ou `fora` se for de outro modelo; aceita par fora da escada, como `sonnet:xhigh`),
                 `esforcosDe(e)` e `esforcosNegados(lista)` (para as mensagens), `degrau(p, { secao, chave, entrada }, ±1)` (um degrau na escada, preso ao piso e ao teto, no mesmo modelo;
-                a entrada fixa não anda; devolve `{ de, para }` ou `{ erro }`), `orquestrador(p)` (`{ model, effort }` de `niveis.orquestracao`), `versoes(p)`, `comum(p)`,
+                a entrada fixa não anda; devolve `{ de, para }` ou `{ erro }`), `orquestrador(p)` (`{ model, effort }` de `niveis.orquestracao`), `neto(p)` (o nome ou `undefined`), `versoes(p)`, `comum(p)`,
+                `mudancas(antes, depois)` (o que mudou entre dois papéis, em frases curtas como `<agente>: teto <par antes> → <par depois>` e `neto: (nenhum) → leitor`: `familias`, `escada`, `comum`, `neto` e, em cada entrada de `agentes` e `niveis`,
+                `model`, `effort`, `piso`, `teto` e `tools` sem a ordem; a `tarefa` não conta; entrada que entra ou sai também; a confirmação contra a `main` da `guarda-agentes` a usa),
                 `agentesFixos(p)` (os agentes menos o `desenvolvedor`, que tem as regras da D8 e não é alvo do ajuste) e `nomesDeAgentes(p)`; mais `lerAgentes(arquivo)` e `lerNiveis(arquivo)`,
                 as seções soltas (`{ valor, erro }`) para quem só precisa de uma (`escolhe-revisores`, `ajusta-pipeline`). Testes em `papeis.test.mjs`, que traz também o **teste de fronteira**: falha se um `.mjs`
-                desta pasta fora do `papeis.mjs` define `FIXOS`, `PISOS`, `TETO`, `ESCADA`, `MODELOS` ou `NIVEIS_DE_CODIGO`, lê `.agentes`, `.niveis`, `.escada`, `.familias` ou `.comum` de um objeto
+                desta pasta fora do `papeis.mjs` define `FIXOS`, `PISOS`, `TETO`, `ESCADA`, `MODELOS` ou `NIVEIS_DE_CODIGO`, lê `.agentes`, `.niveis`, `.escada`, `.familias`, `.comum` ou `.neto` de um objeto
                 vindo de `JSON.parse` (ou chamado `pipeline` ou `configuracao`), desestrutura essas chaves dele ou importa o `lerObjeto`. É uma heurística por regex, sem análise do código: não vê o apelido
                 (`const x = dados; x.agentes`), a chave calculada (`dados[chave]`) nem o objeto passado de uma função a outra, e uma string com `TETO = ` dá falso positivo; por isso o `lerObjeto`, que dá
                 o objeto cru, é proibido fora do `config.mjs` e do `papeis.mjs`.
@@ -122,8 +127,11 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   `Out-File`, `Set-Content`, `Add-Content`, mesmo começando por `echo` ou `cat`, e mesmo quando só o corpo do heredoc redirecionado cita o nome (`>&2`, `2>&1` e `> /dev/null` não contam). Na unidade que cita um nome, todo segmento à direita do 1º também tem de só ler (`echo NOME | python` e `echo NOME | Tee-Object f` negam; `find ... | xargs grep NOME` e `grep NOME f | head` passam).
                   Fica de fora da conferência só o texto entre aspas logo depois do `-m` ou `--message` de um `git commit` que é o 1º programa do segmento (sem `$(`, crase nem `` na mensagem; a forma
                   `$(cat <<'EOF' ... EOF)` também vale, com só espaço entre o `'EOF'` e a quebra de linha); o resto da linha continua conferido, e o `eval`, `sh` e afins se procuram no comando sem essa máscara. No push, o `AMBIENTE` (`GIT_*`, `GH_*`) vale também com `+=`.
-                - **O subagente e `.claude/agents/` (D8.7).** Com `agent_id` na entrada do hook (o `ehSubagente` da `guarda-pasta-agentes`, o mesmo critério da `guarda-agentes`), a mesma regra invertida vale
-                  também para toda menção a `.claude/agents` (sem caixa, com `./`, `//` ou `\` no meio): fora de um segmento que só lê, nega com "subagente não mexe em `.claude/agents/` pelo shell (D8)". Com `.claude`
+                - **O subagente e `.claude/agents/` (D8.7), mais o `pipeline.json`, os `settings*.json` e `.claude/estado/` (D11).** Com `agent_id` na entrada do hook (o `ehSubagente` da `guarda-pasta-agentes`, o mesmo critério da `guarda-agentes`), a mesma regra invertida vale
+                  também para toda menção a `.claude/agents` (sem caixa, com `./`, `//` ou `\` no meio): fora de um segmento que só lê, nega com "subagente não mexe em `.claude/agents/`, `.claude/pipeline.json`, `.claude/settings*.json` nem `.claude/estado/` pelo shell (D8, D11)".
+                  A D11 soma à mesma regra `.claude/pipeline.json`, `.claude/settings*.json` e `.claude/estado/` (`NOME_DE_CONFIG`, com o nome solto só onde o comando também fala de `.claude`, `CONFIG_SOLTO`): o subagente os **lê** (`cat`, `grep`, `git show main:...`),
+                  e `cp`, `sed -i`, `git add`, `echo alto > .claude/estado/esforco`, `rm` e o heredoc negam; vale **também no próprio worktree** (a regra é léxica e não sabe onde o comando roda). **O limite é o mesmo, léxico** (variável, glob, aspas partidas,
+                  link feito pelo shell, `git apply`, um script escrito antes passam): a rede de verdade para o `pipeline.json` é a confirmação contra a `main` da `guarda-agentes`, não esta. Com `.claude`
                   em outro ponto do comando (`cd .claude`, `git -C .claude`), o `agents/` solto também conta; `apps/agents/` não. É a mesma máquina do segmento que só lê (`analisar`, `avaliarEntrada` e `decisao`
                   levam `agente` como último parâmetro), então `cat`, `grep`, `head`, `git show main:.claude/agents/x.md` passam, e `ls`, `cp`, `sed -i`, `git add` e `git checkout -- .claude/agents` negam. Sem `agent_id`
                   (o orquestrador), nada muda. Testes em `guarda-git.agentes.test.mjs`. Também contam como menção a `.claude/agents` as três opções do `ajusta-pipeline.mjs` que gravam o agente sem citar a pasta
@@ -151,17 +159,19 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 `guarda-git-arquivos.test.mjs` e `settings.test.mjs`. **O link simbólico:** além do caminho como está escrito, confere o caminho de verdade (o `realpath` do ancestral mais próximo que existe, mais o resto;
                 o link solto se segue pelo `readlink`; o ciclo de links nega), então `lnk/config` com `lnk` apontando para a pasta do git nega. E o hook roda mesmo quando o script é chamado por um caminho com link
                 (no macOS, `/var` é link para `/private/var`): a comparação do `process.argv[1]` com o `import.meta.url` usa o `realpathSync` dos dois lados, como a `guarda-agentes` (a comparação crua deixava o hook mudo, e mudo é "passou").
-              - `guarda-pasta-agentes.mjs`: PreToolUse em Edit, Write, MultiEdit e NotebookEdit (D8.7), ao lado da `guarda-git-arquivos`. O subagente (a entrada traz `agent_id`, texto não vazio) não edita `.claude/agents/`:
-                `motivoDaEntrada(entrada)` nega com "subagente não edita `.claude/agents/` (D8)" o caminho que tem um segmento `.claude` seguido de `agents`, sem caixa, em qualquer profundidade (também em
-                `.claude/worktrees/*/`), lido a partir do `cwd` da entrada, com `..` resolvido, `\` virado `/` e pelo nome de cada pasta (`.claude.`, `.claude ` e `CLAUDE~1` também). Com `agent_id` e sem caminho
-                legível, nega; sem `agent_id` (o orquestrador, que edita os agentes), não age, **menos com a entrada que não é JSON, que nega mesmo sem `agent_id`** (sem ler a entrada não se sabe quem é). Sem modo: o `PIPELINE_GUARDA_GIT`
-                não a desliga. `ehSubagente` é importado pela `guarda-git` (dentro de um `try`). Ligada no `.claude/settings.json` com `onFailure: "block"`; testes em `guarda-pasta-agentes.test.mjs` e `settings.test.mjs`.
+              - `guarda-pasta-agentes.mjs`: PreToolUse em Edit, Write, MultiEdit e NotebookEdit (D8.7, ampliada na D11), ao lado da `guarda-git-arquivos`. O subagente (a entrada traz `agent_id`, texto não vazio) **não edita `.claude/` fora do próprio worktree**:
+                `motivoDaEntrada(entrada)` nega com "subagente não edita `.claude/` fora do próprio worktree (D11)" (1) `agents/`, `pipeline.json` e `settings*.json` (o `.claude/settings.json` e o local) logo depois de um segmento `.claude`, em qualquer profundidade,
+                **também dentro de `.claude/worktrees/*/`** (o próprio worktree não os edita); (2) qualquer outro caminho que tenha um segmento `.claude` (hooks, skills, commands, estado...) e **não esteja no worktree que contém o `cwd` da entrada**
+                (o `.claude/worktrees/<x>` mais fundo do `cwd`; o `desenvolvedor` edita `.claude/worktrees/<x>/.claude/hooks/...` do próprio worktree, não o `.claude/hooks/` do checkout vivo nem o de outro worktree, nem o de um `<x>-2`; `cwd` fora de worktree: tudo sob `.claude/` nega).
+                Sem diferença de caixa, lido a partir do `cwd` da entrada, com `..` resolvido, `\` virado `/` e pelo nome de cada pasta (`.claude.`, `.claude ` e `CLAUDE~1` também; `PIPELI~1.JSO` e `SETTIN~1.JSO`, os nomes curtos do Windows; `pipeline.json::$DATA`, o fluxo do NTFS). Com `agent_id` e sem caminho
+                legível, nega; sem `agent_id` (o orquestrador, que edita tudo isso), não age, **menos com a entrada que não é JSON, que nega mesmo sem `agent_id`** (sem ler a entrada não se sabe quem é). Sem modo: o `PIPELINE_GUARDA_GIT`
+                não a desliga. `ehSubagente` é importado pela `guarda-git` (dentro de um `try`). Ligada no `.claude/settings.json` com `onFailure: "block"`; testes em `guarda-pasta-agentes.test.mjs` (caminhos de uma raiz inventada, sem depender de onde rodam) e `settings.test.mjs`.
                 **O link simbólico:** confere o caminho como está escrito e o de verdade (o `realpath` do ancestral mais próximo que existe, mais o resto, `caminhoReal`; o link solto se segue pelo `readlink`; o ciclo nega),
-                então `lnk/agents/x.md` com `lnk` apontando para `.claude` nega no `Edit` e no `Write`. O hook também age quando o script é chamado por um caminho com link (o `/var` do macOS): a comparação do
+                então `lnk/agents/x.md` com `lnk` apontando para `.claude` nega no `Edit` e no `Write`, e o link de dentro do worktree para o `.claude` do checkout vivo também (o caminho de verdade fica fora do worktree). O hook também age quando o script é chamado por um caminho com link (o `/var` do macOS): a comparação do
                 `process.argv[1]` com o `import.meta.url` usa o `realpathSync` dos dois lados (`mesmoArquivo`, como a `guarda-agentes`).
                 **O que a trava não segura (D8.7), por desenho:**
                 - **A trava do `Bash` é léxica.** Passam as aspas partidas (`a""gents`), a variável (`$D/agents`), o glob (`.cl*/agents`), o link simbólico feito e usado pelo shell, `git apply`, `git checkout <ref> -- .claude`
-                  e `git stash pop`.
+                  e `git stash pop`. Na D11 ela cobre também o `pipeline.json`, os `settings*.json` e `.claude/estado/`, com o mesmo limite; para o `pipeline.json` a rede é a confirmação contra a `main` (`guarda-agentes`).
                 - **A cópia dos hooks do git no worktree do agente roda do próprio worktree** (o `core.hooksPath` é relativo), e o agente pode editá-la.
                 - **A rede:** toda mudança em `.claude/hooks/` aciona o `config_pipeline` (revisor), e o orquestrador confere a lista de arquivos de cada branch antes do merge.
               - `desenvolvedor.mjs`: não é hook; módulo puro (só `node:*`, não lê arquivo) do agente de código `.claude/agents/desenvolvedor.md` (D8).
@@ -190,13 +200,14 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
               - `guarda-agentes.mjs`: PreToolUse na ferramenta `Agent`. A função pura `decidirAgente(entrada,
                 lerCabecalho, p, lerTamanho, lerTexto, esforco, lerFontes)` devolve `deny`, `ask` ou `null`; `lerCabecalho(tipo)` dá o `name`, o `model`, o
                 `effort` e o `tools` do frontmatter de `.claude/agents/<tipo>.md` (nada se o arquivo não existe) e um
-                `problema` quando o cabeçalho repete `name`, `model`, `effort` ou `tools` ou quando a pasta
+                `problema` quando o cabeçalho repete uma chave, tem uma chave fora da **lista fechada** (D11: só `name`, `description`, `model`, `effort`, `tools` e, no agente `desenvolvedor`, `omitClaudeMd`; `mcpServers`, `hooks`, `permissionMode`, `memory`, `skills`...
+                nega o agente, com o nome da chave; vale para o arquivo de **qualquer** agente da pasta, o `orquestrador` inclusive, que ninguém chama como subagente; e toda linha do cabeçalho tem de ser `chave: valor`, para o YAML aninhado ou a chave entre aspas não a esconderem) ou quando a pasta
                 `.claude/agents`, com as subpastas, tem um `.md` fora dos agentes do `pipeline.json` (`nomesDeAgentes`), do `orquestrador` e do `desenvolvedor`, ou um 2º arquivo
                 com o mesmo `name:` do fixo. `p` são os papéis do `.claude/pipeline.json` (`papeis.lerPapeis`; padrão: os do arquivo do projeto). Não há mais `TETO` no código (D11):
                 o modelo, o esforço, as ferramentas, o `piso` e o `teto` de cada agente moram no `pipeline.json`, lidos pelo `papeis.mjs`. Uma entrada com o par fora do `piso` e do `teto`
                 (`faixa` diferente de `dentro`; a leitura já a recusa, então só uma entrada montada na mão chega aqui) pede a confirmação do usuário (`ask`). **Efeito mudado na rodada 1 da D11:**
                 as ferramentas do `pipeline.json` não são mais conferidas contra uma lista do código (só o cabeçalho tem de repetir o JSON); a trava contra o JSON afrouxado vem na rodada seguinte
-                (a confirmação contra o `pipeline.json` da `main`). Um tipo que tem arquivo em `.claude/agents` mas não tem entrada em `agentes` nega com "falta em agentes", sem cair na chamada comum.
+                (a confirmação contra o `pipeline.json` da `main`, abaixo). Um tipo que tem arquivo em `.claude/agents` mas não tem entrada em `agentes` nega com "falta em agentes", sem cair na chamada comum.
                 - `pipeline.json` ausente, ilegível, com marcas de conflito, sem `agentes`, sem `escada`, sem o `desenvolvedor` ou a `orquestracao`, ou com a estrutura quebrada (par fora do piso ou do teto, par fora da escada...): `deny`
                   em JSON ("pipeline.json ilegível: ..."), nunca saída com erro sem decisão. O `papeis.mjs` ou o `config.mjs` quebrado (conflito de
                   merge) também: o `papeis.mjs` é importado dentro de um `try` e a guarda nega com "papeis.mjs ou config.mjs ilegível".
@@ -232,12 +243,20 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                   no frontmatter da forma `name: valor`, escapam; o modelo efetivo é conferido por "contém"
                   (`claude-opus` passa como `opus`); o tipo com caractere fora de `[\w-]` não lê cabeçalho nenhum e cai
                   no ramo dos demais tipos, que exige `model` e `effort` na chamada.
-                - **Só o orquestrador delega, e em `opus xhigh`, sempre (D3).** A entrada do hook de um subagente traz
-                  `agent_id`; o `agent_type` também vem no chat aberto por `--agent` ou pelo `.claude/settings.json`, então
-                  não separa os dois. `decidirChamador` nega quando o `agent_id` é texto não vazio, com qualquer
-                  `agent_type` ("subagente não abre subagente: só o chat principal, o orquestrador, delega (D3)"), sem
-                  rodar a checagem do par; sem `agent_id` (ausente, vazio, `null`, número), com qualquer `agent_type`,
-                  segue para ela. Para o chat principal, `decidirOrquestrador(par, p)` compara com o `niveis.orquestracao` do
+                - **Chat principal e neto (D11).** Chat principal é **só a chamada sem `agent_id` e com `agent_type` ausente ou `orquestrador`** (`ehChatPrincipal`); toda outra chamada de `Agent` é de subagente (valor que não é texto, como
+                  `agent_id: 7`, conta como dado: na dúvida é subagente). O `principal` lê os papéis **antes** de qualquer decisão: com o `pipeline.json` inválido nega todo mundo, o neto inclusive. `decidirChamador(entrada, dados, p, lerCabecalho, lerTamanho, esforco)`
+                  devolve `null` para o chat principal (segue para o `decidirOrquestrador` e o `decidirAgente`) e, para o subagente: **sem `neto(p)`** nega com "subagente não abre subagente: só o chat principal, o orquestrador, delega (D11)"
+                  (a mensagem de hoje, que o arquivo atual, sem `neto`, continua dando); quem chama **sendo** o neto (`agent_type` igual a ele) nega ("o neto não abre outro agente: um nível só"); passa só com `subagent_type` igual ao neto
+                  (sem mudar a caixa), **sem `isolation`**, `model` ausente ou da família da entrada dele e `effort` ausente ou igual ao dela; depois valem o `decidirFixo` (o cabeçalho contra o JSON), o `decidirTeto` (50 mil tokens) e o
+                  `decidirEsforcoPipeline` (o neto respeita o esforço gravado: sem `.claude/estado/esforco` só o `leitor-docs` passa, como hoje). **Não** roda o `decidirOrquestrador`: o par do chat principal não é de quem chama.
+                  `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` (no `env` do `.claude/settings.json`) é o que impede o neto de abrir outro; a guarda é a 2ª trava.
+                - **O pipeline.json contra a `main` (D11).** A cada chamada de `Agent` (chat ou subagente) que não seja um `deny`, `decidirContraAMain(p)` compara os papéis lidos da árvore com os de `git show main:.claude/pipeline.json`
+                  (`lerPipelineDaMain`: o git roda com `cwd` na raiz do projeto, sem shell, com timeout de 5 s; se a ref `main` não existe tenta `origin/main`), com `papeisDeObjeto` nos dois e `mudancas` (par, piso, teto, `tools`, `neto`, `familias`, `escada`, `comum`; a `tarefa` não conta).
+                  Diferente: `ask` com o resumo ("o pipeline.json desta árvore difere do da main (<agente>: teto <par antes> → <par depois>; neto: (nenhum) → leitor); confirme", com no máximo 12 mudanças); o `deny` das outras regras vence (`juntarDecisoes`). **Nunca passa calado:** o git que não roda
+                  ou estoura o tempo, a ref ausente nas duas, o JSON da `main` quebrado ou inválido (ex.: a `main` ainda no formato de antes da D11) também dão `ask`, dizendo isso. É a rede contra o `pipeline.json` afrouxado, que o subagente não edita (`guarda-pasta-agentes`, `guarda-git`).
+                  **Nos testes** a comparação lê o git do ambiente: o hook de ponta a ponta roda com um `GIT_DIR` cujo `main` tem o arquivo igual ao da árvore (`ambienteDaMain` do `teste-apoio.mjs`), e o `guarda-agentes.test.mjs` traz também testes com um repositório git de verdade
+                  (`main` com um arquivo e a árvore com outro, sem a ref, só com a `origin/main`, sem o git no `PATH`). Quem controla o ambiente do hook (`GIT_DIR`) controla a referência: o ambiente vem do Claude Code, não do shell do agente.
+                - **O par do chat principal (D3).** Para ele, `decidirOrquestrador(par, p)` compara com o `niveis.orquestracao` do
                   `pipeline.json`, por `orquestrador(p)` (o par não se repete aqui): esforço conhecido e diferente nega com `/effort xhigh` na
                   mensagem; modelo conhecido sem `opus` nega com `/model opus` (os dois erros vêm numa mensagem só); modelo
                   ou esforço que não deu para ler pede a confirmação ("confirme que o chat está em opus xhigh, D3").
@@ -305,7 +324,12 @@ Faz:          os hooks do pipeline: os do Claude Code, ligados em `.claude/setti
                 log, erro e URL, `select *` em tabela de pessoas, coluna pessoal e dado sensível no banco, SQL
                 concatenado, dado pessoal para IA, analytics, webhook e HTTP de fora, consentimento marcado,
                 `localStorage`, cookie, geolocalização e cache sem prazo.
-              - `git/pre-commit`: roda o `confere-ramo`, o `confere-lgpd --indice`, recusa o commit num worktree de agente (o topo do repositório, `git rev-parse --show-toplevel` absoluto e resolvido, dentro de um segmento `.claude/worktrees/`, sem caixa, o mesmo critério da `guarda-git`; o que o git não diz também recusa; o checkout do orquestrador, mesmo sendo um worktree ligado, commita) que tem o
+              - `confere-esforco.mjs`: hook do `git/pre-commit` (depois do `confere-ramo`, antes do `confere-lgpd`), D11: **o esforço `rapido` não muda o pipeline.** Com o esforço em `rapido` (`PIPELINE_ESFORCO`, que vence, ou `.claude/estado/esforco`,
+                lidos por `lerEsforcoDoEstado` da `guarda-agentes` em `CLAUDE_PROJECT_DIR`, na pasta do commit e no **checkout principal** do repositório, o pai do `git rev-parse --git-common-dir`: o worktree do agente não tem `.claude/estado/`; `rapido` em qualquer uma dessas
+                raízes vale) e algum arquivo do índice (`git diff --cached --no-renames --name-only -z`, então o apagado e o renomeado contam) casando um caminho do gatilho `config_pipeline` (`PISO_GATILHOS.config_pipeline.caminhos` do `config.mjs` mais os do gatilho no `pipeline.json`,
+                `caminhosDoConfigPipeline`), o commit é recusado: "o esforço rapido não muda o pipeline: grave medio ou alto" (`motivoDoRapido`, `conferir`). Sem esforço gravado, em `medio`, `alto` ou valor inválido, não faz nada; com o `rapido` e o git que não lista o índice, recusa (falha fechado).
+                Não olha o conteúdo: o commit só da parte do projeto do `.claude/agents/desenvolvedor.md` (que a D8.8 tira do `config_pipeline` no `escolhe-revisores`) também é recusado no `rapido`. Fora do `pre-commit`: o `pre-merge-commit` não o chama. Testes em `confere-esforco.test.mjs` e `pre-commit.test.mjs`.
+              - `git/pre-commit`: roda o `confere-ramo`, o `confere-esforco`, o `confere-lgpd --indice`, recusa o commit num worktree de agente (o topo do repositório, `git rev-parse --show-toplevel` absoluto e resolvido, dentro de um segmento `.claude/worktrees/`, sem caixa, o mesmo critério da `guarda-git`; o que o git não diz também recusa; o checkout do orquestrador, mesmo sendo um worktree ligado, commita) que tem o
                 `.claude/agents/desenvolvedor.md` no índice, em qualquer caixa e mudado, criado, apagado ou renomeado ("o `.claude/agents/desenvolvedor.md` só se commita no checkout do orquestrador (D8)"; D8.7) e, quando o commit toca `.claude/`, o `CLAUDE.md` ou o
                 `docs/arquitetura.md` (as fontes do `.claude/agents/desenvolvedor.md`), os testes do pipeline: sempre o
                 `node --test` sobre a lista expandida `.claude/hooks/*.test.mjs` (sem as variáveis `GIT_*` do commit nem o
@@ -465,6 +489,8 @@ Como testar:  `node --test ".claude/hooks/*.test.mjs"` (~1 min; num projeto com 
                 passa, o do checkout principal passa e o de um worktree de fora de `.claude/worktrees/` (o checkout do orquestrador) passa; o merge que traz o `.claude/agents/desenvolvedor.md` é recusado no worktree do agente (o que traz outro arquivo passa) e passa no de fora.
               - O `escolhe-revisores.desenvolvedor.test.mjs` testa a exceção da D8.8: dentro do processo (`soParteDoProjeto` e `escolher` com `textoAntes` e `textoDepois` anexados à mão: só a parte do projeto não
                 aciona; cabeçalho, parte fixa, `regras`, marcador, criado, apagado, renomeado, binário e texto que falta acionam) e num git de verdade (`base...head`, inclusive com a base andando, e `--trabalho`).
+              - Os testes da D11: o `papeis.test.mjs` traz o `neto` (a chave válida e cada recusa) e o `mudancas`; o `guarda-agentes.test.mjs`, o neto (`decidirChamador` e o hook com um `pipeline.json` com `neto` e o arquivo do `leitor`), a lista fechada de chaves (com um teste sobre os arquivos de verdade de
+                `.claude/agents/`) e a confirmação contra a `main` (função pura, `lerPipelineDaMain` com o `spawnSync` injetado e um git de verdade); o `confere-esforco.test.mjs` e o `pre-commit.test.mjs`, o `rapido` (inclusive o worktree ligado de verdade, com o esforço no checkout principal).
               - O `guarda-pasta-agentes.test.mjs` testa o `motivoDaEntrada` (caminhos que negam e que passam, relativo ao `cwd`, `agent_id` ausente, vazio ou em branco, sem caminho legível) e o hook de ponta
                 a ponta nas quatro ferramentas, inclusive o script chamado por um link e o caminho com link para `.claude` e para `agents/` (pastas de verdade, `spawnSync`). O `guarda-git-arquivos.test.mjs` tem os mesmos dois casos de link, para o `.git`.
               - O `settings.test.mjs` confere que o `.claude/settings.json` liga a `guarda-agentes` (matcher `Agent`) e

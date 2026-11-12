@@ -71,6 +71,38 @@ const NEGA = [
   "bash -c 'node .claude/hooks/sincroniza-pares.mjs'",
   "cat <<'EOF' | sh\nnode .claude/hooks/sincroniza-pares.mjs\nEOF",
   'cat > x.sh <<EOF\nnode .claude/hooks/sincroniza-pares.mjs\nEOF',
+  // D11: o pipeline.json, os settings*.json e a pasta .claude/estado/ valem como a pasta de agentes
+  'echo x > .claude/pipeline.json',
+  "sed -i 's/a/b/' .claude/pipeline.json",
+  'cp x .claude/settings.json',
+  'cp x .claude/settings.local.json',
+  'mv x .CLAUDE/Pipeline.JSON',
+  'cp x .claude/./pipeline.json',
+  'cp x .claude//settings.json',
+  'rm .claude/estado/esforco',
+  'printf medio > .claude/estado/esforco',
+  'echo alto > .claude/estado/esforco',
+  'mkdir -p .claude/estado && echo alto > .claude/estado/esforco',
+  'ls .claude/estado',
+  'git checkout main -- .claude/pipeline.json',
+  'git restore --source=main .claude/settings.json',
+  'git add .claude/pipeline.json',
+  'tee .claude/settings.json < y',
+  'cat .claude/pipeline.json > x.json',
+  'cat .claude/pipeline.json | sh',
+  'cat .claude/pipeline.json; touch .claude/settings.json',
+  'cd .claude && sed -i s/a/b/ pipeline.json',
+  'cd .claude && echo x > settings.local.json',
+  'cd .claude && echo alto > estado/esforco',
+  'git -C .claude checkout main -- pipeline.json',
+  "cat <<'EOF' > .claude/pipeline.json\nx\nEOF",
+  'bash -c "echo x > .claude/pipeline.json"',
+  'node -e "fs.writeFileSync(\'.claude/pipeline.json\', \'x\')"',
+  "bash <<'EOF'\necho x > .claude/pipeline.json\nEOF",
+  "node - <<'EOF'\nrequire('fs').writeFileSync('.claude/settings.json', 'x')\nEOF",
+  'Set-Content -Path .claude\\pipeline.json -Value x',
+  'git config user.name .claude/pipeline.json',
+  'cp x .claude/worktrees/agent-a/.claude/pipeline.json',
 ];
 const LIBERA = [
   'cat .claude/agents/qa.md',
@@ -114,14 +146,44 @@ const LIBERA = [
   'node .claude/hooks/ajusta-pipeline.mjs --repetidas docs/pipeline --json',
   'git commit -m "docs: explica o --aplicar-menos e o --sincronizar-desenvolvedor"',
   'grep -n aplicar-mais .claude/hooks/ajusta-pipeline.mjs',
+  // D11: ler o pipeline.json, os settings*.json e .claude/estado/ continua livre; o que não é deles também
+  'cat .claude/pipeline.json',
+  'grep -n teto .claude/pipeline.json',
+  'rg niveis .claude/pipeline.json',
+  'head -n 5 .claude/settings.json',
+  'tail -n 5 .claude/settings.local.json',
+  'cat .claude/estado/esforco',
+  'echo .claude/estado',
+  'wc -l .claude/pipeline.json',
+  'git diff main -- .claude/pipeline.json',
+  'git show main:.claude/pipeline.json',
+  'git log --oneline -- .claude/pipeline.json',
+  'git grep -n teto -- .claude/pipeline.json',
+  'git commit -m "docs: relata o .claude/pipeline.json e o .claude/estado/esforco"',
+  'cd .claude && cat pipeline.json',
+  'cp x .claude/estados-antigos/y',
+  'cp x .claude/settings-antigos/y',
+  'cp x .claude/pipeline-antigo.txt',
+  'cp x docs/estado/y.md',
+  'echo x > apps/web/src/estado/y.ts',
+  'cp x apps/api/pipeline.json',
+  'node .claude/hooks/confere-lgpd.mjs .claude/hooks',
+  'node --test ".claude/hooks/*.test.mjs"',
+  'node .claude/hooks/sincroniza-pares.mjs --conferir',
 ];
 
 for (const c of NEGA) test(`subagente (agent_id) nega: ${c}`, () => assert.notEqual(avaliarEntrada(c, PROJETO, true), null));
 for (const c of LIBERA) test(`subagente (agent_id) libera: ${c}`, () => assert.equal(avaliarEntrada(c, PROJETO, true), null));
 for (const c of NEGA) test(`sem agent_id (o orquestrador) nada muda: ${c}`, () => assert.equal(avaliarEntrada(c, PROJETO), null));
 
-test('o motivo cita .claude/agents e D8; analisar e decisao levam o mesmo sinal', () => {
+test('o motivo cita .claude/agents, o pipeline.json, os settings, o estado e D8 e D11; analisar e decisao levam o mesmo sinal', () => {
   assert.match(avaliarEntrada('echo x > .claude/agents/qa.md', PROJETO, true), /\.claude\/agents.*D8/);
+  for (const c of ['echo x > .claude/pipeline.json', 'cp x .claude/settings.json', 'echo alto > .claude/estado/esforco']) {
+    assert.match(avaliarEntrada(c, PROJETO, true), /`\.claude\/pipeline\.json`, `\.claude\/settings\*\.json` nem `\.claude\/estado\/`.*D11/, c);
+    assert.equal(decisao(c, PROJETO, true).decisao, 'deny', c);
+  }
+  assert.deepEqual(decisao('cat .claude/estado/esforco', PROJETO, true), { decisao: null, motivo: null });
+  assert.equal(analisar('echo x > .claude/pipeline.json').proibido, null, 'sem agent_id nada muda');
   assert.match(analisar('echo x > .claude/agents/qa.md', undefined, true).proibido, /\.claude\/agents.*D8/);
   assert.equal(analisar('echo x > .claude/agents/qa.md').proibido, null);
   assert.equal(decisao('cp x .claude/agents/y.md', PROJETO, true).decisao, 'deny');
