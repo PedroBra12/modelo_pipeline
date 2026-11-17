@@ -78,7 +78,8 @@
           "^\\.claude/commands/",
           "^CLAUDE\\.md$",
           "^\\.claude/skills/impeccable/",
-          "^\\.claude/skills/(pick-ui-library|break-ui|mobile-native|emil-design-eng)/"
+          "^\\.claude/skills/(pick-ui-library|break-ui|mobile-native|emil-design-eng)/",
+          "^\\.claude/skills/(to-spec|to-tickets)/"
         ],
         "conteudo": []
       },
