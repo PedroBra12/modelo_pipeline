@@ -17,7 +17,7 @@ Leia o pedido e o `AGENTS.md` das pastas que ele toca (e os das pastas acima). E
 | comportamento novo | [`feature.md`](feature.md) |
 | algo quebrado, errado ou lento | [`bug.md`](bug.md) |
 | mudar a forma sem mudar o comportamento | [`refactor.md`](refactor.md) |
-| uma fase inteira do plano | [`fase.md`](fase.md) |
+| um **plano**: a fase do `docs/plano.md`, ou o pedido que não cabe numa tarefa só (mais de uma pasta, ou mais do que um `desenvolvedor` fecha num contexto) | [`plano.md`](plano.md) (spec, tarefas e checkpoints de revisão, D12); a fase segue também [`fase.md`](fase.md) |
 | mudança trivial (uma ou duas linhas óbvias, sem lógica nova) | só as seções 3 a 5 abaixo |
 | só uma pergunta | responda; sem portão |
 
@@ -95,6 +95,8 @@ Como lançar cada nome:
 - **corrigir agora:** o "Must fix" do `ponytail-review`, todo achado de bug, risco ou regra não negociável dos revisores, e todo defeito do `qa` (cada um vira teste antes da correção). Depois, siga a correção abaixo, mesmo que o `qa` curto aprove: a correção de um achado já criou defeito novo mais de uma vez;
 - **corrigir se couber no escopo:** o "Should fix" e o resto do que é desta pasta; o que não couber, o "Nice to have" e as `Suspeitas` do `qa` vão para o relatório;
 - **achado que aparece pela 2ª vez:** vira lint, teste ou script (`principle-encode-lessons-in-structure`), não mais uma linha de texto.
+
+**No caminho `plano` (D12) vale o `plano.md`, não o que segue:** nada de revisão por tarefa; a revisão roda em checkpoints (5 tarefas integradas ou mais, ou o final), e em cada um só os revisores que o plano de revisão, feito na quebra em tarefas, previu para aquele bloco. O `escolhe-revisores.mjs` confere a previsão: gatilho de risco não previsto roda sempre; o resto (`grande`, `tela`, o `qa` do meio) segue o plano, com a dispensa e o motivo em `docs/specs/<assunto>/revisoes.md`. É a única exceção ao "nunca tira" acima.
 
 **Uma rodada de revisão, e a correção (D6):**
 - **A rodada.** Com os portões verdes e o commit feito, o script roda uma vez, sobre o branch inteiro (`escolhe-revisores.mjs <base> <head>`), e o conjunto que ele imprime sai numa mensagem só, com o `qa` completo quando o script o imprime (obrigatório, ou condicional que você aceita). É a única vez que o conjunto roda.
@@ -180,6 +182,7 @@ O orquestrador roda no par do nível `orquestracao` da tabela abaixo (D3, D11): 
 | Momento | Skill ou subagente |
 |---|---|
 | entender um pedido vago | ler `.claude/skills/in-your-own-words/SKILL.md` e `.claude/skills/sharpen/SKILL.md` |
+| quebrar um plano (D12) | ler `.claude/skills/to-spec/SKILL.md` (a spec) e `.claude/skills/to-tickets/SKILL.md` (as tarefas e o plano de revisão), pelo `plano.md` |
 | decisão em aberto | `grilling`, `codebase-design`, `domain-modeling`; ler `.claude/skills/to-questionnaire/SKILL.md` quando quem decide é outra pessoa |
 | desenhar tipos e dados | `principle-foundational-thinking`, `principle-model-the-domain`, `principle-type-system-discipline`, `typescript-best-practices`, `principle-boundary-discipline` |
 | desenhar tela | o subagente `designer-ui` (D35), que escreve a tela de `apps/web` com a skill `impeccable` (só pelo lançador preso `.claude/hooks/impeccable.mjs`), dentro do `PRODUCT.md` e do `DESIGN.md`; o subagente `revisor-tela` a vê rodando; os dois leem, por caminho e como lentes, as quatro skills da D37: `pick-ui-library`, `break-ui`, `mobile-native` e `emil-design-eng` |
